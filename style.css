@@ -1,0 +1,769 @@
+/*
+  ==========================================================================
+  THEME VARIABLES
+  This section defines the colors for both the default (dark) and light themes.
+  ==========================================================================
+*/
+
+:root {
+  /* Backgrounds */
+  --background-gradient: linear-gradient(to bottom, #0a0a0a, #000);
+  --background-column: transparent;
+  --background-compose-area: rgba(10, 10, 10, 0.5);
+  --background-status-area: rgba(10, 10, 10, 0.5);
+  --background-input: #0a0a0a;
+  --background-button-primary: #ff8c42;
+  --background-button-primary-hover: #ff6b4a;
+  --background-button-disabled: #4a0e0e;
+  --background-bonfire-item: rgba(255, 107, 74, 0.05);
+  --background-bonfire-item-hover: rgba(255, 107, 74, 0.15);
+  --background-notification: #333;
+  --background-loading-overlay: rgba(0, 0, 0, .8);
+  --background-scrollbar-track: #0a0a0a;
+  --background-scrollbar-thumb: #333;
+  --background-scrollbar-thumb-hover: #ff8c42;
+
+  /* Text Colors */
+  --text-primary: #e0e0e0;
+  --text-secondary: #888;
+  --text-tertiary: #666;
+  --text-accent: #ff8c42;
+  --text-accent-hot: #ff6b4a;
+  --text-button-primary: #000;
+  --text-button-disabled: #666;
+  --text-bonfire-preview: #ccc;
+  --text-bonfire-heat: #fff5e6;
+  --text-notification: #fff;
+
+  /* Borders & Gradients */
+  --border-color-dark: #222;
+  --border-color-light: #333;
+  --border-color-accent: #ff8c42;
+  --border-image-post: linear-gradient(to right, #ff6b4a, #cc2936);
+  --border-image-post-hot: linear-gradient(to right, #fff5e6, #ff6b4a);
+  --border-image-post-inferno: linear-gradient(to right, #fff, #ffeb3b, #ff6b4a);
+  --border-image-post-dying: linear-gradient(to right, #4a0e0e, #0a0a0a);
+  --border-thread-line: linear-gradient(to bottom, #ff8c42, transparent);
+
+  /* Shadows & Glows */
+  --shadow-color-accent: rgba(255, 140, 66, 0.3);
+  --shadow-color-header: #ff6b4a, 0 0 20px #cc2936;
+  --shadow-color-button-hover: #ff8c42;
+  --shadow-color-ember-glow-1: rgba(255,107,74,0.7);
+  --shadow-color-ember-glow-2: rgba(255,140,66,0.5);
+  --shadow-color-ember-glow-inset: rgba(255,245,230,0.2);
+  --shadow-color-ember-glow-1-hover: rgba(255,107,74,0.9);
+  --shadow-color-ember-glow-2-hover: rgba(255,140,66,0.7);
+  --shadow-color-ember-glow-inset-hover: rgba(255,245,230,0.3);
+  --shadow-color-inferno-1: rgba(255,255,255,0.8);
+  --shadow-color-inferno-2: rgba(255,235,59,0.6);
+  --shadow-color-inferno-3: rgba(255,107,74,0.4);
+  --shadow-color-inferno-1-hover: rgba(255,255,255,1);
+  --shadow-color-inferno-2-hover: rgba(255,235,59,0.8);
+  --shadow-color-inferno-3-hover: rgba(255,107,74,0.6);
+  --shadow-color-post-pulse: rgba(255, 107, 74, var(--heat-opacity, 0.2));
+  --shadow-color-post-pulse-hover: rgba(255, 107, 74, calc(var(--heat-opacity, 0.2) * 1.5));
+}
+
+body.light-mode {
+  /* Backgrounds */
+  --background-gradient: linear-gradient(to bottom, #ffffff, #f0f0f0);
+  --background-column: transparent;
+  --background-compose-area: #ffffff;
+  --background-status-area: #fdfdfd;
+  --background-input: #ffffff;
+  --background-button-primary: #ff8c42;
+  --background-button-primary-hover: #ff6b4a;
+  --background-button-disabled: #e0e0e0;
+  --background-bonfire-item: #fff8f5;
+  --background-bonfire-item-hover: #fff2e8;
+  --background-notification: #333;
+  --background-loading-overlay: rgba(255, 255, 255, .8);
+  --background-scrollbar-track: #f0f0f0;
+  --background-scrollbar-thumb: #cccccc;
+  --background-scrollbar-thumb-hover: #ff8c42;
+
+  /* Text Colors */
+  --text-primary: #1a1a1a;
+  --text-secondary: #555;
+  --text-tertiary: #888;
+  --text-accent: #d96d00;
+  --text-accent-hot: #ff6b4a;
+  --text-button-primary: #ffffff;
+  --text-button-disabled: #999;
+  --text-bonfire-preview: #444;
+  --text-bonfire-heat: #d96d00;
+  --text-notification: #fff;
+  
+  /* Borders & Gradients */
+  --border-color-dark: #e0e0e0;
+  --border-color-light: #d0d0d0;
+  --border-color-accent: #ff8c42;
+  --border-image-post: linear-gradient(to right, #ff8c42, #ff6b4a);
+  --border-image-post-hot: linear-gradient(to right, #ff6b4a, #ff8c42);
+  --border-image-post-inferno: linear-gradient(to right, #ffeb3b, #ff8c42, #ff6b4a);
+  --border-image-post-dying: linear-gradient(to right, #e0e0e0, #f0f0f0);
+  --border-thread-line: linear-gradient(to bottom, #ff8c42, transparent);
+  
+  /* Shadows & Glows */
+  --shadow-color-accent: rgba(255, 140, 66, 0.3);
+  --shadow-color-header: #ff6b4a, 0 0 20px #ff8c42;
+  --shadow-color-button-hover: #ff8c42;
+  --shadow-color-ember-glow-1: rgba(255,107,74,0.5);
+  --shadow-color-ember-glow-2: rgba(255,140,66,0.3);
+  --shadow-color-ember-glow-inset: rgba(255,140,66,0.1);
+  --shadow-color-ember-glow-1-hover: rgba(255,107,74,0.7);
+  --shadow-color-ember-glow-2-hover: rgba(255,140,66,0.5);
+  --shadow-color-ember-glow-inset-hover: rgba(255,140,66,0.2);
+  --shadow-color-inferno-1: rgba(255,107,74,0.6);
+  --shadow-color-inferno-2: rgba(255,235,59,0.5);
+  --shadow-color-inferno-3: rgba(255,107,74,0.4);
+  --shadow-color-inferno-1-hover: rgba(255,107,74,0.8);
+  --shadow-color-inferno-2-hover: rgba(255,235,59,0.7);
+  --shadow-color-inferno-3-hover: rgba(255,107,74,0.6);
+  --shadow-color-post-pulse: rgba(255, 107, 74, var(--heat-opacity, 0.2));
+  --shadow-color-post-pulse-hover: rgba(255, 107, 74, calc(var(--heat-opacity, 0.2) * 1.5));
+}
+
+
+/*
+  ==========================================================================
+  GENERAL STYLES
+  This section contains the refactored styles using the variables defined above.
+  ==========================================================================
+*/
+
+* { 
+  margin: 0; 
+  padding: 0; 
+  box-sizing: border-box; 
+}
+
+/* Custom scrollbar for a cleaner look */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--background-scrollbar-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--background-scrollbar-thumb);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--background-scrollbar-thumb-hover);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--background-gradient);
+  color: var(--text-primary);
+  line-height: 1.6;
+  overflow: hidden; /* Prevent body scroll, columns will scroll instead */
+}
+
+/* Main multi-column container */
+#app-container {
+  display: flex;
+  height: 100vh;
+}
+
+.app-column {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Column 1: Controls */
+#column-controls {
+  flex: 0 0 320px; /* Fixed width for the control column */
+  border-right: 1px solid var(--border-color-dark);
+}
+
+/* Column 2: Main Feed */
+#column-feed {
+  flex: 2; /* Takes up more space */
+  border-right: 1px solid var(--border-color-dark);
+}
+
+/* Column 3: Bonfire */
+#column-bonfire {
+  flex: 1; /* Takes up less space than the feed */
+}
+
+.column-header {
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border-color-light);
+  color: var(--text-secondary);
+  font-weight: bold;
+}
+
+#posts, #bonfire-content {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding-right: 10px; /* Space for scrollbar */
+}
+
+header {
+  text-align: left;
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border-color-light);
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: bold;
+  color: var(--text-accent); /* Main text color */
+  margin-bottom: 5px;
+  /* Apply animation */
+  animation: text-flicker-primary 2s ease-in-out infinite alternate; /* Default dark mode animation */
+}
+
+.tagline {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+#status {
+  background: var(--background-status-area);
+  padding: 10px 15px;
+  border-radius: 20px;
+  font-size: 12px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  position: relative;
+  border: 1px solid var(--border-color-light);
+}
+
+/* Flickering Flame on Status */
+#status::before {
+  content: '🔥';
+  position: absolute;
+  right: 0;
+  top: 10px;
+  font-size: 20px;
+  opacity: 0.6;
+  animation: flicker 3s ease-in-out infinite;
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  background: var(--border-color-accent);
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 8px;
+  animation: pulse 2s infinite;
+}
+.status-indicator.connecting { background: var(--background-button-disabled); }
+
+#compose {
+  background: var(--background-compose-area);
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color-light);
+}
+
+#post-input {
+  width: 100%;
+  background: var(--background-input);
+  border: 1px solid var(--border-color-light);
+  color: var(--text-primary);
+  padding: 12px;
+  border-radius: 8px;
+  resize: vertical;
+  min-height: 100px;
+  font-size: 16px;
+  transition: box-shadow .3s;
+}
+/* Compose Area Glow on Focus */
+#post-input:focus {
+  outline: none;
+  border-color: var(--border-color-accent);
+  box-shadow: 0 0 15px var(--shadow-color-accent);
+}
+
+.compose-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+}
+.char-count { font-size: 12px; color: var(--text-tertiary); }
+
+button {
+  background: var(--background-button-primary);
+  color: var(--text-button-primary);
+  border: none;
+  padding: 8px 20px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+  transition: .2s;
+}
+button:hover { background: var(--background-button-primary-hover); box-shadow: 0 0 10px var(--shadow-color-button-hover); }
+button:active { transform: scale(.98); }
+button:disabled { opacity: .5; cursor: not-allowed; background: var(--background-button-disabled); color: var(--text-button-disabled); box-shadow: none; }
+
+.post {
+  background: var(--background-column);
+  padding: 20px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  transition: all .5s ease-in-out;
+  border: 1px solid;
+  border-image-slice: 1;
+  border-image-source: var(--border-image-post);
+  box-shadow: 0 0 20px var(--shadow-color-post-pulse);
+  position: relative;
+  overflow: hidden;
+  animation: pulse-border 5s infinite;
+}
+
+/* Rising Embers Particle Effect */
+.post::before {
+  content: '';
+  position: absolute;
+  top: -20px; left: 0; right: 0;
+  height: 20px;
+  background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"><circle cx="10" cy="10" r="1" fill="%23ff8c42" opacity="0.6"><animate attributeName="cy" from="20" to="-10" dur="3s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.6" to="0" dur="3s" repeatCount="indefinite"/></circle><circle cx="50" cy="15" r="1.5" fill="%23ff6b4a" opacity="0.7"><animate attributeName="cy" from="20" to="-10" dur="2.5s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.7" to="0" dur="2.5s" repeatCount="indefinite"/></circle><circle cx="80" cy="5" r="1" fill="%23fff5e6" opacity="0.5"><animate attributeName="cy" from="20" to="-10" dur="3.5s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.5" to="0" dur="3.5s" repeatCount="indefinite"/></circle></svg>') repeat-x;
+  opacity: var(--heat-opacity, 0.6);
+  pointer-events: none;
+  transition: opacity 1.5s;
+}
+.post.hot::before, .post.inferno::before {
+  opacity: 1;
+}
+
+/* Glow/Pulse for Hot & Inferno Posts */
+.post.hot {
+  border-image-source: var(--border-image-post-hot);
+  animation: ember-glow 5s ease-in-out infinite;
+}
+.post.inferno {
+  border-image-source: var(--border-image-post-inferno);
+  animation: inferno-pulse 3s ease-in-out infinite;
+}
+
+.post.dying {
+  border-image-source: var(--border-image-post-dying);
+  animation: fadeToAsh 1s forwards;
+}
+/* Ash Particle Effect for Dying Posts */
+.post.dying::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="20" cy="80" r="2" fill="%23333"><animate attributeName="cy" from="80" to="120" dur="1s" fill="freeze"/><animate attributeName="opacity" from="0.8" to="0" dur="1s" fill="freeze"/></circle><circle cx="50" cy="80" r="1.5" fill="%23444"><animate attributeName="cy" from="80" to="120" dur="1.2s" fill="freeze"/><animate attributeName="opacity" from="0.7" to="0" dur="1.2s" fill="freeze"/></circle><circle cx="80" cy="80" r="2" fill="%23333"><animate attributeName="cy" from="80" to="120" dur="0.8s" fill="freeze"/><animate attributeName="opacity" from="0.8" to="0" dur="0.8s" fill="freeze"/></circle></svg>');
+  pointer-events: none;
+}
+
+.author { font-size: 14px; color: var(--text-accent); margin-bottom: 8px; font-weight: 500; }
+.content { color: var(--text-primary); margin-bottom: 12px; word-wrap: break-word; }
+.post-footer { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-tertiary); }
+.carriers { display: flex; align-items: center; gap: 5px; color: var(--text-accent-hot); }
+.carrier-count { font-weight: bold; }
+
+.carry-button { padding: 6px 14px; font-size: 16px; background: transparent; border: 1px solid var(--border-color-accent); color: var(--border-color-accent); }
+.carry-button:hover { background: var(--border-color-accent); color: var(--text-button-primary); }
+/* Blow Effect on Button Click */
+.carry-button:active {
+  animation: blow-effect 2s ease-out;
+}
+
+/* Bonfire Styles */
+.bonfire-item {
+  background: var(--background-bonfire-item);
+  padding: 10px 15px;
+  border-radius: 8px;
+  border-left: 3px solid var(--border-color-accent);
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: background .2s;
+  display: flex;
+  align-items: center;
+}
+.bonfire-item:hover { background: var(--background-bonfire-item-hover); }
+.bonfire-heat { color: var(--text-bonfire-heat); font-weight: bold; white-space: nowrap; margin-right: 15px; }
+.bonfire-preview { color: var(--text-bonfire-preview); font-size: 14px; }
+.empty-state { color: var(--text-tertiary); text-align: center; padding: 40px 20px; font-style: italic; }
+
+/* Notification & Loading */
+.notification { position: fixed; top: 20px; right: 20px; background: var(--background-notification); color: var(--text-notification); padding: 12px 20px; border-radius: 8px; z-index: 1000; }
+.loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: var(--background-loading-overlay); display: flex; align-items: center; justify-content: center; z-index: 2000; }
+.spinner { border: 3px solid var(--border-color-light); border-top: 3px solid var(--border-color-accent); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 20px; }
+
+/* Keyframe Animations */
+@keyframes spin { to { transform: rotate3d(0, 1, 0, 360deg); } }
+@keyframes pulse {
+  0% { box-shadow: 0 0 5px var(--border-color-accent); }
+  50% { box-shadow: 0 0 15px var(--text-accent-hot); }
+  100% { box-shadow: 0 0 5px var(--border-color-accent); }
+}
+@keyframes flicker {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+@keyframes fadeToAsh {
+  to { opacity: 0; transform: scale(.95); }
+}
+@keyframes blow-effect {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+@keyframes ember-glow {
+  0%, 100% { box-shadow: 0 0 20px var(--shadow-color-ember-glow-1), 0 0 30px var(--shadow-color-ember-glow-2), inset 0 0 15px var(--shadow-color-ember-glow-inset); }
+  50% { box-shadow: 0 0 30px var(--shadow-color-ember-glow-1-hover), 0 0 50px var(--shadow-color-ember-glow-2-hover), inset 0 0 20px var(--shadow-color-ember-glow-inset-hover); }
+}
+@keyframes inferno-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 30px var(--shadow-color-inferno-1), 0 0 60px var(--shadow-color-inferno-2), 0 0 90px var(--shadow-color-inferno-3); }
+  50% { transform: scale(1.02); box-shadow: 0 0 40px var(--shadow-color-inferno-1-hover), 0 0 80px var(--shadow-color-inferno-2-hover), 0 0 120px var(--shadow-color-inferno-3-hover); }
+}
+@keyframes pulse-border {
+  0% { box-shadow: 0 0 20px var(--shadow-color-post-pulse); }
+  50% { box-shadow: 0 0 30px var(--shadow-color-post-pulse-hover); }
+  100% { box-shadow: 0 0 20px var(--shadow-color-post-pulse); }
+}
+
+/* Responsive layout for smaller screens */
+@media (max-width: 900px) {
+  body {
+    overflow: auto;
+  }
+  #app-container {
+    flex-direction: column;
+    height: auto;
+  }
+  .app-column {
+    border-right: none;
+    border-bottom: 1px solid var(--border-color-dark);
+  }
+  #column-controls { flex: 0 0 auto; }
+  #posts, #bonfire-content {
+    max-height: 60vh; /* Give a max height to scrolling sections on mobile */
+  }
+}
+
+.carry-button {
+  position: relative;
+  transition: box-shadow 0.2s ease;
+}
+
+.carry-button:active {
+  animation: blow-effect 0.3s ease-out;
+  box-shadow: 0 0 10px var(--border-color-accent), 0 0 20px var(--text-accent-hot); /* Glow effect */
+}
+
+.carry-button::after {
+  content: '💨'; /* Use the puff emoji as the content */
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  opacity: 0;
+  pointer-events: none;
+  font-size: 20px; /* Set the size of the emoji */
+  /* The transform is now handled by the animation */
+}
+
+.carry-button:active::after {
+  /* Apply our new puff-of-wind animation on click */
+  animation: puff-of-wind 0.6s ease-out;
+}
+
+@keyframes particle-burst {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(5);
+    opacity: 0;
+  }
+}
+@keyframes puff-of-wind {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.8);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(150%, -50%) scale(1.5);
+  }
+}
+.post.reply {
+  /* Use a relative unit for the fallback margin for consistency. */
+  margin-left: 0px; 
+  border-left: 2px solid var(--border-color-accent);
+  position: relative;
+}
+
+.post.reply::before {
+  content: '↳';
+  position: absolute;
+  /* Use 'em' to position the arrow relative to the text size. */
+  left: 0em;
+  top: 0.1em;
+  color: var(--text-accent);
+  /* Use 'em' to scale the arrow size with the text. */
+  font-size: 1.4em;
+  font-weight: bold;
+}
+
+.reply-button {
+  background: transparent;
+  border: 1px solid var(--text-tertiary);
+  color: var(--text-secondary);
+  padding: 4px 12px;
+  font-size: 14px;
+  margin-left: 10px;
+}
+
+.reply-button:hover {
+  border-color: var(--border-color-accent);
+  color: var(--border-color-accent);
+}
+
+.reply-compose {
+  margin-top: 10px;
+  padding: 15px;
+  background: var(--background-compose-area);
+  border-radius: 8px;
+  border: 1px solid var(--border-color-light);
+}
+
+.reply-input {
+  width: 100%;
+  background: var(--background-input);
+  border: 1px solid var(--border-color-light);
+  color: var(--text-primary);
+  padding: 8px;
+  border-radius: 6px;
+  resize: vertical;
+  min-height: 60px;
+  font-size: 14px;
+}
+
+.thread-line {
+  position: absolute;
+  left: -20px;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  background: var(--border-thread-line);
+}
+
+.replies-container {
+  margin-top: 2%;  
+  margin-left: 4%;
+}
+
+.thread-stats {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-left: 10px;
+}
+
+.collapse-thread {
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  margin-left: 10px;
+}
+
+.collapse-thread:hover {
+  color: var(--border-color-accent);
+}
+
+/* Nested reply styles */
+.post.reply.depth-1 { margin-left: 0%; }
+.post.reply.depth-2 { margin-left: 0%; }
+.post.reply.depth-3 { margin-left: 0%; }
+.post.reply.depth-4 { margin-left: 0%; opacity: 0.9; }
+.post.reply.depth-5 { margin-left: 0%; opacity: 0.8; }
+
+/* Animate thread flames */
+.thread-ember {
+  display: inline-block;
+  animation: thread-flicker 2s ease-in-out infinite;
+}
+
+@keyframes thread-flicker {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+#controls-footer {
+  padding: 10px 0;
+  margin-bottom: 20px;
+  text-align: center;
+  border-bottom: 1px solid var(--border-color-light);
+}
+
+.secondary-button {
+  background: transparent;
+  border: 1px solid var(--border-color-light);
+  color: var(--text-secondary);
+  font-weight: normal;
+  padding: 6px 14px;
+}
+
+.secondary-button:hover {
+  border-color: var(--text-accent);
+  color: var(--text-accent);
+  background: var(--background-bonfire-item); /* A subtle hover background */
+}
+.post-image {
+  max-width: 100%;
+  border-radius: 8px;
+  margin-top: 10px;
+}
+
+.image-preview {
+  margin: 10px 0;
+  position: relative;
+  max-width: 200px;
+}
+
+.image-preview img {
+  width: 100%;
+  border-radius: 8px;
+}
+
+.image-preview button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+}
+
+.image-button {
+  background: transparent;
+  border: 1px solid #666;
+  color: #888;
+  padding: 6px 12px;
+  margin-right: 10px;
+}
+/* Remove the bottom margin from only the last reply in a thread */
+.replies-container .post.reply:last-child {
+  margin-bottom: 0;
+}
+/*
+  ==========================================================================
+  IDENTITY CREATION MODAL STYLES
+  ==========================================================================
+*/
+
+#identity-modal-content {
+  background: var(--background-compose-area);
+  padding: 30px 40px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color-light);
+  max-width: 500px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+
+#identity-modal-content h2 {
+  color: var(--text-accent);
+  margin-bottom: 15px;
+}
+
+#identity-modal-content p {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-bottom: 25px;
+}
+
+#identity-status-text, #identity-status-text-2 {
+  margin-top: 15px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+#identity-progress-bar {
+  width: 100%;
+  height: 12px;
+  margin-top: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-color-light);
+}
+
+/* Styling for the progress bar value */
+#identity-progress-bar::-webkit-progress-bar {
+  background-color: var(--background-input);
+}
+#identity-progress-bar::-webkit-progress-value {
+  background-color: var(--border-color-accent);
+  transition: width 0.2s ease-in-out;
+}
+#identity-progress-bar::-moz-progress-bar { /* Firefox */
+  background-color: var(--border-color-accent);
+}
+
+#identity-progress-percent {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 5px;
+}
+
+#identity-step-3-prompt input {
+    display: block;
+    width: 80%;
+    margin: 10px auto;
+    background: var(--background-input);
+    border: 1px solid var(--border-color-light);
+    color: var(--text-primary);
+    padding: 10px;
+    border-radius: 8px;
+    text-align: center;
+}
+#identity-step-3-prompt input:focus {
+    outline: none;
+    border-color: var(--border-color-accent);
+}
+
+#identity-step-3-prompt button {
+    margin-top: 15px;
+}
+/* Make the identity-creation modal sit ABOVE the Ember splash */
+#identity-creation-overlay {
+  z-index: 3001;      /* higher than #loading (2000) */
+}
+@keyframes text-flicker-primary {
+  0%, 100% { text-shadow: 0 0 10px var(--shadow-color-header), 0 0 20px var(--text-accent-hot); }
+  50% { text-shadow: 0 0 15px var(--shadow-color-header), 0 0 25px var(--text-accent-hot), 0 0 5px var(--text-accent); }
+}
+
+@keyframes text-flicker-light {
+  0%, 100% { text-shadow: 0 0 10px var(--shadow-color-header), 0 0 20px var(--text-accent); }
+  50% { text-shadow: 0 0 15px var(--shadow-color-header), 0 0 25px var(--text-accent), 0 0 5px var(--text-accent-hot); }
+}
+body.light-mode h1 {
+  animation: text-flicker-light 2s ease-in-out infinite alternate;
+}
+
+.post.animate::before {
+  background: url('data:image/svg+xml...');
+}
+.post:not(.animate)::before {
+  display: none;
+}
