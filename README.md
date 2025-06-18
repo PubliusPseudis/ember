@@ -34,6 +34,10 @@ This project is an experiment in decentralized content persistence, privacy-pres
 * **Custom Dandelion++ Router:** An implementation of the Dandelion++ protocol for privacy-preserving message routing.
 * **HTML, CSS, JavaScript:** The core web technologies for the front-end application.
 
+## Access it in Pages
+You can access the live version of Ember via GitHub Pages: [publiuspseudis.github.io/ember](https://publiuspseudis.github.io/ember)
+
+
 ## How to Run Locally
 
 Ember is designed to run entirely in your web browser, leveraging WebTorrent. You can easily run it locally:
