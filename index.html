@@ -2556,64 +2556,7 @@ window.handleWire = function handleWire(wire, addr, shardIndex) {
   wire.on('error', err => console.error(`Wire error ${id}:`, err.message));
 };
 
-function handleWire(wire, addr, shardIndex) {
-  const id = wire.peerId;
-  if (state.peers.has(id)) return;
-  
-  // Limit connections per shard
-  const peersInShard = Array.from(state.peers.values())
-    .filter(p => p.shardIndex === shardIndex).length;
-  
-  if (peersInShard > 10) { // Max 10 peers per shard
-    console.log(`Shard ${shardIndex} full, rejecting peer`);
-    wire.destroy();
-    return;
-  }
-  
-  console.log(`New peer connection on shard #${shardIndex}: ${id}`);
-  
-  const peerData = { 
-    wire, 
-    addr,
-    id: id, 
-    messageTimestamps: [], 
-    shardIndex,
-    connectedAt: Date.now(),
-    bytesReceived: 0,
-    bytesSent: 0
-  };
-  
-  state.peers.set(id, peerData);
-  peerManager.updateScore(id, 'connection', 1);
-  updateStatus();
-  
-  // Monitor connection quality
-  wire.on('download', (bytes) => {
-    peerData.bytesReceived += bytes;
-    peerManager.updateScore(id, 'data', bytes / 1000);
-  });
-  
-  wire.on('upload', (bytes) => {
-    peerData.bytesSent += bytes;
-  });
-  
-  attachEphemeralExtension(wire);
-  
-  // Stagger initial requests
-  const delay = Math.random() * 10000; // 0-10 seconds
-  setTimeout(() => {
-    if (!wire.destroyed) {
-      sendPeer(wire, { type: 'request_posts' });
-    }
-  }, delay);
 
-      wire.on('close', () => {
-        console.log(`Disconnected from peer: ${id}`);
-        state.peers.delete(id);
-        updateStatus();
-      });
-      wire.on('error', err => console.error(`Wire error ${id}:`, err.message));
-    }
 
     const sendPeer = (wire, msg) => {
       if (!wire || wire.destroyed) return;
