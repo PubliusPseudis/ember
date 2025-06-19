@@ -2489,9 +2489,8 @@ function updateConnectionStatus(message, type = 'info') {
   }
 }
 
-// Override handleWire to update status when peers connect
-const originalHandleWire = window.handleWire || handleWire;
-window.handleWire = function handleWire(wire, addr, shardIndex) {
+// Handle new wire connections with status updates
+function handleWire(wire, addr, shardIndex) {
   const id = wire.peerId;
   if (state.peers.has(id)) return;
   
