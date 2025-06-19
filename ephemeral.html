@@ -2302,40 +2302,259 @@ class Post {
 
 
     /* ---------- WEBTORRENT NETWORKING ---------- */
-    function initNetwork() {
-      const trackers = [
-        'wss://tracker.openwebtorrent.com',
-        'wss://tracker.webtorrent.dev',
-        'wss://tracker.btorrent.xyz',
-        'wss://tracker.files.fm:7073/announce',
-        'wss://spacetradersapi-chatbox.herokuapp.com:443/announce'
-      ];
-      
-      // Store trackers for later use
-      state.trackers = trackers;
+function initNetwork() {
+  updateConnectionStatus("Initializing WebTorrent...");
+  
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  console.log("Initializing network... iOS:", isIOS);
+  
+  // Check WebRTC support
+  if (!window.RTCPeerConnection) {
+    console.error("WebRTC not supported!");
+    updateConnectionStatus("WebRTC not supported on this device", 'error');
+    notify("WebRTC not supported on this device");
+    return;
+  }
+  
+  updateConnectionStatus("Setting up peer connections...");
+  
+  const trackers = [
+    'wss://tracker.openwebtorrent.com',
+    'wss://tracker.webtorrent.dev',
+    'wss://tracker.btorrent.xyz',
+    'wss://tracker.files.fm:7073/announce',
+    'wss://spacetradersapi-chatbox.herokuapp.com:443/announce'
+  ];
+  
+  // Store trackers for later use
+  state.trackers = trackers;
+  
+  try {
+    state.client = new WebTorrent({
+      dht: !isIOS, // Disable DHT on iOS
+      maxConns: isIOS ? 20 : 100,
+      tracker: {
+        announce: trackers,
+        rtcConfig: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        }
+      },
+      trickle: true
+    });
+    
+    updateConnectionStatus("WebTorrent client ready");
+    console.log("WebTorrent client created successfully");
+  } catch (e) {
+    console.error("Failed to create WebTorrent client:", e);
+    updateConnectionStatus(`Failed to initialize: ${e.message}`, 'error');
+    throw e;
+  }
 
-      state.client = new WebTorrent({
-        dht: true,
-        maxConns: 100,
-        tracker: {
-          announce: trackers
-        },
-        trickle: true
-      });
-
-      state.client.on("error", e => {
-        console.error("Client error:", e.message);
-        if (!/Connection error|WebSocket/.test(e.message)) notify("Network error: " + e.message);
-      });
-
-      // Join initial shards
-      const initialShards = dynamicSharding.selectShards(3);
-      initialShards.forEach(shardId => dynamicSharding.joinShard(shardId));
-      
-      // Enable cross-shard discovery
-      dynamicSharding.enableCrossShardDiscovery();
-
+  // Set up event handlers
+  state.client.on("error", e => {
+    console.error("Client error:", e.message);
+    updateConnectionStatus(`Network error: ${e.message}`, 'error');
+    if (!/Connection error|WebSocket/.test(e.message)) {
+      notify("Network error: " + e.message);
     }
+  });
+  
+  state.client.on('warning', (err) => {
+    console.warn('WebTorrent warning:', err);
+  });
+
+  // Override joinShard to add status updates
+  const originalJoinShard = dynamicSharding.joinShard.bind(dynamicSharding);
+  dynamicSharding.joinShard = function(shardId) {
+    if (this.myShards.has(shardId)) return;
+    
+    updateConnectionStatus(`Joining shard ${shardId}...`);
+    console.log(`Joining shard ${shardId}`);
+    
+    this.myShards.add(shardId);
+    
+    // Create and seed the shard
+    const shardData = new Blob([`Ember-Shard-${shardId}`], { type: 'text/plain' });
+    
+    state.client.seed(shardData, { 
+      name: `ember-shard-${shardId}.txt`,
+      announce: state.trackers || []
+    }, torrent => {
+      updateConnectionStatus(`Connected to shard ${shardId}`);
+      console.log(`Torrent ready for shard ${shardId}:`, torrent.infoHash);
+      
+      torrent.on('peer', (addr) => {
+        console.log(`Peer discovered in shard ${shardId}: ${addr}`);
+        updateConnectionStatus(`Found peer in shard ${shardId}!`);
+      });
+      
+      torrent.on('wire', (wire, addr) => {
+        console.log(`Wire connected in shard ${shardId}: ${addr}`);
+        updateConnectionStatus(`Connected to peer!`, 'success');
+        handleWire(wire, addr, shardId);
+      });
+      
+      torrent.on('announce', () => {
+        console.log(`Announced to tracker for shard ${shardId}`);
+      });
+      
+      torrent.on('error', (err) => {
+        console.error(`Torrent error on shard ${shardId}:`, err);
+        updateConnectionStatus(`Shard ${shardId} error: ${err.message}`, 'error');
+      });
+      
+      torrent.on('warning', (err) => {
+        console.warn(`Torrent warning on shard ${shardId}:`, err);
+      });
+    });
+  };
+
+  // Join initial shards
+  updateConnectionStatus("Joining initial shards...");
+  const initialShards = dynamicSharding.selectShards(3);
+  console.log("Initial shards selected:", initialShards);
+  
+  initialShards.forEach((shardId, index) => {
+    setTimeout(() => {
+      dynamicSharding.joinShard(shardId);
+    }, index * 500); // Stagger shard joins by 500ms
+  });
+  
+  // Enable cross-shard discovery
+  dynamicSharding.enableCrossShardDiscovery();
+  
+  // Set up periodic status check
+  let lastPeerCount = 0;
+  const statusCheckInterval = setInterval(() => {
+    const currentPeerCount = state.peers.size;
+    
+    if (currentPeerCount !== lastPeerCount) {
+      console.log(`Peer count changed: ${lastPeerCount} → ${currentPeerCount}`);
+      
+      if (currentPeerCount > 0 && lastPeerCount === 0) {
+        updateConnectionStatus(`Connected! ${currentPeerCount} peer${currentPeerCount > 1 ? 's' : ''}`, 'success');
+        // Clear the interval after successful connection
+        setTimeout(() => clearInterval(statusCheckInterval), 3000);
+      } else if (currentPeerCount > lastPeerCount) {
+        updateConnectionStatus(`${currentPeerCount} peers connected`, 'success');
+      }
+      
+      lastPeerCount = currentPeerCount;
+    }
+    
+    // If still no peers after 10 seconds, show helpful message
+    if (state.peers.size === 0 && document.getElementById("loading").style.display !== "none") {
+      const timeSinceStart = Date.now() - (window.networkStartTime || Date.now());
+      if (timeSinceStart > 10000) {
+        updateConnectionStatus("Still searching for peers... This may take a moment if the network is quiet.", 'info');
+      }
+    }
+  }, 1000);
+  
+  // Track when we started
+  window.networkStartTime = Date.now();
+  
+  // Log initial state
+  console.log("Network initialization complete", {
+    client: !!state.client,
+    shards: Array.from(dynamicSharding.myShards),
+    trackers: trackers.length
+  });
+}
+
+// Helper function to update connection status
+function updateConnectionStatus(message, type = 'info') {
+  console.log(`[Status] ${message}`);
+  
+  const loadingEl = document.getElementById("loading");
+  if (!loadingEl || loadingEl.style.display === "none") return;
+  
+  const statusDiv = loadingEl.querySelector('div:last-child') || 
+                   loadingEl.querySelector('.loading-content').lastElementChild;
+  
+  if (statusDiv) {
+    const color = type === 'error' ? '#ff4444' : 
+                  type === 'success' ? '#44ff44' : 
+                  '#ff8c42';
+    
+    statusDiv.innerHTML = `<div style="font-size:12px;margin-top:10px;color:${color}">${message}</div>`;
+    
+    // For success messages, add a nice animation
+    if (type === 'success') {
+      statusDiv.style.animation = 'pulse 1s ease-in-out';
+    }
+  }
+}
+
+// Override handleWire to update status when peers connect
+const originalHandleWire = window.handleWire || handleWire;
+window.handleWire = function handleWire(wire, addr, shardIndex) {
+  const id = wire.peerId;
+  if (state.peers.has(id)) return;
+  
+  // Update connection status if this is one of the first peers
+  if (state.peers.size < 3) {
+    updateConnectionStatus(`Connected to peer ${state.peers.size + 1}!`, 'success');
+  }
+  
+  // Limit connections per shard
+  const peersInShard = Array.from(state.peers.values())
+    .filter(p => p.shardIndex === shardIndex).length;
+  
+  if (peersInShard > 10) { // Max 10 peers per shard
+    console.log(`Shard ${shardIndex} full, rejecting peer`);
+    wire.destroy();
+    return;
+  }
+  
+  console.log(`New peer connection on shard #${shardIndex}: ${id}`);
+  
+  const peerData = { 
+    wire, 
+    addr,
+    id: id, 
+    messageTimestamps: [], 
+    shardIndex,
+    connectedAt: Date.now(),
+    bytesReceived: 0,
+    bytesSent: 0
+  };
+  
+  state.peers.set(id, peerData);
+  peerManager.updateScore(id, 'connection', 1);
+  updateStatus();
+  
+  // Monitor connection quality
+  wire.on('download', (bytes) => {
+    peerData.bytesReceived += bytes;
+    peerManager.updateScore(id, 'data', bytes / 1000);
+  });
+  
+  wire.on('upload', (bytes) => {
+    peerData.bytesSent += bytes;
+  });
+  
+  attachEphemeralExtension(wire);
+  
+  // Stagger initial requests
+  const delay = Math.random() * 10000; // 0-10 seconds
+  setTimeout(() => {
+    if (!wire.destroyed) {
+      sendPeer(wire, { type: 'request_posts' });
+    }
+  }, delay);
+
+  wire.on('close', () => {
+    console.log(`Disconnected from peer: ${id}`);
+    state.peers.delete(id);
+    updateStatus();
+  });
+  
+  wire.on('error', err => console.error(`Wire error ${id}:`, err.message));
+};
 
 function handleWire(wire, addr, shardIndex) {
   const id = wire.peerId;
@@ -3633,91 +3852,148 @@ function toggleFeedMode() {
 
 
     /* ---------- INIT ---------- */
-    async function init() {
-      const savedTheme = localStorage.getItem('ephemeral-theme') || 'dark';
-      applyTheme(savedTheme);
-      setupThemeToggle();
-      
-      try {
-        // Initialize state manager first
-        await stateManager.init();
-        
-        // Try to load saved identity
-        await stateManager.loadUserState();
-        
-        // If no saved identity, create new one
-        if (!state.myIdentity) {
-          await initIdentity();
-        }
-        
-        await initContentFilter();
-        await initImageFilter();
-        await waitForWebTorrent();
-        // Initialize scalability components
-        window.imageStore = imageStore;
-        window.progressiveVDF = progressiveVDF;
-        window.epidemicGossip = epidemicGossip;
-
-        console.log("Scalability enhancements loaded");
-
-
-        // Load saved posts before connecting to network
-        const loadedPosts = await stateManager.loadPosts();
-        if (loadedPosts > 0) {
-          const renderFullThread = (post) => {
-            renderPost(post);
-            if (post.replies && post.replies.size > 0) {
-              post.replies.forEach(replyId => {
-                const replyPost = state.posts.get(replyId);
-                if (replyPost) {
-                  renderFullThread(replyPost); // Recurse to render replies of replies
-                }
-              });
-            }
-          };
-
-          state.posts.forEach(post => {
-            if (!post.parentId) {
-              renderFullThread(post);
+async function init() {
+  const savedTheme = localStorage.getItem('ephemeral-theme') || 'dark';
+  applyTheme(savedTheme);
+  setupThemeToggle();
+  
+  try {
+    // Initialize state manager first
+    await stateManager.init();
+    
+    // Try to load saved identity
+    await stateManager.loadUserState();
+    
+    // If no saved identity, create new one
+    if (!state.myIdentity) {
+      await initIdentity();
+    }
+    
+    await initContentFilter();
+    await initImageFilter();
+    await waitForWebTorrent();
+    
+    // Load saved posts before showing connect screen
+    const loadedPosts = await stateManager.loadPosts();
+    if (loadedPosts > 0) {
+      // Render saved posts
+      const renderFullThread = (post) => {
+        renderPost(post);
+        if (post.replies && post.replies.size > 0) {
+          post.replies.forEach(replyId => {
+            const replyPost = state.posts.get(replyId);
+            if (replyPost) {
+              renderFullThread(replyPost);
             }
           });
-          updateStatus();
-          notify(`Restored ${loadedPosts} posts from last session`);
         }
-        
-        // Load peer scores
-        await stateManager.loadPeerScores();
-        
-        initNetwork();
-        startMaintenanceLoop();
+      };
 
-        
-        window.addEventListener("beforeunload", () => {
-              if (maintenanceInterval) clearInterval(maintenanceInterval);
-
-          // Save state before leaving
-          stateManager.savePosts();
-          stateManager.saveUserState();
-          stateManager.savePeerScores();
-          
-          if (state.client) state.client.destroy();
-          if (state.localChannel) state.localChannel.close();
-        });
-        
-        setTimeout(() => {
-          document.getElementById("loading").style.display = "none";
-          if (!localStorage.getItem("ephemeral-tips")) {
-            setTimeout(() => notify("💡 Tip: Posts live only while carried"), 1000);
-            setTimeout(() => notify("💡 Tip: Ctrl+Enter to post"), 6000);
-            localStorage.setItem("ephemeral-tips", "yes");
-          }
-        }, 1500);
-      } catch (e) {
-        console.error("Init failed:", e);
-        document.getElementById("loading").innerHTML =
-          `<div class="loading-content"><h2>Init Failed</h2><p>${e.message}</p><button onclick="location.reload()">Try Again</button></div>`;
-      }
+      state.posts.forEach(post => {
+        if (!post.parentId) {
+          renderFullThread(post);
+        }
+      });
+      
+      updateStatus();
     }
+    
+    // Load peer scores
+    await stateManager.loadPeerScores();
+    
+    // Show connect screen instead of auto-connecting
+    showConnectScreen(loadedPosts);
+    
+  } catch (e) {
+    console.error("Init failed:", e);
+    document.getElementById("loading").innerHTML =
+      `<div class="loading-content"><h2>Init Failed</h2><p>${e.message}</p><button onclick="location.reload()">Try Again</button></div>`;
+  }
+}
+
+function showConnectScreen(loadedPostCount) {
+  const isReturningUser = loadedPostCount > 0;
+  
+  document.getElementById("loading").innerHTML = `
+    <div class="loading-content" style="max-width: 400px; text-align: center;">
+      <h1 style="font-size: 48px; margin-bottom: 20px;">🔥</h1>
+      <h2>Welcome to Ember</h2>
+      <p style="color: #888; margin-bottom: 20px;">
+        ${isReturningUser 
+          ? `Welcome back! ${loadedPostCount} embers still glow from your last visit.`
+          : 'A decentralized network where posts live only as long as someone tends the flame.'
+        }
+      </p>
+      <button onclick="connectToNetwork()" class="primary-button" style="font-size: 18px; padding: 12px 30px;">
+        🔥 Ignite Connection
+      </button>
+      <p style="font-size: 12px; color: #666; margin-top: 20px;">
+        By connecting, you agree to participate in a public peer-to-peer network
+      </p>
+    </div>
+  `;
+}
+
+window.connectToNetwork = async function() {
+  // Update loading screen
+  document.getElementById("loading").innerHTML = `
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <div>🔥 Igniting the Ember Network...</div>
+      <div style="font-size:12px;margin-top:10px;color:#ff8c42">Finding peers...</div>
+    </div>
+  `;
+  
+  // Small delay for UI feedback
+  await new Promise(r => setTimeout(r, 500));
+  
+  try {
+    // Initialize network
+    initNetwork();
+    
+    // Start maintenance loop
+    startMaintenanceLoop();
+    
+    // Set up beforeunload handlers
+    window.addEventListener("beforeunload", () => {
+      if (maintenanceInterval) clearInterval(maintenanceInterval);
+      
+      // Save state before leaving
+      stateManager.savePosts();
+      stateManager.saveUserState();
+      stateManager.savePeerScores();
+      
+      if (state.client) state.client.destroy();
+    });
+    
+    // Hide loading screen after a moment
+    setTimeout(() => {
+      document.getElementById("loading").style.display = "none";
+      
+      // Show tips for new users
+      if (!localStorage.getItem("ephemeral-tips")) {
+        setTimeout(() => notify("💡 Tip: Posts live only while carried by peers"), 1000);
+        setTimeout(() => notify("💡 Tip: Ctrl+Enter to post quickly"), 6000);
+        localStorage.setItem("ephemeral-tips", "yes");
+      }
+      
+      // If returning user with posts, show a welcome back message
+      if (state.posts.size > 0) {
+        notify(`Welcome back! ${state.posts.size} embers still burning 🔥`);
+      }
+    }, 1500);
+    
+  } catch (error) {
+    console.error("Network initialization failed:", error);
+    document.getElementById("loading").innerHTML = `
+      <div class="loading-content">
+        <h2>Connection Failed</h2>
+        <p>${error.message}</p>
+        <button onclick="connectToNetwork()" class="primary-button">Try Again</button>
+      </div>
+    `;
+  }
+};
     window.addEventListener("load", init);
 
     /* ---------- DEBUG ---------- */
