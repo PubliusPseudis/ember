@@ -2595,22 +2595,33 @@ function handleWire(wire, addr, shardIndex) {
       
       // Called when extended handshake completes
       EphemeralExtension.prototype.onExtendedHandshake = function(handshake) {
+        console.log('Extension handshake received:', handshake);
+        
         if (!handshake.m || typeof handshake.m.ephemeral_msg === 'undefined') {
-          return console.log('Peer does not support ephemeral_msg');
+          console.warn('Peer does not support ephemeral_msg');
+          return;
         }
         
         // Store the message type ID assigned by peer
         this.peerId = handshake.m.ephemeral_msg;
         this._ready = true;
         
-        // Now that extension is ready, request posts
-        sendPeer(wire, { type: 'request_posts' });
+        console.log('Extension ready! PeerID:', this.peerId);
+        
+        // Add delay before first message
+        setTimeout(() => {
+          if (!wire.destroyed && this._ready) {
+            sendPeer(wire, { type: 'request_posts' });
+            console.log('Sent initial request_posts');
+          }
+        }, 1000);
       };
       
       // Called when a message for this extension is received
       EphemeralExtension.prototype.onMessage = function(buf) {
         try {
           const msg = JSON.parse(new TextDecoder().decode(buf));
+          console.log('Received message:', msg.type);
           handlePeerMessage(msg, wire);
         } catch (e) {
           console.error('Bad peer message:', e);
