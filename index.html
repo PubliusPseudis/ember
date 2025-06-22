@@ -1392,35 +1392,7 @@ class KademliaDHT {
     // Initialize RPC handlers
     this.setupRPCHandlers();
   }
-  getStats() {
-      let totalPeers = 0;
-      let activeBuckets = 0;
-      
-      for (let i = 0; i < this.buckets.length; i++) {
-        const bucketSize = this.buckets[i].length;
-        totalPeers += bucketSize;
-        if (bucketSize > 0) activeBuckets++;
-      }
-      
-      return {
-        totalPeers,
-        activeBuckets,
-        avgBucketSize: activeBuckets > 0 ? (totalPeers / activeBuckets).toFixed(2) : 0,
-        storageSize: this.storage.size
-      };
-    }
-      // Remove a peer from k-buckets
-  removePeer(peerId) {
-    const bucketIndex = this.getBucketIndex(peerId);
-    const bucket = this.buckets[bucketIndex];
-    
-    const index = bucket.findIndex(p => this.uint8ArrayEquals(p.id, peerId));
-    if (index !== -1) {
-      bucket.splice(index, 1);
-      console.log(`[DHT] Removed peer from k-bucket ${bucketIndex}, bucket size: ${bucket.length}`);
-    }
-  }
-    
+  
   // XOR distance between two node IDs
   distance(id1, id2) {
     const dist = new Uint8Array(20);
@@ -1473,6 +1445,35 @@ class KademliaDHT {
         failures: 0
       });
       console.log(`Added peer to k-bucket ${bucketIndex}, bucket size: ${bucket.length}`);
+    } else {
+      // Bucket full - ping oldest peer
+      const oldest = bucket[0];
+      this.ping(oldest).then(isAlive => {
+        if (!isAlive) {
+          // Replace with new peer
+          bucket.shift();
+          bucket.push({
+            id: peerId,
+            wire: peerInfo.wire,
+            lastSeen: Date.now(),
+            rtt: 0,
+            failures: 0
+          });
+          console.log(`Replaced stale peer in k-bucket ${bucketIndex}`);
+        }
+      });
+    }
+  }
+  
+  // Remove a peer from k-buckets
+  removePeer(peerId) {
+    const bucketIndex = this.getBucketIndex(peerId);
+    const bucket = this.buckets[bucketIndex];
+    
+    const index = bucket.findIndex(p => this.uint8ArrayEquals(p.id, peerId));
+    if (index !== -1) {
+      bucket.splice(index, 1);
+      console.log(`[DHT] Removed peer from k-bucket ${bucketIndex}, bucket size: ${bucket.length}`);
     }
   }
   
@@ -1487,21 +1488,20 @@ class KademliaDHT {
   
   // Convert string/hex to Uint8Array
   hexToUint8Array(hex) {
- // Handle hex strings that might have '0x' prefix
-  if (hex.startsWith('0x')) {
-    hex = hex.slice(2);
+    if (hex.startsWith('0x')) {
+      hex = hex.slice(2);
+    }
+    
+    if (hex.length % 2) {
+      hex = '0' + hex;
+    }
+    
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    }
+    return bytes;
   }
-  
-  if (hex.length % 2) {
-    hex = '0' + hex; // Pad with leading zero if odd length
-  }
-  
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-  }
-  return bytes;
-}
   
   // Convert Uint8Array to hex string
   uint8ArrayToHex(bytes) {
@@ -1518,56 +1518,13 @@ class KademliaDHT {
     return new Uint8Array(hashBuffer);
   }
   
-  setupRPCHandlers() {
-    this.rpcHandlers.set('PING', this.handlePing.bind(this));
-    this.rpcHandlers.set('FIND_NODE', this.handleFindNode.bind(this));
-  }
-  
-  handleRPC(msg, fromWire) {
-    const { method, params, rpcId } = msg;
-    
-    if (msg.isResponse) {
-      const pending = this.pendingRPCs.get(rpcId);
-      if (pending) {
-        clearTimeout(pending.timeout);
-        pending.resolve(msg.result);
-        this.pendingRPCs.delete(rpcId);
-      }
-      return;
-    }
-    
-    const handler = this.rpcHandlers.get(method);
-    if (handler) {
-      const result = handler(params);
-      sendPeer(fromWire, {
-        type: 'dht_rpc',
-        isResponse: true,
-        rpcId,
-        result
-      });
-    }
-  }
-  
-  handlePing() {
-    return { alive: true, nodeId: this.uint8ArrayToHex(this.nodeId) };
-  }
-  
-  handleFindNode(params) {
-    const targetId = this.hexToUint8Array(params.targetId);
-    const closest = this.findClosestPeers(targetId, this.k);
-    
-    return {
-      peers: closest.map(p => ({
-        id: this.uint8ArrayToHex(p.id)
-      }))
-    };
-  }
-  
-  findClosestPeers(targetId, count = this.k) {
+  // Find the k closest peers to a target ID
+  findClosestPeers(targetId, count = this.k, excludePeerId = null) {
     const allPeers = [];
     
     for (const bucket of this.buckets) {
       for (const peer of bucket) {
+        if (excludePeerId && this.uint8ArrayEquals(peer.id, excludePeerId)) continue;
         if (!peer.wire || peer.wire.destroyed) continue;
         
         const distance = this.distance(targetId, peer.id);
@@ -1587,6 +1544,313 @@ class KademliaDHT {
     
     return allPeers.slice(0, count).map(item => item.peer);
   }
+  
+  // Setup RPC handlers
+  setupRPCHandlers() {
+    this.rpcHandlers.set('PING', this.handlePing.bind(this));
+    this.rpcHandlers.set('FIND_NODE', this.handleFindNode.bind(this));
+    this.rpcHandlers.set('FIND_VALUE', this.handleFindValue.bind(this));
+    this.rpcHandlers.set('STORE', this.handleStore.bind(this));
+  }
+  
+  // Generate RPC ID
+  generateRPCId() {
+    return Math.random().toString(36).substr(2, 20);
+  }
+  
+  // Send RPC to a peer
+  async sendRPC(peer, method, params) {
+    const rpcId = this.generateRPCId();
+    
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingRPCs.delete(rpcId);
+        peer.failures++;
+        reject(new Error('RPC timeout'));
+      }, this.rpcTimeout);
+      
+      this.pendingRPCs.set(rpcId, { resolve, reject, timeout });
+      
+      sendPeer(peer.wire, {
+        type: 'dht_rpc',
+        method,
+        params,
+        rpcId,
+        senderId: this.uint8ArrayToHex(this.nodeId)
+      });
+    });
+  }
+  
+  // Handle incoming RPC
+  handleRPC(msg, fromWire) {
+    const { method, params, rpcId, senderId } = msg;
+    
+    if (msg.isResponse) {
+      // Handle RPC response
+      const pending = this.pendingRPCs.get(rpcId);
+      if (pending) {
+        clearTimeout(pending.timeout);
+        pending.resolve(msg.result);
+        this.pendingRPCs.delete(rpcId);
+      }
+      return;
+    }
+    
+    // Handle RPC request
+    const handler = this.rpcHandlers.get(method);
+    if (handler) {
+      const result = handler(params, senderId);
+      sendPeer(fromWire, {
+        type: 'dht_rpc',
+        isResponse: true,
+        rpcId,
+        result
+      });
+    }
+  }
+  
+  // RPC Handlers
+  handlePing(params, senderId) {
+    return { alive: true, nodeId: this.uint8ArrayToHex(this.nodeId) };
+  }
+  
+  handleFindNode(params, senderId) {
+    const targetId = this.hexToUint8Array(params.targetId);
+    const closest = this.findClosestPeers(targetId, this.k);
+    
+    return {
+      peers: closest.map(p => ({
+        id: this.uint8ArrayToHex(p.id)
+      }))
+    };
+  }
+  
+  handleFindValue(params, senderId) {
+    const key = params.key;
+    
+    // Check if we have the value
+    if (this.storage.has(key)) {
+      return {
+        found: true,
+        value: this.storage.get(key)
+      };
+    }
+    
+    // Return closest peers
+    const keyId = this.hashToNodeId(key);
+    const closest = this.findClosestPeers(keyId, this.k);
+    
+    return {
+      found: false,
+      peers: closest.map(p => ({
+        id: this.uint8ArrayToHex(p.id)
+      }))
+    };
+  }
+  
+  handleStore(params, senderId) {
+    const { key, value } = params;
+    this.storage.set(key, value);
+    
+    // Clean up old entries if storage is too large
+    if (this.storage.size > 10000) {
+      const entries = Array.from(this.storage.entries());
+      entries.slice(0, 5000).forEach(([k]) => this.storage.delete(k));
+    }
+    
+    return { stored: true };
+  }
+  
+  // High-level operations
+  async ping(peer) {
+    try {
+      const result = await this.sendRPC(peer, 'PING', {});
+      peer.lastSeen = Date.now();
+      peer.failures = 0;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  // Iterative find node
+  async findNode(targetId) {
+    const seen = new Set();
+    const shortlist = this.findClosestPeers(targetId, this.alpha);
+    
+    if (shortlist.length === 0) return [];
+    
+    let closestNode = shortlist[0];
+    let closestDistance = this.distance(targetId, closestNode.id);
+    
+    while (true) {
+      // Query alpha peers in parallel
+      const queries = [];
+      let queried = 0;
+      
+      for (const peer of shortlist) {
+        const peerId = this.uint8ArrayToHex(peer.id);
+        if (seen.has(peerId) || queried >= this.alpha) continue;
+        
+        seen.add(peerId);
+        queried++;
+        
+        queries.push(
+          this.sendRPC(peer, 'FIND_NODE', { 
+            targetId: this.uint8ArrayToHex(targetId) 
+          }).catch(() => null)
+        );
+      }
+      
+      if (queries.length === 0) break;
+      
+      const results = await Promise.all(queries);
+      let improved = false;
+      
+      for (const result of results) {
+        if (!result || !result.peers) continue;
+        
+        for (const peerInfo of result.peers) {
+          const peerId = this.hexToUint8Array(peerInfo.id);
+          
+          // Check if we have this peer in our buckets
+          let found = false;
+          for (const bucket of this.buckets) {
+            const peer = bucket.find(p => this.uint8ArrayEquals(p.id, peerId));
+            if (peer && !seen.has(peerInfo.id)) {
+              shortlist.push(peer);
+              
+              const distance = this.distance(targetId, peerId);
+              if (Buffer.compare(distance, closestDistance) < 0) {
+                closestDistance = distance;
+                closestNode = peer;
+                improved = true;
+              }
+              
+              found = true;
+              break;
+            }
+          }
+        }
+      }
+      
+      if (!improved) break;
+      
+      // Sort shortlist by distance
+      shortlist.sort((a, b) => {
+        const distA = this.distance(targetId, a.id);
+        const distB = this.distance(targetId, b.id);
+        for (let i = 0; i < 20; i++) {
+          if (distA[i] !== distB[i]) {
+            return distA[i] - distB[i];
+          }
+        }
+        return 0;
+      });
+    }
+    
+    return shortlist.slice(0, this.k);
+  }
+  
+  // Store a value in the DHT
+  async store(key, value) {
+    const keyId = await this.hashToNodeId(key);
+    const closest = await this.findNode(keyId);
+    
+    const storePromises = closest.slice(0, this.k).map(peer =>
+      this.sendRPC(peer, 'STORE', { key, value }).catch(() => false)
+    );
+    
+    const results = await Promise.all(storePromises);
+    const stored = results.filter(r => r && r.stored).length;
+    
+    console.log(`Stored key ${key} at ${stored}/${this.k} nodes`);
+    return stored > 0;
+  }
+  
+  // Retrieve a value from the DHT
+  async get(key) {
+    const keyId = await this.hashToNodeId(key);
+    const seen = new Set();
+    const shortlist = this.findClosestPeers(keyId, this.alpha);
+    
+    while (shortlist.length > 0) {
+      const peer = shortlist.shift();
+      const peerId = this.uint8ArrayToHex(peer.id);
+      
+      if (seen.has(peerId)) continue;
+      seen.add(peerId);
+      
+      try {
+        const result = await this.sendRPC(peer, 'FIND_VALUE', { key });
+        
+        if (result.found) {
+          return result.value;
+        }
+        
+        // Add returned peers to shortlist
+        if (result.peers) {
+          for (const peerInfo of result.peers) {
+            if (!seen.has(peerInfo.id)) {
+              // Find peer in our buckets
+              for (const bucket of this.buckets) {
+                const p = bucket.find(peer => 
+                  this.uint8ArrayToHex(peer.id) === peerInfo.id
+                );
+                if (p) {
+                  shortlist.push(p);
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        // Sort by distance
+        shortlist.sort((a, b) => {
+          const distA = this.distance(keyId, a.id);
+          const distB = this.distance(keyId, b.id);
+          for (let i = 0; i < 20; i++) {
+            if (distA[i] !== distB[i]) {
+              return distA[i] - distB[i];
+            }
+          }
+          return 0;
+        });
+        
+      } catch (e) {
+        // Continue with next peer
+      }
+    }
+    
+    return null;
+  }
+  
+  // Bootstrap the DHT by finding our own node ID
+  async bootstrap() {
+    console.log("Bootstrapping DHT...");
+    const closest = await this.findNode(this.nodeId);
+    console.log(`DHT bootstrap complete, found ${closest.length} peers`);
+  }
+  
+  // Get routing table statistics
+  getStats() {
+    let totalPeers = 0;
+    let activeBuckets = 0;
+    
+    for (let i = 0; i < this.buckets.length; i++) {
+      const bucketSize = this.buckets[i].length;
+      totalPeers += bucketSize;
+      if (bucketSize > 0) activeBuckets++;
+    }
+    
+    return {
+      totalPeers,
+      activeBuckets,
+      avgBucketSize: activeBuckets > 0 ? (totalPeers / activeBuckets).toFixed(2) : 0,
+      storageSize: this.storage.size
+    };
+  }
 }
 
 // --- HYPARVIEW PROTOCOL IMPLEMENTATION ---
@@ -1596,127 +1860,33 @@ class HyParView {
     this.dht = dht;
     
     // Protocol parameters
-    this.activeViewSize = 5;
-    this.passiveViewSize = 30;
-    this.shuffleLength = 4;
-    this.shuffleInterval = 10000;
+    this.activeViewSize = 5; // Small active view
+    this.passiveViewSize = 30; // Larger passive view
+    this.shuffleLength = 4; // Number of peers to exchange in shuffle
+    this.shuffleInterval = 10000; // 10 seconds
     
     // Views
-    this.activeView = new Map();
-    this.passiveView = new Map();
+    this.activeView = new Map(); // peerId -> peer info
+    this.passiveView = new Map(); // peerId -> peer info
     
-    // State
+    // Protocol state
     this.shuffleTimer = null;
+    this.joinTimer = null;
+    this.isBootstrapping = false;
+    
+    // Start periodic shuffle
     this.startShuffle();
   }
-
-handlePeerFailure(peerId) {
-  const peerIdStr = this.dht.uint8ArrayToHex(peerId);
   
-  if (!this.activeView.has(peerIdStr)) return;
-  
-  console.log(`[HyParView] Peer failed: ${peerIdStr.substring(0, 12)}...`);
-  
-  // Remove from active view
-  this.activeView.delete(peerIdStr);
-  
-  // Try to replace with peer from passive view
-  if (this.passiveView.size > 0) {
-    const candidates = Array.from(this.passiveView.values())
-      .filter(p => p.wire && !p.wire.destroyed)
-      .sort((a, b) => b.priority - a.priority);
-    
-    if (candidates.length > 0) {
-      const replacement = candidates[0];
-      this.promoteToActiveView(replacement.id);
-    }
-  }
-  
-  // If active view is too small, trigger recovery
-  if (this.activeView.size < Math.floor(this.activeViewSize / 2)) {
-    this.triggerRecovery();
-  }
-}
-
-
-addToPassiveView(peerId, peerInfo) {
-  const peerIdStr = this.dht.uint8ArrayToHex(peerId);
-  
-  if (this.activeView.has(peerIdStr) || this.passiveView.has(peerIdStr)) {
-    return false;
-  }
-  
-  if (this.passiveView.size >= this.passiveViewSize) {
-    // Drop random peer from passive view
-    const keys = Array.from(this.passiveView.keys());
-    const randomKey = keys[Math.floor(Math.random() * keys.length)];
-    this.passiveView.delete(randomKey);
-  }
-  
-  this.passiveView.set(peerIdStr, {
-    id: peerId,
-    wire: peerInfo.wire || null,
-    addedAt: Date.now(),
-    priority: peerInfo.priority || 0
-  });
-  
-  console.log(`[HyParView] Added peer to passive view. Passive: ${this.passiveView.size}/${this.passiveViewSize}`);
-  
-  return true;
-}
-
-promoteToActiveView(peerId) {
-  const peerIdStr = this.dht.uint8ArrayToHex(peerId);
-  const peer = this.passiveView.get(peerIdStr);
-  
-  if (!peer) return false;
-  
-  // Send JOIN request
-  if (peer.wire && !peer.wire.destroyed) {
-    sendPeer(peer.wire, {
-      type: 'hyparview',
-      subtype: 'JOIN',
-      ttl: 3,
-      sender: this.dht.uint8ArrayToHex(this.nodeId)
-    });
-    
-    return this.addToActiveView(peerId, { ...peer, isOutgoing: true });
-  }
-  
-  return false;
-}
-
-triggerRecovery() {
-  console.log(`[HyParView] Triggering recovery. Active view size: ${this.activeView.size}`);
-  
-  // Try to promote peers from passive view
-  const candidates = Array.from(this.passiveView.values())
-    .filter(p => p.wire && !p.wire.destroyed);
-  
-  const needed = this.activeViewSize - this.activeView.size;
-  for (let i = 0; i < needed && i < candidates.length; i++) {
-    this.promoteToActiveView(candidates[i].id);
-  }
-  
-  // If still not enough peers, use DHT to find more
-  if (this.activeView.size < this.activeViewSize) {
-    this.dht.findClosestPeers(this.nodeId, this.activeViewSize * 2)
-      .forEach(peer => {
-        if (this.activeView.size >= this.activeViewSize) return;
-        
-        const peerId = peer.id;
-        if (!this.activeView.has(this.dht.uint8ArrayToHex(peerId))) {
-          this.addToActiveView(peerId, { wire: peer.wire, isOutgoing: true });
-        }
-      });
-  }
-}
+  // Add a peer to active view
   addToActiveView(peerId, peerInfo) {
     const peerIdStr = this.dht.uint8ArrayToHex(peerId);
     
     if (this.activeView.has(peerIdStr)) return true;
     
+    // Check if active view is full
     if (this.activeView.size >= this.activeViewSize) {
+      // Try to drop a peer
       const dropped = this.dropFromActiveView();
       if (!dropped) return false;
     }
@@ -1730,10 +1900,40 @@ triggerRecovery() {
     
     console.log(`[HyParView] Added peer to active view. Active: ${this.activeView.size}/${this.activeViewSize}`);
     
+    // Remove from passive view if present
     this.passiveView.delete(peerIdStr);
+    
     return true;
   }
   
+  // Add a peer to passive view
+  addToPassiveView(peerId, peerInfo) {
+    const peerIdStr = this.dht.uint8ArrayToHex(peerId);
+    
+    if (this.activeView.has(peerIdStr) || this.passiveView.has(peerIdStr)) {
+      return false;
+    }
+    
+    if (this.passiveView.size >= this.passiveViewSize) {
+      // Drop random peer from passive view
+      const keys = Array.from(this.passiveView.keys());
+      const randomKey = keys[Math.floor(Math.random() * keys.length)];
+      this.passiveView.delete(randomKey);
+    }
+    
+    this.passiveView.set(peerIdStr, {
+      id: peerId,
+      wire: peerInfo.wire || null,
+      addedAt: Date.now(),
+      priority: peerInfo.priority || 0
+    });
+    
+    console.log(`[HyParView] Added peer to passive view. Passive: ${this.passiveView.size}/${this.passiveViewSize}`);
+    
+    return true;
+  }
+  
+  // Drop a peer from active view (prioritize dropping incoming connections)
   dropFromActiveView() {
     let candidates = [];
     
@@ -1744,17 +1944,23 @@ triggerRecovery() {
       }
     }
     
+    // If no incoming connections, consider all
     if (candidates.length === 0) {
       candidates = Array.from(this.activeView.keys());
     }
     
     if (candidates.length === 0) return false;
     
+    // Drop random candidate
     const toDrop = candidates[Math.floor(Math.random() * candidates.length)];
     const peer = this.activeView.get(toDrop);
     
     this.activeView.delete(toDrop);
     
+    // Move to passive view
+    this.addToPassiveView(peer.id, peer);
+    
+    // Send DISCONNECT message
     if (peer.wire && !peer.wire.destroyed) {
       sendPeer(peer.wire, {
         type: 'hyparview',
@@ -1765,64 +1971,341 @@ triggerRecovery() {
     return true;
   }
   
+  // Handle peer failure
+  handlePeerFailure(peerId) {
+    const peerIdStr = this.dht.uint8ArrayToHex(peerId);
+    
+    if (!this.activeView.has(peerIdStr)) return;
+    
+    console.log(`[HyParView] Peer failed: ${peerIdStr.substring(0, 12)}...`);
+    
+    // Remove from active view
+    this.activeView.delete(peerIdStr);
+    
+    // Try to replace with peer from passive view
+    if (this.passiveView.size > 0) {
+      const candidates = Array.from(this.passiveView.values())
+        .filter(p => p.wire && !p.wire.destroyed)
+        .sort((a, b) => b.priority - a.priority);
+      
+      if (candidates.length > 0) {
+        const replacement = candidates[0];
+        this.promoteToActiveView(replacement.id);
+      }
+    }
+    
+    // If active view is too small, trigger recovery
+    if (this.activeView.size < Math.floor(this.activeViewSize / 2)) {
+      this.triggerRecovery();
+    }
+  }
+  
+  // Promote a peer from passive to active view
+  promoteToActiveView(peerId) {
+    const peerIdStr = this.dht.uint8ArrayToHex(peerId);
+    const peer = this.passiveView.get(peerIdStr);
+    
+    if (!peer) return false;
+    
+    // Send JOIN request
+    if (peer.wire && !peer.wire.destroyed) {
+      sendPeer(peer.wire, {
+        type: 'hyparview',
+        subtype: 'JOIN',
+        ttl: 3,
+        sender: this.dht.uint8ArrayToHex(this.nodeId)
+      });
+      
+      return this.addToActiveView(peerId, { ...peer, isOutgoing: true });
+    }
+    
+    return false;
+  }
+  
+  // Handle incoming HyParView messages
   handleMessage(msg, fromWire) {
     switch (msg.subtype) {
       case 'JOIN':
         this.handleJoin(msg, fromWire);
         break;
-      case 'DISCONNECT':
-        this.handleDisconnect(msg, fromWire);
+      case 'FORWARD_JOIN':
+        this.handleForwardJoin(msg, fromWire);
+        break;
+      case 'NEIGHBOR':
+        this.handleNeighbor(msg, fromWire);
         break;
       case 'SHUFFLE':
         this.handleShuffle(msg, fromWire);
         break;
+      case 'SHUFFLE_REPLY':
+        this.handleShuffleReply(msg, fromWire);
+        break;
+      case 'DISCONNECT':
+        this.handleDisconnect(msg, fromWire);
+        break;
     }
   }
   
+  // Handle JOIN request
   handleJoin(msg, fromWire) {
     const senderId = this.dht.hexToUint8Array(msg.sender);
-    this.addToActiveView(senderId, { wire: fromWire, isOutgoing: false });
+    
+    // Add to active view if possible
+    const added = this.addToActiveView(senderId, { wire: fromWire, isOutgoing: false });
+    
+    if (added) {
+      // Forward JOIN to other peers
+      if (msg.ttl > 0) {
+        const activeList = Array.from(this.activeView.values())
+          .filter(p => this.dht.uint8ArrayToHex(p.id) !== msg.sender);
+        
+        if (activeList.length > 0) {
+          const target = activeList[Math.floor(Math.random() * activeList.length)];
+          
+          sendPeer(target.wire, {
+            type: 'hyparview',
+            subtype: 'FORWARD_JOIN',
+            ttl: msg.ttl - 1,
+            sender: msg.sender,
+            forwarder: this.dht.uint8ArrayToHex(this.nodeId)
+          });
+        }
+      }
+    } else {
+      // Add to passive view
+      this.addToPassiveView(senderId, { wire: fromWire });
+    }
   }
   
+  // Handle FORWARD_JOIN
+  handleForwardJoin(msg, fromWire) {
+    const senderId = this.dht.hexToUint8Array(msg.sender);
+    
+    if (msg.ttl === 0 || this.activeView.size >= this.activeViewSize) {
+      // Send NEIGHBOR message back to original sender
+      const senderPeer = this.findPeerByWire(fromWire);
+      if (senderPeer) {
+        sendPeer(fromWire, {
+          type: 'hyparview',
+          subtype: 'NEIGHBOR',
+          target: msg.sender,
+          priority: this.activeView.size < this.activeViewSize ? 'high' : 'low'
+        });
+      }
+    } else {
+      // Continue forwarding
+      const activeList = Array.from(this.activeView.values())
+        .filter(p => this.dht.uint8ArrayToHex(p.id) !== msg.sender && 
+                    this.dht.uint8ArrayToHex(p.id) !== msg.forwarder);
+      
+      if (activeList.length > 0) {
+        const target = activeList[Math.floor(Math.random() * activeList.length)];
+        
+        sendPeer(target.wire, {
+          type: 'hyparview',
+          subtype: 'FORWARD_JOIN',
+          ttl: msg.ttl - 1,
+          sender: msg.sender,
+          forwarder: this.dht.uint8ArrayToHex(this.nodeId)
+        });
+      }
+    }
+  }
+  
+  // Handle NEIGHBOR message
+  handleNeighbor(msg, fromWire) {
+    const peerId = fromWire.peerId;
+    
+    if (msg.priority === 'high') {
+      this.addToActiveView(peerId, { wire: fromWire, isOutgoing: false });
+    } else {
+      this.addToPassiveView(peerId, { wire: fromWire, priority: 1 });
+    }
+  }
+  
+  // Handle SHUFFLE request
+  handleShuffle(msg, fromWire) {
+    const senderId = fromWire.peerId;
+    
+    // Select random peers from passive view
+    const passiveList = Array.from(this.passiveView.entries());
+    const selected = [];
+    
+    for (let i = 0; i < this.shuffleLength && passiveList.length > 0; i++) {
+      const index = Math.floor(Math.random() * passiveList.length);
+      const [peerId, peer] = passiveList.splice(index, 1)[0];
+      selected.push(peerId);
+    }
+    
+    // Send reply
+    sendPeer(fromWire, {
+      type: 'hyparview',
+      subtype: 'SHUFFLE_REPLY',
+      peers: selected
+    });
+    
+    // Add received peers to passive view
+    if (msg.peers) {
+      for (const peerId of msg.peers) {
+        this.addToPassiveView(this.dht.hexToUint8Array(peerId), { priority: 0 });
+      }
+    }
+  }
+  
+  // Handle SHUFFLE_REPLY
+  handleShuffleReply(msg, fromWire) {
+    if (msg.peers) {
+      for (const peerId of msg.peers) {
+        this.addToPassiveView(this.dht.hexToUint8Array(peerId), { priority: 0 });
+      }
+    }
+  }
+  
+  // Handle DISCONNECT
   handleDisconnect(msg, fromWire) {
     const peer = this.findPeerByWire(fromWire);
     if (peer) {
       const peerIdStr = this.dht.uint8ArrayToHex(peer.id);
       this.activeView.delete(peerIdStr);
+      console.log(`[HyParView] Peer disconnected: ${peerIdStr.substring(0, 12)}...`);
     }
   }
   
-  handleShuffle(msg, fromWire) {
-    // Implementation simplified for browser
-  }
-  
+  // Find peer by wire connection
   findPeerByWire(wire) {
     for (const [peerId, peer] of this.activeView) {
+      if (peer.wire === wire) return peer;
+    }
+    for (const [peerId, peer] of this.passiveView) {
       if (peer.wire === wire) return peer;
     }
     return null;
   }
   
+  // Start periodic shuffle
   startShuffle() {
     this.shuffleTimer = setInterval(() => {
       this.performShuffle();
     }, this.shuffleInterval);
   }
   
+  // Perform shuffle operation
   performShuffle() {
-    // Simplified shuffle for browser
+    if (this.activeView.size === 0) return;
+    
+    // Select random active peer
+    const activePeers = Array.from(this.activeView.values());
+    const target = activePeers[Math.floor(Math.random() * activePeers.length)];
+    
+    // Select random subset from active and passive views
+    const toSend = [];
+    const combined = [
+      ...Array.from(this.activeView.keys()),
+      ...Array.from(this.passiveView.keys())
+    ];
+    
+    for (let i = 0; i < this.shuffleLength && combined.length > 0; i++) {
+      const index = Math.floor(Math.random() * combined.length);
+      toSend.push(combined.splice(index, 1)[0]);
+    }
+    
+    if (toSend.length > 0 && target.wire && !target.wire.destroyed) {
+      sendPeer(target.wire, {
+        type: 'hyparview',
+        subtype: 'SHUFFLE',
+        peers: toSend
+      });
+    }
   }
   
+  // Trigger recovery when active view is too small
+  triggerRecovery() {
+    console.log(`[HyParView] Triggering recovery. Active view size: ${this.activeView.size}`);
+    
+    // Try to promote peers from passive view
+    const candidates = Array.from(this.passiveView.values())
+      .filter(p => p.wire && !p.wire.destroyed);
+    
+    const needed = this.activeViewSize - this.activeView.size;
+    for (let i = 0; i < needed && i < candidates.length; i++) {
+      this.promoteToActiveView(candidates[i].id);
+    }
+    
+    // If still not enough peers, use DHT to find more
+    if (this.activeView.size < this.activeViewSize) {
+      this.dht.findNode(this.nodeId).then(peers => {
+        for (const peer of peers) {
+          if (this.activeView.size >= this.activeViewSize) break;
+          
+          const peerId = peer.id;
+          if (!this.activeView.has(this.dht.uint8ArrayToHex(peerId))) {
+            this.addToActiveView(peerId, { wire: peer.wire, isOutgoing: true });
+          }
+        }
+      });
+    }
+  }
+  
+  // Bootstrap the overlay
+  async bootstrap() {
+    console.log("[HyParView] Starting bootstrap...");
+    this.isBootstrapping = true;
+    
+    // Use DHT to find initial peers
+    const peers = await this.dht.findNode(this.nodeId);
+    
+    for (const peer of peers) {
+      if (this.activeView.size >= this.activeViewSize) break;
+      
+      // Send JOIN request
+      sendPeer(peer.wire, {
+        type: 'hyparview',
+        subtype: 'JOIN',
+        ttl: 3,
+        sender: this.dht.uint8ArrayToHex(this.nodeId)
+      });
+      
+      this.addToActiveView(peer.id, { wire: peer.wire, isOutgoing: true });
+    }
+    
+    this.isBootstrapping = false;
+    console.log(`[HyParView] Bootstrap complete. Active: ${this.activeView.size}, Passive: ${this.passiveView.size}`);
+  }
+  
+  // Get current statistics
+  getStats() {
+    return {
+      activeView: this.activeView.size,
+      passiveView: this.passiveView.size,
+      activeCapacity: `${this.activeView.size}/${this.activeViewSize}`,
+      passiveCapacity: `${this.passiveView.size}/${this.passiveViewSize}`
+    };
+  }
+  
+  // Get active peers for message propagation
   getActivePeers() {
     return Array.from(this.activeView.values())
       .filter(p => p.wire && !p.wire.destroyed);
   }
   
-  getStats() {
-    return {
-      activeView: this.activeView.size,
-      passiveView: this.passiveView.size
-    };
+  // Cleanup on shutdown
+  destroy() {
+    if (this.shuffleTimer) {
+      clearInterval(this.shuffleTimer);
+    }
+    
+    // Send disconnect to all active peers
+    for (const peer of this.activeView.values()) {
+      if (peer.wire && !peer.wire.destroyed) {
+        sendPeer(peer.wire, {
+          type: 'hyparview',
+          subtype: 'DISCONNECT'
+        });
+      }
+    }
+    
+    this.activeView.clear();
+    this.passiveView.clear();
   }
 }
 
@@ -1832,13 +2315,20 @@ class Scribe {
     this.nodeId = nodeId;
     this.dht = dht;
     
-    this.subscribedTopics = new Map();
-    this.topicMessages = new Map();
+    // Topic management
+    this.subscribedTopics = new Map(); // topic -> { rendezvousId, parent, children, lastRefresh }
+    this.topicMessages = new Map(); // topic -> recent message IDs (for dedup)
     
-    this.heartbeatInterval = 30000;
-    this.maxChildren = 16;
+    // Protocol parameters
+    this.heartbeatInterval = 30000; // 30 seconds
+    this.treeRepairTimeout = 60000; // 60 seconds
+    this.maxChildren = 16; // Max children per node in multicast tree
+    
+    // Start maintenance
+    this.maintenanceTimer = null;
   }
   
+  // Extract topics from post content
   extractTopics(content) {
     const topics = new Set();
     
@@ -1846,29 +2336,230 @@ class Scribe {
     const hashtags = content.match(/#\w+/g) || [];
     hashtags.forEach(tag => topics.add(tag.toLowerCase()));
     
-    // Always include general topic
+    // Extract keywords (simple approach)
+    const keywords = ['tech', 'news', 'art', 'music', 'politics', 'science'];
+    const contentLower = content.toLowerCase();
+    keywords.forEach(keyword => {
+      if (contentLower.includes(keyword)) {
+        topics.add(`#${keyword}`);
+      }
+    });
+    
+    // Always include a default topic
     topics.add('#general');
     
     return Array.from(topics);
   }
   
+  // Get rendezvous node for a topic
+  async getRendezvousNode(topic) {
+    return await this.dht.hashToNodeId(topic);
+  }
+  
+  // Subscribe to a topic
   async subscribe(topic) {
     if (this.subscribedTopics.has(topic)) return;
     
     console.log(`[Scribe] Subscribing to topic: ${topic}`);
     
-    this.subscribedTopics.set(topic, {
+    const rendezvousId = await this.getRendezvousNode(topic);
+    const topicInfo = {
+      rendezvousId,
       parent: null,
       children: new Set(),
       lastRefresh: Date.now()
+    };
+    
+    this.subscribedTopics.set(topic, topicInfo);
+    
+    // Find route to rendezvous node
+    const route = await this.dht.findNode(rendezvousId);
+    
+    if (route.length === 0) {
+      // We are the rendezvous node
+      console.log(`[Scribe] We are the rendezvous node for ${topic}`);
+      return;
+    }
+    
+    // Send JOIN request along the route
+    const nextHop = route[0];
+    this.sendJoinRequest(topic, nextHop);
+  }
+  
+  // Unsubscribe from a topic
+  unsubscribe(topic) {
+    const topicInfo = this.subscribedTopics.get(topic);
+    if (!topicInfo) return;
+    
+    console.log(`[Scribe] Unsubscribing from topic: ${topic}`);
+    
+    // Notify parent
+    if (topicInfo.parent) {
+      sendPeer(topicInfo.parent.wire, {
+        type: 'scribe',
+        subtype: 'LEAVE',
+        topic,
+        childId: this.dht.uint8ArrayToHex(this.nodeId)
+      });
+    }
+    
+    // Notify children to find new parent
+    topicInfo.children.forEach(child => {
+      sendPeer(child.wire, {
+        type: 'scribe',
+        subtype: 'PARENT_FAILED',
+        topic
+      });
+    });
+    
+    this.subscribedTopics.delete(topic);
+    this.topicMessages.delete(topic);
+  }
+  
+  // Send JOIN request
+  sendJoinRequest(topic, peer) {
+    sendPeer(peer.wire, {
+      type: 'scribe',
+      subtype: 'JOIN',
+      topic,
+      nodeId: this.dht.uint8ArrayToHex(this.nodeId)
     });
   }
   
-  multicast(topic, message) {
+  // Handle incoming Scribe messages
+  handleMessage(msg, fromWire) {
+    switch (msg.subtype) {
+      case 'JOIN':
+        this.handleJoin(msg, fromWire);
+        break;
+      case 'LEAVE':
+        this.handleLeave(msg, fromWire);
+        break;
+      case 'MULTICAST':
+        this.handleMulticast(msg, fromWire);
+        break;
+      case 'HEARTBEAT':
+        this.handleHeartbeat(msg, fromWire);
+        break;
+      case 'PARENT_FAILED':
+        this.handleParentFailed(msg, fromWire);
+        break;
+    }
+  }
+  
+  // Handle JOIN request
+  async handleJoin(msg, fromWire) {
+    const { topic, nodeId } = msg;
+    const senderId = this.dht.hexToUint8Array(nodeId);
+    
+    const topicInfo = this.subscribedTopics.get(topic);
+    const rendezvousId = await this.getRendezvousNode(topic);
+    
+    // Check if we're closer to rendezvous than sender
+    const ourDistance = this.dht.distance(this.nodeId, rendezvousId);
+    const senderDistance = this.dht.distance(senderId, rendezvousId);
+    
+    if (!topicInfo && this.compareDistances(ourDistance, senderDistance) > 0) {
+      // Forward JOIN to next hop
+      const route = await this.dht.findNode(rendezvousId);
+      if (route.length > 0) {
+        sendPeer(route[0].wire, msg);
+      }
+      return;
+    }
+    
+    // We're on the multicast tree - accept as child
+    if (!topicInfo) {
+      // Create topic subscription
+      this.subscribedTopics.set(topic, {
+        rendezvousId,
+        parent: null,
+        children: new Set(),
+        lastRefresh: Date.now()
+      });
+    }
+    
+    const info = this.subscribedTopics.get(topic);
+    
+    if (info.children.size < this.maxChildren) {
+      // Accept as child
+      info.children.add({
+        id: senderId,
+        wire: fromWire,
+        joinedAt: Date.now()
+      });
+      
+      console.log(`[Scribe] Added child for topic ${topic}. Children: ${info.children.size}`);
+      
+      // Send acceptance
+      sendPeer(fromWire, {
+        type: 'scribe',
+        subtype: 'JOIN_ACK',
+        topic
+      });
+    } else {
+      // Reject - tree node full
+      sendPeer(fromWire, {
+        type: 'scribe',
+        subtype: 'JOIN_REJECT',
+        topic
+      });
+    }
+  }
+  
+  // Compare two distances
+  compareDistances(dist1, dist2) {
+    for (let i = 0; i < dist1.length; i++) {
+      if (dist1[i] !== dist2[i]) {
+        return dist1[i] - dist2[i];
+      }
+    }
+    return 0;
+  }
+  
+  // Handle LEAVE message
+  handleLeave(msg, fromWire) {
+    const { topic, childId } = msg;
+    const topicInfo = this.subscribedTopics.get(topic);
+    
+    if (!topicInfo) return;
+    
+    // Remove child
+    topicInfo.children = new Set(
+      Array.from(topicInfo.children).filter(
+        child => this.dht.uint8ArrayToHex(child.id) !== childId
+      )
+    );
+    
+    console.log(`[Scribe] Child left topic ${topic}. Children: ${topicInfo.children.size}`);
+  }
+  
+  // Multicast a message to a topic
+  async multicast(topic, message) {
+    const topicInfo = this.subscribedTopics.get(topic);
+    if (!topicInfo) {
+      // Not subscribed - route to rendezvous
+      const rendezvousId = await this.getRendezvousNode(topic);
+      const route = await this.dht.findNode(rendezvousId);
+      if (route.length > 0) {
+        sendPeer(route[0].wire, {
+          type: 'scribe',
+          subtype: 'MULTICAST',
+          topic,
+          message,
+          messageId: generateId(),
+          origin: this.dht.uint8ArrayToHex(this.nodeId)
+        });
+      }
+      return;
+    }
+    
+    // We're on the tree - disseminate
     const messageId = generateId();
     this.disseminateMessage(topic, message, messageId, null);
   }
   
+  // Disseminate message down the tree
   disseminateMessage(topic, message, messageId, fromWire) {
     const topicInfo = this.subscribedTopics.get(topic);
     if (!topicInfo) return;
@@ -1889,10 +2580,21 @@ class Scribe {
       arr.slice(0, 500).forEach(id => recentMessages.delete(id));
     }
     
-    // Forward to all peers (simplified for browser)
-    state.peers.forEach(peer => {
-      if (peer.wire !== fromWire && !peer.wire.destroyed) {
-        sendPeer(peer.wire, {
+    // Forward to parent (if not from parent)
+    if (topicInfo.parent && topicInfo.parent.wire !== fromWire) {
+      sendPeer(topicInfo.parent.wire, {
+        type: 'scribe',
+        subtype: 'MULTICAST',
+        topic,
+        message,
+        messageId
+      });
+    }
+    
+    // Forward to children (except sender)
+    topicInfo.children.forEach(child => {
+      if (child.wire !== fromWire && !child.wire.destroyed) {
+        sendPeer(child.wire, {
           type: 'scribe',
           subtype: 'MULTICAST',
           topic,
@@ -1906,23 +2608,114 @@ class Scribe {
     this.deliverMessage(topic, message);
   }
   
+  // Handle multicast message
+  handleMulticast(msg, fromWire) {
+    const { topic, message, messageId } = msg;
+    this.disseminateMessage(topic, message, messageId, fromWire);
+  }
+  
+  // Deliver message to local application
   deliverMessage(topic, message) {
+    // For now, just log it - integrate with post handling later
     console.log(`[Scribe] Delivered message on topic ${topic}:`, message);
   }
   
-  handleMessage(msg, fromWire) {
-    switch (msg.subtype) {
-      case 'MULTICAST':
-        this.disseminateMessage(msg.topic, msg.message, msg.messageId, fromWire);
-        break;
+  // Start maintenance tasks
+  startMaintenance() {
+    this.maintenanceTimer = setInterval(() => {
+      this.sendHeartbeats();
+      this.checkTreeHealth();
+    }, this.heartbeatInterval);
+  }
+  
+  // Send heartbeats to children
+  sendHeartbeats() {
+    this.subscribedTopics.forEach((info, topic) => {
+      info.children.forEach(child => {
+        if (!child.wire.destroyed) {
+          sendPeer(child.wire, {
+            type: 'scribe',
+            subtype: 'HEARTBEAT',
+            topic
+          });
+        } else {
+          // Remove dead child
+          info.children.delete(child);
+        }
+      });
+    });
+  }
+  
+  // Check tree health
+  checkTreeHealth() {
+    const now = Date.now();
+    
+    this.subscribedTopics.forEach((info, topic) => {
+      // Check if parent is still alive
+      if (info.parent && now - info.lastRefresh > this.treeRepairTimeout) {
+        console.log(`[Scribe] Parent timeout for topic ${topic}, repairing...`);
+        this.repairTree(topic);
+      }
+    });
+  }
+  
+  // Handle heartbeat
+  handleHeartbeat(msg, fromWire) {
+    const { topic } = msg;
+    const topicInfo = this.subscribedTopics.get(topic);
+    
+    if (topicInfo && topicInfo.parent && topicInfo.parent.wire === fromWire) {
+      topicInfo.lastRefresh = Date.now();
     }
   }
   
+  // Handle parent failure
+  handleParentFailed(msg, fromWire) {
+    const { topic } = msg;
+    this.repairTree(topic);
+  }
+  
+  // Repair tree after parent failure
+  repairTree(topic) {
+    const topicInfo = this.subscribedTopics.get(topic);
+    if (!topicInfo) return;
+    
+    topicInfo.parent = null;
+    
+    // Re-subscribe
+    this.subscribe(topic);
+  }
+  
+  // Get statistics
   getStats() {
-    return {
+    const stats = {
       subscribedTopics: this.subscribedTopics.size,
-      topics: Array.from(this.subscribedTopics.keys())
+      totalChildren: 0,
+      topics: []
     };
+    
+    this.subscribedTopics.forEach((info, topic) => {
+      stats.totalChildren += info.children.size;
+      stats.topics.push({
+        topic,
+        children: info.children.size,
+        hasParent: !!info.parent
+      });
+    });
+    
+    return stats;
+  }
+  
+  // Cleanup on shutdown
+  destroy() {
+    if (this.maintenanceTimer) {
+      clearInterval(this.maintenanceTimer);
+    }
+    
+    // Unsubscribe from all topics
+    Array.from(this.subscribedTopics.keys()).forEach(topic => {
+      this.unsubscribe(topic);
+    });
   }
 }
 
@@ -1930,26 +2723,33 @@ class Scribe {
 class Plumtree {
   constructor(nodeId, hyparview) {
     this.nodeId = nodeId;
-    this.hyparview = hyparview;
+    this.hyparview = hyparview; // Use HyParView's active view as eager push peers
     
-    this.eagerPushPeers = new Set();
-    this.lazyPushPeers = new Set();
-    this.missing = new Map();
-    this.receivedMessages = new Map();
+    // Protocol state
+    this.eagerPushPeers = new Set(); // Peers we eagerly push to
+    this.lazyPushPeers = new Set();  // Peers we only send IHAVE to
+    this.missing = new Map(); // messageId -> { requestTime, timeout }
+    this.receivedMessages = new Map(); // messageId -> { message, receivedFrom }
     
-    this.lazyPushDelay = 100;
-    this.missingTimeout = 3000;
+    // Protocol parameters
+    this.lazyPushDelay = 100; // ms before sending IHAVE
+    this.missingTimeout = 3000; // ms to wait for missing message
+    this.pruneDelay = 1000; // ms before pruning eager peers
     this.messageHistorySize = 10000;
     
+    // Optimization metrics
     this.metrics = {
       messagesReceived: 0,
       duplicatesReceived: 0,
-      messagesRequested: 0
+      messagesRequested: 0,
+      messagesPruned: 0
     };
     
+    // Initialize eager peers from HyParView
     this.initializeEagerPeers();
   }
   
+  // Initialize eager push peers from HyParView active view
   initializeEagerPeers() {
     const activePeers = this.hyparview.getActivePeers();
     activePeers.forEach(peer => {
@@ -1959,18 +2759,23 @@ class Plumtree {
     console.log(`[Plumtree] Initialized with ${this.eagerPushPeers.size} eager peers`);
   }
   
+  // Broadcast a new message
   broadcast(message, excludePeerId = null) {
     const messageId = message.id || generateId();
     message.id = messageId;
+    message.originId = this.hyparview.dht.uint8ArrayToHex(this.nodeId);
     
+    // Add to our received messages
     this.receivedMessages.set(messageId, {
       message,
       receivedFrom: null,
       timestamp: Date.now()
     });
     
+    // Eager push to all eager peers
     this.eagerPush(message, excludePeerId);
     
+    // Lazy push to all lazy peers
     setTimeout(() => {
       this.lazyPush(messageId, excludePeerId);
     }, this.lazyPushDelay);
@@ -1978,12 +2783,14 @@ class Plumtree {
     return messageId;
   }
   
+  // Eager push - send full message
   eagerPush(message, excludePeerId = null) {
     const activePeers = this.hyparview.getActivePeers();
     
     activePeers.forEach(peer => {
       const peerIdStr = this.hyparview.dht.uint8ArrayToHex(peer.id);
       
+      // Skip excluded peer and non-eager peers
       if (peerIdStr === excludePeerId || !this.eagerPushPeers.has(peerIdStr)) {
         return;
       }
@@ -1998,12 +2805,14 @@ class Plumtree {
     });
   }
   
+  // Lazy push - send only IHAVE
   lazyPush(messageId, excludePeerId = null) {
     const activePeers = this.hyparview.getActivePeers();
     
     activePeers.forEach(peer => {
       const peerIdStr = this.hyparview.dht.uint8ArrayToHex(peer.id);
       
+      // Skip excluded peer and eager peers
       if (peerIdStr === excludePeerId || this.eagerPushPeers.has(peerIdStr)) {
         return;
       }
@@ -2018,6 +2827,7 @@ class Plumtree {
     });
   }
   
+  // Handle incoming Plumtree messages
   handleMessage(msg, fromWire) {
     const fromPeerId = fromWire.peerId ? 
       this.hyparview.dht.uint8ArrayToHex(fromWire.peerId) : null;
@@ -2030,7 +2840,7 @@ class Plumtree {
         this.handleIHave(msg.messageIds, fromPeerId, fromWire);
         break;
       case 'GRAFT':
-        this.handleGraft(fromPeerId, msg.messageId);
+        this.handleGraft(fromPeerId, msg.messageId, fromWire);
         break;
       case 'PRUNE':
         this.handlePrune(fromPeerId);
@@ -2038,14 +2848,26 @@ class Plumtree {
     }
   }
   
+  // Handle received gossip message
   handleGossip(message, fromPeerId, fromWire) {
     const messageId = message.id;
     
+    // Check if we've seen this message
     if (this.receivedMessages.has(messageId)) {
+      // Duplicate - consider pruning this eager peer
       this.metrics.duplicatesReceived++;
+      
+      // Prune after delay if we keep getting duplicates
+      setTimeout(() => {
+        if (this.eagerPushPeers.has(fromPeerId)) {
+          this.prune(fromPeerId, fromWire);
+        }
+      }, this.pruneDelay);
+      
       return;
     }
     
+    // New message
     this.metrics.messagesReceived++;
     this.receivedMessages.set(messageId, {
       message,
@@ -2053,67 +2875,161 @@ class Plumtree {
       timestamp: Date.now()
     });
     
+    // Cancel any pending request for this message
+    if (this.missing.has(messageId)) {
+      const { timeout } = this.missing.get(messageId);
+      clearTimeout(timeout);
+      this.missing.delete(messageId);
+    }
+    
+    // Graft the sender as eager peer (they were first)
     if (!this.eagerPushPeers.has(fromPeerId)) {
       this.graft(fromPeerId);
     }
     
+    // Deliver to application
     this.deliver(message);
     
+    // Forward to other peers
     this.eagerPush(message, fromPeerId);
     setTimeout(() => {
       this.lazyPush(messageId, fromPeerId);
     }, this.lazyPushDelay);
+    
+    // Clean old messages periodically
+    if (this.receivedMessages.size > this.messageHistorySize) {
+      this.cleanupOldMessages();
+    }
   }
   
+  // Handle IHAVE announcements
   handleIHave(messageIds, fromPeerId, fromWire) {
     messageIds.forEach(messageId => {
+      // If we don't have this message and haven't requested it
       if (!this.receivedMessages.has(messageId) && !this.missing.has(messageId)) {
+        // Request the message
         this.requestMessage(messageId, fromPeerId, fromWire);
       }
     });
   }
   
+  // Request a missing message
   requestMessage(messageId, fromPeerId, fromWire) {
     this.metrics.messagesRequested++;
     
+    // Send GRAFT to request the message
     sendPeer(fromWire, {
       type: 'plumtree',
       subtype: 'GRAFT',
       messageId
     });
     
+    // Set timeout for missing message
     const timeout = setTimeout(() => {
       this.missing.delete(messageId);
+      // Could implement retry logic here
     }, this.missingTimeout);
     
-    this.missing.set(messageId, { timeout });
+    this.missing.set(messageId, {
+      requestTime: Date.now(),
+      timeout,
+      requestedFrom: fromPeerId
+    });
   }
   
-  handleGraft(fromPeerId) {
+  // Handle GRAFT request - add peer to eager set
+  handleGraft(fromPeerId, messageId, fromWire) {
     this.eagerPushPeers.add(fromPeerId);
     this.lazyPushPeers.delete(fromPeerId);
+    
+    // If we have the requested message, send it
+    if (messageId && this.receivedMessages.has(messageId)) {
+      const { message } = this.receivedMessages.get(messageId);
+      const peer = this.findPeerById(fromPeerId);
+      
+      if (peer && !peer.wire.destroyed) {
+        sendPeer(peer.wire, {
+          type: 'plumtree',
+          subtype: 'GOSSIP',
+          message
+        });
+      }
+    }
+    
+    console.log(`[Plumtree] Grafted peer ${fromPeerId.substring(0, 12)}... as eager`);
   }
   
+  // Handle PRUNE request - move peer to lazy set
   handlePrune(fromPeerId) {
     this.eagerPushPeers.delete(fromPeerId);
     this.lazyPushPeers.add(fromPeerId);
+    this.metrics.messagesPruned++;
+    
+    console.log(`[Plumtree] Pruned peer ${fromPeerId.substring(0, 12)}... to lazy`);
   }
   
+  // Graft a peer (make eager)
   graft(peerId) {
     this.eagerPushPeers.add(peerId);
     this.lazyPushPeers.delete(peerId);
   }
   
+  // Prune a peer (make lazy)
+  prune(peerId, wire) {
+    this.eagerPushPeers.delete(peerId);
+    this.lazyPushPeers.add(peerId);
+    
+    // Send PRUNE message
+    if (wire && !wire.destroyed) {
+      sendPeer(wire, {
+        type: 'plumtree',
+        subtype: 'PRUNE'
+      });
+    }
+  }
+  
+  // Find peer by ID
+  findPeerById(peerId) {
+    const activePeers = this.hyparview.getActivePeers();
+    return activePeers.find(p => this.hyparview.dht.uint8ArrayToHex(p.id) === peerId);
+  }
+  
+  // Deliver message to application
   deliver(message) {
     // Override this method for application-specific delivery
     console.log(`[Plumtree] Delivered message: ${message.id}`);
   }
   
+  // Clean up old messages
+  cleanupOldMessages() {
+    const cutoff = Date.now() - 3600000; // 1 hour
+    const toDelete = [];
+    
+    this.receivedMessages.forEach((data, messageId) => {
+      if (data.timestamp < cutoff) {
+        toDelete.push(messageId);
+      }
+    });
+    
+    toDelete.forEach(messageId => {
+      this.receivedMessages.delete(messageId);
+    });
+  }
+  
+  // Handle peer failure
+  handlePeerFailure(peerId) {
+    const peerIdStr = this.hyparview.dht.uint8ArrayToHex(peerId);
+    this.eagerPushPeers.delete(peerIdStr);
+    this.lazyPushPeers.delete(peerIdStr);
+  }
+  
+  // Get statistics
   getStats() {
     return {
       eagerPeers: this.eagerPushPeers.size,
       lazyPeers: this.lazyPushPeers.size,
       messagesInHistory: this.receivedMessages.size,
+      missingRequests: this.missing.size,
       metrics: { ...this.metrics }
     };
   }
