@@ -1609,7 +1609,108 @@ class HyParView {
     this.shuffleTimer = null;
     this.startShuffle();
   }
+
+handlePeerFailure(peerId) {
+  const peerIdStr = this.dht.uint8ArrayToHex(peerId);
   
+  if (!this.activeView.has(peerIdStr)) return;
+  
+  console.log(`[HyParView] Peer failed: ${peerIdStr.substring(0, 12)}...`);
+  
+  // Remove from active view
+  this.activeView.delete(peerIdStr);
+  
+  // Try to replace with peer from passive view
+  if (this.passiveView.size > 0) {
+    const candidates = Array.from(this.passiveView.values())
+      .filter(p => p.wire && !p.wire.destroyed)
+      .sort((a, b) => b.priority - a.priority);
+    
+    if (candidates.length > 0) {
+      const replacement = candidates[0];
+      this.promoteToActiveView(replacement.id);
+    }
+  }
+  
+  // If active view is too small, trigger recovery
+  if (this.activeView.size < Math.floor(this.activeViewSize / 2)) {
+    this.triggerRecovery();
+  }
+}
+
+
+addToPassiveView(peerId, peerInfo) {
+  const peerIdStr = this.dht.uint8ArrayToHex(peerId);
+  
+  if (this.activeView.has(peerIdStr) || this.passiveView.has(peerIdStr)) {
+    return false;
+  }
+  
+  if (this.passiveView.size >= this.passiveViewSize) {
+    // Drop random peer from passive view
+    const keys = Array.from(this.passiveView.keys());
+    const randomKey = keys[Math.floor(Math.random() * keys.length)];
+    this.passiveView.delete(randomKey);
+  }
+  
+  this.passiveView.set(peerIdStr, {
+    id: peerId,
+    wire: peerInfo.wire || null,
+    addedAt: Date.now(),
+    priority: peerInfo.priority || 0
+  });
+  
+  console.log(`[HyParView] Added peer to passive view. Passive: ${this.passiveView.size}/${this.passiveViewSize}`);
+  
+  return true;
+}
+
+promoteToActiveView(peerId) {
+  const peerIdStr = this.dht.uint8ArrayToHex(peerId);
+  const peer = this.passiveView.get(peerIdStr);
+  
+  if (!peer) return false;
+  
+  // Send JOIN request
+  if (peer.wire && !peer.wire.destroyed) {
+    sendPeer(peer.wire, {
+      type: 'hyparview',
+      subtype: 'JOIN',
+      ttl: 3,
+      sender: this.dht.uint8ArrayToHex(this.nodeId)
+    });
+    
+    return this.addToActiveView(peerId, { ...peer, isOutgoing: true });
+  }
+  
+  return false;
+}
+
+triggerRecovery() {
+  console.log(`[HyParView] Triggering recovery. Active view size: ${this.activeView.size}`);
+  
+  // Try to promote peers from passive view
+  const candidates = Array.from(this.passiveView.values())
+    .filter(p => p.wire && !p.wire.destroyed);
+  
+  const needed = this.activeViewSize - this.activeView.size;
+  for (let i = 0; i < needed && i < candidates.length; i++) {
+    this.promoteToActiveView(candidates[i].id);
+  }
+  
+  // If still not enough peers, use DHT to find more
+  if (this.activeView.size < this.activeViewSize) {
+    this.dht.findClosestPeers(this.nodeId, this.activeViewSize * 2)
+      .forEach(peer => {
+        if (this.activeView.size >= this.activeViewSize) return;
+        
+        const peerId = peer.id;
+        if (!this.activeView.has(this.dht.uint8ArrayToHex(peerId))) {
+          this.addToActiveView(peerId, { wire: peer.wire, isOutgoing: true });
+        }
+      });
+  }
+}
   addToActiveView(peerId, peerInfo) {
     const peerIdStr = this.dht.uint8ArrayToHex(peerId);
     
