@@ -63,7 +63,27 @@
   --shadow-color-inferno-3-hover: rgba(255,107,74,0.6);
   --shadow-color-post-pulse: rgba(255, 107, 74, var(--heat-opacity, 0.2));
   --shadow-color-post-pulse-hover: rgba(255, 107, 74, calc(var(--heat-opacity, 0.2) * 1.5));
+ 
+  /* Variables for Topic Section */
+  --background-topic-section: rgba(255, 140, 66, 0.05);
+  --border-color-topic-section: rgba(255, 140, 66, 0.2);
+  --background-topic-tag: rgba(255, 140, 66, 0.2);
+  --text-color-topic-tag: var(--text-accent);
+  --background-topic-tag-active: var(--text-accent);
+  --text-color-topic-tag-active: var(--text-button-primary);
+  --border-color-topic-input: rgba(255, 140, 66, 0.3);
+  /* Variables for Feed Controls */
+  --background-feed-controls: rgba(0, 0, 0, 0.2);
+  --background-topic-filter-select: rgba(255, 140, 66, 0.1);
+  --border-color-topic-filter-select: rgba(255, 140, 66, 0.3);
+  --border-color-mode-button: rgba(255, 140, 66, 0.3); 
+  /* Variables for Topic Tree Visualization */
+  --background-topic-tree-node: rgba(255, 140, 66, 0.1);
+  --border-color-topic-tree-node: var(--text-accent); /* Use the main accent color */
+  --border-color-topic-tree-parent: #4CAF50; /* Green */
+  --border-color-topic-tree-child: #2196F3;  /* Blue */
 }
+
 
 body.light-mode {
   /* Backgrounds */
@@ -123,6 +143,25 @@ body.light-mode {
   --shadow-color-inferno-3-hover: rgba(255,107,74,0.6);
   --shadow-color-post-pulse: rgba(255, 107, 74, var(--heat-opacity, 0.2));
   --shadow-color-post-pulse-hover: rgba(255, 107, 74, calc(var(--heat-opacity, 0.2) * 1.5));
+  /* Light mode overrides for Topic Section */
+  --background-topic-section: #fff8f5;
+  --border-color-topic-section: #ffeadb;
+  --background-topic-tag: #ffeadb;
+  --text-color-topic-tag: var(--text-accent);
+  --background-topic-tag-active: var(--text-accent);
+  --text-color-topic-tag-active: #ffffff;
+  --border-color-topic-input: #fcd5b8;
+
+  /* Light mode overrides for Feed Controls */
+  --background-feed-controls: var(--background-bonfire-item); /* Re-using a nice light orange tint */
+  --background-topic-filter-select: var(--background-topic-tag); /* Re-using the light tag background */
+  --border-color-topic-filter-select: var(--border-color-topic-input); /* Re-using the light input border */
+  --border-color-mode-button: var(--border-color-topic-section); 
+  /* Light mode overrides for Topic Tree Visualization */
+  --background-topic-tree-node: var(--background-bonfire-item); /* A consistent light orange tint */
+  --border-color-topic-tree-node: var(--text-accent); /* This already adapts to light mode */
+  --border-color-topic-tree-parent: #45a049; /* A slightly darker green for better contrast on white */
+  --border-color-topic-tree-child: #1e88e5; /* A slightly darker blue for better contrast on white */
 }
 
 
@@ -799,13 +838,14 @@ body.light-mode h1 {
     filter: brightness(1.3) drop-shadow(0 0 20px #ff8c42);
   }
 }
+
 /* Add to style.css */
 .topics-section {
   margin: 20px 0;
   padding: 15px;
-  background: rgba(255, 140, 66, 0.05);
+  background: var(--background-topic-section); /* USE VARIABLE */
   border-radius: 8px;
-  border: 1px solid rgba(255, 140, 66, 0.2);
+  border: 1px solid var(--border-color-topic-section); /* USE VARIABLE */
 }
 
 .topics-section h3 {
@@ -821,7 +861,8 @@ body.light-mode h1 {
 }
 
 .topic-tag {
-  background: rgba(255, 140, 66, 0.2);
+  background: var(--background-topic-tag); /* USE VARIABLE */
+  color: var(--text-color-topic-tag); /* USE VARIABLE */
   padding: 4px 12px;
   border-radius: 16px;
   font-size: 14px;
@@ -831,8 +872,8 @@ body.light-mode h1 {
 }
 
 .topic-tag.active {
-  background: var(--ember-orange);
-  color: white;
+  background: var(--background-topic-tag-active); /* USE VARIABLE */
+  color: var(--text-color-topic-tag-active); /* USE VARIABLE */
 }
 
 .topic-tag:hover {
@@ -859,7 +900,7 @@ body.light-mode h1 {
 .topic-input-wrapper input {
   flex: 1;
   padding: 6px 10px;
-  border: 1px solid rgba(255, 140, 66, 0.3);
+  border: 1px solid var(--border-color-topic-input); /* USE VARIABLE */
   border-radius: 4px;
   background: transparent;
   color: var(--text-primary);
@@ -867,8 +908,8 @@ body.light-mode h1 {
 
 .subscribe-button {
   padding: 6px 12px;
-  background: var(--ember-orange);
-  color: white;
+  background: var(--background-topic-tag-active); /* USE VARIABLE */
+  color: var(--text-color-topic-tag-active); /* USE VARIABLE */
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -883,7 +924,7 @@ body.light-mode h1 {
 
 .feed-controls {
   padding: 15px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--background-feed-controls); /* USE VARIABLE */
   margin-bottom: 10px;
   display: flex;
   justify-content: space-between;
@@ -892,10 +933,10 @@ body.light-mode h1 {
 
 .topic-filter select {
   padding: 6px 10px;
-  background: rgba(255, 140, 66, 0.1);
-  border: 1px solid rgba(255, 140, 66, 0.3);
+  background: var(--background-topic-filter-select); /* USE VARIABLE */
+  border: 1px solid var(--border-color-topic-filter-select); /* USE VARIABLE */
   border-radius: 4px;
-  color: var(--text-primary);
+  color: var(--text-primary); /* This was already correct */
 }
 
 .feed-mode {
@@ -906,7 +947,7 @@ body.light-mode h1 {
 .mode-button {
   padding: 6px 15px;
   background: transparent;
-  border: 1px solid rgba(255, 140, 66, 0.3);
+  border: 1px solid var(--border-color-mode-button); /* USE VARIABLE */
   border-radius: 4px;
   color: var(--text-primary);
   cursor: pointer;
@@ -914,9 +955,9 @@ body.light-mode h1 {
 }
 
 .mode-button.active {
-  background: var(--ember-orange);
-  color: white;
-  border-color: var(--ember-orange);
+  background: var(--text-accent);  /* FIX: was --ember-orange */
+  color: var(--text-button-primary); /* FIX: was white */
+  border-color: var(--text-accent); /* FIX: was --ember-orange */
 }
 
 /* Post topic indicators */
@@ -930,27 +971,27 @@ body.light-mode h1 {
 .post-topic-tag {
   font-size: 12px;
   padding: 2px 8px;
-  background: rgba(255, 140, 66, 0.15);
+  background: var(--background-topic-tag); /* USE VARIABLE */
   border-radius: 12px;
-  color: var(--ember-orange);
+  color: var(--text-color-topic-tag); /* USE VARIABLE */
 }
 
 /* Topic tree visualization */
 .topic-tree-node {
   padding: 4px 8px;
   margin: 2px 0;
-  background: rgba(255, 140, 66, 0.1);
-  border-left: 3px solid var(--ember-orange);
+  background: var(--background-topic-tree-node);      /* USE VARIABLE */
+  border-left: 3px solid var(--border-color-topic-tree-node); /* USE VARIABLE */
   font-size: 12px;
 }
 
 .topic-tree-node.parent {
-  border-left-color: #4CAF50;
+  border-left-color: var(--border-color-topic-tree-parent); /* USE VARIABLE */
 }
 
 .topic-tree-node.child {
   margin-left: 20px;
-  border-left-color: #2196F3;
+  border-left-color: var(--border-color-topic-tree-child); /* USE VARIABLE */
 }
 #column-controls {
   overflow-y: auto;
