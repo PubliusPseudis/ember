@@ -3812,7 +3812,25 @@ function applyTopicFilter() {
   }
 }
 
-
+function discoverAndFilterTopic(topic) {
+  // First, check if the user is already subscribed.
+  if (!state.subscribedTopics.has(topic)) {
+    // If not, perform the subscription steps.
+    console.log(`[Topics] User clicked to subscribe to new topic: ${topic}`);
+    
+    state.subscribedTopics.add(topic);
+    if (state.scribe) {
+      state.scribe.subscribe(topic);
+    }
+    addTopicToUI(topic);
+    updateTopicFilter();
+    saveTopicSubscriptions();
+    notify(`Subscribed to ${topic}`); // Let the user know what happened.
+  }
+  
+  // Now, perform the filtering action regardless of whether it was a new subscription.
+  filterToTopic(topic);
+}
 
 function filterToTopic(topic) {
   document.getElementById('topic-filter').value = topic;
@@ -5171,7 +5189,7 @@ async function updateInner(el, p) {
         if (topics.length > 0) {
             topicsHtml = `
                 <div class="post-topics">
-                    ${topics.map(topic => `<span class="post-topic-tag" onclick="filterToTopic('${topic}')">${topic}</span>`).join('')}
+                    ${topics.map(topic => `<span class="post-topic-tag" onclick="discoverAndFilterTopic('${topic}')">${topic}</span>`).join('')}
                 </div>`;
         }
     }
