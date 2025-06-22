@@ -79,7 +79,33 @@
         <strong>Your Network ID:</strong> <code id="network-id"></code><br />
         <small>Share this with friends to connect directly</small>
       </div>
+<div class="topics-section">
+  <h3>📡 Topics</h3>
+  <div class="subscribed-topics" id="subscribed-topics">
+    <div class="topic-tag active" data-topic="#general">#general</div>
+    <div class="topic-tag active" data-topic="#ember">#ember</div>
+  </div>
+  <div class="topic-input-wrapper">
+    <input type="text" id="topic-input" placeholder="Subscribe to #topic" />
+    <button onclick="subscribeToTopic()" class="subscribe-button">+</button>
+  </div>
+  <div class="topic-stats" id="topic-stats"></div>
+</div>
 
+<div class="feed-controls">
+  <div class="topic-filter">
+    <label>Filter by topic:</label>
+    <select id="topic-filter" onchange="filterByTopic()">
+      <option value="">All Topics</option>
+      <option value="#general">#general</option>
+      <option value="#ember">#ember</option>
+    </select>
+  </div>
+  <div class="feed-mode">
+    <button class="mode-button active" onclick="setFeedMode('all')">All Posts</button>
+    <button class="mode-button" onclick="setFeedMode('topics')">My Topics</button>
+  </div>
+</div>
         <button id="clear-data-button" class="secondary-button" onclick="clearLocalData()">
   🗑️ Clear Local Data
 </button>
@@ -93,7 +119,7 @@
             <input type="file" id="image-input" accept="image/*" style="display:none;" onchange="handleImageSelect(this)" />
             <button onclick="document.getElementById('image-input').click()" class="image-button">📷</button>
             <span class="char-count"><span id="char-current">0</span>/500</span>
-            <button id="send-button" class="primary-button" onclick="createPost()">🔥 Light it up</button>
+            <button id="send-button" class="primary-button" onclick="createPostWithTopics()">🔥 Light it up</button>
           </div>
         </div>
         
@@ -3440,7 +3466,10 @@ const state = {
   dht: null,
   hyparview: null,
   scribe: null,
-  plumtree: null
+  plumtree: null,
+  subscribedTopics:  new Set(['#general', '#ember']),
+  topicFilter : '',
+  feedMode : 'all',
 };
 
 /* ---------- IDENTITY ---------- */
@@ -3611,7 +3640,220 @@ async function initIdentity() {
 }
 
 
+// Topic subscription management
+async function subscribeToTopic() {
+  const input = document.getElementById('topic-input');
+  let topic = input.value.trim().toLowerCase();
+  
+  if (!topic) return;
+  
+  // Ensure topic starts with #
+  if (!topic.startsWith('#')) {
+    topic = '#' + topic;
+  }
+  
+  // Validate topic
+  if (!/^#\w+$/.test(topic)) {
+    notify('Invalid topic format. Use #alphanumeric');
+    return;
+  }
+  
+  if (state.subscribedTopics.has(topic)) {
+    notify('Already subscribed to ' + topic);
+    return;
+  }
+  
+  // Subscribe via Scribe
+  if (state.scribe) {
+    await state.scribe.subscribe(topic);
+    state.subscribedTopics.add(topic);
+    
+    // Update UI
+    addTopicToUI(topic);
+    updateTopicFilter();
+    
+    notify(`Subscribed to ${topic}`);
+    input.value = '';
+    
+    // Save to localStorage
+    saveTopicSubscriptions();
+  }
+}
 
+function addTopicToUI(topic) {
+  const container = document.getElementById('subscribed-topics');
+  const existing = container.querySelector(`[data-topic="${topic}"]`);
+  if (existing) return;
+  
+  const tag = document.createElement('div');
+  tag.className = 'topic-tag active';
+  tag.dataset.topic = topic;
+  tag.textContent = topic;
+  tag.onclick = () => toggleTopic(topic);
+  
+  container.appendChild(tag);
+}
+
+async function toggleTopic(topic) {
+  const tag = document.querySelector(`[data-topic="${topic}"]`);
+  
+  if (state.subscribedTopics.has(topic)) {
+    // Don't allow unsubscribing from #general
+    if (topic === '#general') {
+      notify("Cannot unsubscribe from #general");
+      return;
+    }
+    
+    // Unsubscribe
+    if (state.scribe) {
+      state.scribe.unsubscribe(topic);
+    }
+    state.subscribedTopics.delete(topic);
+    tag.classList.remove('active');
+    
+    notify(`Unsubscribed from ${topic}`);
+  } else {
+    // Resubscribe
+    if (state.scribe) {
+      await state.scribe.subscribe(topic);
+    }
+    state.subscribedTopics.add(topic);
+    tag.classList.add('active');
+    
+    notify(`Resubscribed to ${topic}`);
+  }
+  
+  updateTopicFilter();
+  saveTopicSubscriptions();
+  applyTopicFilter();
+}
+
+function updateTopicFilter() {
+  const select = document.getElementById('topic-filter');
+  const currentValue = select.value;
+  
+  // Clear and rebuild options
+  select.innerHTML = '<option value="">All Topics</option>';
+  
+  state.subscribedTopics.forEach(topic => {
+    const option = document.createElement('option');
+    option.value = topic;
+    option.textContent = topic;
+    select.appendChild(option);
+  });
+  
+  // Restore previous selection if still valid
+  if (currentValue && state.subscribedTopics.has(currentValue)) {
+    select.value = currentValue;
+  }
+}
+
+function filterByTopic() {
+  const select = document.getElementById('topic-filter');
+  state.topicFilter = select.value;
+  applyTopicFilter();
+}
+
+function setFeedMode(mode) {
+  state.feedMode = mode;
+  
+  // Update button states
+  document.querySelectorAll('.mode-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  event.target.classList.add('active');
+  
+  applyTopicFilter();
+}
+
+function applyTopicFilter() {
+  const posts = document.querySelectorAll('.post');
+  let visibleCount = 0;
+  
+  posts.forEach(postEl => {
+    const postId = postEl.id.replace('post-', '');
+    const post = state.posts.get(postId);
+    if (!post) return;
+    
+    const postTopics = state.scribe ? state.scribe.extractTopics(post.content) : [];
+    let shouldShow = true;
+    
+    // Apply feed mode filter
+    if (state.feedMode === 'topics') {
+      // Show only posts from subscribed topics
+      shouldShow = postTopics.some(topic => state.subscribedTopics.has(topic));
+    }
+    
+    // Apply specific topic filter
+    if (shouldShow && state.topicFilter) {
+      shouldShow = postTopics.includes(state.topicFilter);
+    }
+    
+    postEl.style.display = shouldShow ? 'block' : 'none';
+    if (shouldShow) visibleCount++;
+  });
+  
+  // Show message if no posts visible
+  let emptyMessage = document.getElementById('filter-empty-message');
+  if (visibleCount === 0 && !emptyMessage) {
+    emptyMessage = document.createElement('div');
+    emptyMessage.id = 'filter-empty-message';
+    emptyMessage.className = 'empty-state';
+    emptyMessage.textContent = state.topicFilter ? 
+      `No posts in ${state.topicFilter}` : 
+      'No posts in your subscribed topics';
+    document.getElementById('posts').appendChild(emptyMessage);
+  } else if (visibleCount > 0 && emptyMessage) {
+    emptyMessage.remove();
+  }
+}
+
+
+
+function filterToTopic(topic) {
+  document.getElementById('topic-filter').value = topic;
+  state.topicFilter = topic;
+  applyTopicFilter();
+}
+
+// Save/load topic subscriptions
+function saveTopicSubscriptions() {
+  localStorage.setItem('ember-topics', JSON.stringify(Array.from(state.subscribedTopics)));
+}
+
+function loadTopicSubscriptions() {
+  const saved = localStorage.getItem('ember-topics');
+  if (saved) {
+    try {
+      const topics = JSON.parse(saved);
+      topics.forEach(topic => {
+        state.subscribedTopics.add(topic);
+        addTopicToUI(topic);
+      });
+    } catch (e) {
+      console.error('Failed to load saved topics:', e);
+    }
+  }
+}
+
+// Update topic statistics periodically
+function updateTopicStats() {
+  if (!state.scribe) return;
+  
+  const stats = state.scribe.getStats();
+  const statsEl = document.getElementById('topic-stats');
+  
+  if (stats.topics.length > 0) {
+    const topicDetails = stats.topics.map(t => 
+      `${t.topic}: ${t.children} children${t.hasParent ? ' (connected)' : ' (root)'}`
+    ).join('<br>');
+    
+    statsEl.innerHTML = `
+      <div>Connected to ${stats.subscribedTopics} topic trees</div>
+      <div style="font-size: 11px; margin-top: 4px;">${topicDetails}</div>
+    `;
+  }
+}
 
 
     /* ---------- TOXICITY FILTER ---------- */
@@ -3672,6 +3914,24 @@ async function initIdentity() {
         return false;
       }
     }
+
+// Initialize topics on startup
+async function initTopics() {
+  loadTopicSubscriptions();
+  updateTopicFilter();
+  
+  // Subscribe to saved topics via Scribe
+  if (state.scribe) {
+    for (const topic of state.subscribedTopics) {
+      await state.scribe.subscribe(topic);
+    }
+  }
+  
+  // Update stats periodically
+  setInterval(updateTopicStats, 5000);
+}
+
+
 
 /* ---------- UTILITY HELPERS ---------- */
 // It's useful to have these available globally.
@@ -4049,7 +4309,13 @@ function initNetwork() {
           handleNewPost(message.data, null);
         }
       };
-      
+    state.scribe.deliverMessage = (topic, message) => {
+          console.log(`[Scribe] Message on ${topic}:`, message);
+          if (message.type === 'new_post' && message.post) {
+              handleNewPost(message.post, null);
+          }
+      };
+
       console.log("P2P protocols initialized");
     }, 3000);
     
@@ -4884,17 +5150,25 @@ async function updateInner(el, p) {
     const hasReplies = p.replies.size > 0;
 
     let imageHtml = '';
-    // Always attempt to retrieve from store if imageHash exists, even if p.imageData is already set (for refresh)
     if (p.imageHash) {
-        const imageData = await imageStore.retrieveImage(p.imageHash); // This call includes Merkle verification
+        const imageData = await imageStore.retrieveImage(p.imageHash);
         if (imageData) {
-            p.imageData = imageData; // Cache it on the post object for subsequent renders
+            p.imageData = imageData;
             imageHtml = `<img src="${imageData}" class="post-image" alt="Posted image" />`;
-            console.log(`[updateInner] Image ${p.imageHash.substring(0, 8)}... ready for display.`);
         } else {
-            // Display a placeholder or loading indicator if image is not yet available or failed verification
             imageHtml = `<div class="image-placeholder" style="width:100%;height:150px;background:#333;display:flex;align-items:center;justify-content:center;color:#fff;">Loading Image...</div>`;
-            console.log(`[updateInner] Image ${p.imageHash.substring(0, 8)}... not yet available, displaying placeholder.`);
+        }
+    }
+
+    // This logic adds the topic tags to the post's HTML
+    let topicsHtml = '';
+    if (state.scribe) {
+        const topics = state.scribe.extractTopics(p.content);
+        if (topics.length > 0) {
+            topicsHtml = `
+                <div class="post-topics">
+                    ${topics.map(topic => `<span class="post-topic-tag" onclick="filterToTopic('${topic}')">${topic}</span>`).join('')}
+                </div>`;
         }
     }
 
@@ -4902,7 +5176,7 @@ async function updateInner(el, p) {
         <div class="author">${(p.author)}</div>
         <div class="content">${(p.content)}</div>
         ${imageHtml}
-
+        ${topicsHtml}
         <div class="post-footer">
             <div class="carriers">
                 <span class="heat-level">${heatLevel}</span>
@@ -4939,6 +5213,8 @@ async function updateInner(el, p) {
         el.appendChild(threadLine);
     }
 }
+
+
     function toggleReplyForm(postId) {
   const form = document.getElementById(`reply-form-${postId}`);
   if (form) {
@@ -5105,6 +5381,98 @@ function dropPost(id) {
   updateStatus();
 }
 
+async function createPostWithTopics() {
+  const input = document.getElementById("post-input");
+  const txt = input.value.trim();
+  if (!txt) return;
+
+  // Extract topics from content
+  const topics = state.scribe ? state.scribe.extractTopics(txt) : ['#general'];
+
+  // ... existing post creation code starts here ...
+  const imagePreview = document.getElementById('image-preview');
+  const imageData = imagePreview.dataset.imageData || null;
+
+  const btn = document.getElementById("send-button");
+  btn.disabled = true;
+
+  notify("Computing proof of work...", 10000);
+
+  try {
+    const vdfInput = txt + state.myIdentity.uniqueId + Date.now();
+    const iterations = 2000; // Adjust based on reputation later
+
+    vdf.setProgressCallback((progress) => {
+      btn.textContent = `Computing... ${Math.round(progress)}%`;
+    });
+
+    const proof = await progressiveVDF.computeAdaptiveProof(
+      txt,
+      state.myIdentity.uniqueId
+    );
+
+    const toxic = await isToxic(txt);
+    if (toxic) {
+      notify(`Your post may be seen as ${toxic.replace(/_/g, " ")}. Please rephrase.`);
+      btn.disabled = false;
+      btn.textContent = "🔥 Light it up";
+      return;
+    }
+    if (imageData) {
+      const imageToxic = await isImageToxic(imageData);
+      if (imageToxic) {
+        notify("Image content not allowed");
+        btn.disabled = false;
+        btn.textContent = "🔥 Light it up";
+        return;
+      }
+    }
+    const p = new Post(txt, null, imageData);
+    if (imageData) {
+      console.log(`[createPost] Processing image for new post ${p.id}.`);
+      await p.processImage(); // This will call imageStore.storeImage
+    }
+    p.vdfProof = proof; // Attach proof to post
+    p.vdfInput = vdfInput; // Store input for verification
+    p.sign(state.myIdentity.secretKey); // Sign AFTER imageHash is set by processImage
+
+    state.posts.set(p.id, p);
+    input.value = "";
+    document.getElementById("char-current").textContent = 0;
+    renderPost(p);
+
+    // General broadcast via Dandelion routing
+    if (state.peers.size >= 3) {
+      dandelion.routePostSecure(p);
+    } else {
+      dandelion.routePost(p);
+    }
+
+    // After creating the post, multicast to relevant topics
+    if (state.scribe) {
+      topics.forEach(topic => {
+        state.scribe.multicast(topic, {
+          type: 'new_post',
+          post: p.toJSON()
+        });
+      });
+    }
+
+    removeImage();
+
+    btn.disabled = false;
+    btn.textContent = "🔥 Light it up";
+    notify("Posted to the void");
+
+  } catch (error) {
+    console.error("VDF computation failed:", error);
+    notify("Failed to compute proof of work", 5000);
+    btn.disabled = false;
+    btn.textContent = "🔥 Light it up";
+  }
+}
+
+//depreciated
 async function createPost() {
   const input = document.getElementById("post-input");
   const txt = input.value.trim();
@@ -5179,22 +5547,9 @@ const p = new Post(txt, null, imageData);
     }
 
     
-    /****
-      // Start Dandelion stem phase
-  const peers = Array.from(state.peers.values());
-  if (peers.length > 0) {
-    const firstHop = peers[Math.floor(Math.random() * peers.length)];
-    sendPeer(firstHop.wire, {
-      type: "new_post",
-      post: p.toJSON(),
-      phase: "stem",
-      hopCount: 0
-    });
-  }****/
   
     removeImage();
 
-   /// broadcast({ type: "new_post", post: postData });
     btn.disabled = false;
     btn.textContent = "🔥 Light it up";
     notify("Posted to the void");
@@ -5333,11 +5688,59 @@ privacyEl.innerHTML = `<br/>${privacyStatus} | Unified Bootstrap`;
   }, 1000); // Only update after 1 second of no activity
 }
 
-    document.getElementById("post-input").addEventListener("input", e => {
-      document.getElementById("char-current").textContent = e.target.value.length;
+// Add topic suggestions while typing
+document.getElementById("post-input").addEventListener("input", e => {
+  const text = e.target.value;
+  const lastWord = text.split(/\s+/).pop();
+  
+  if (lastWord.startsWith('#') && lastWord.length > 1) {
+    // Show topic autocomplete
+    showTopicSuggestions(lastWord);
+  } else {
+    hideTopicSuggestions();
+  }
+  
+  document.getElementById("char-current").textContent = e.target.value.length;
     });
+
+    function showTopicSuggestions(partial) {
+      const suggestions = [
+        '#tech', '#news', '#art', '#music', '#politics', '#science',
+        '#ember', '#random', '#help', '#dev', '#memes'
+      ].filter(topic => topic.startsWith(partial));
+      
+      // Create or update suggestions UI
+      let suggestionsEl = document.getElementById('topic-suggestions');
+      if (!suggestionsEl) {
+        suggestionsEl = document.createElement('div');
+        suggestionsEl.id = 'topic-suggestions';
+        suggestionsEl.className = 'topic-suggestions';
+        document.getElementById('compose').appendChild(suggestionsEl);
+      }
+      
+      suggestionsEl.innerHTML = suggestions.map(topic => 
+        `<div class="suggestion" onclick="completeTopicSuggestion('${topic}')">${topic}</div>`
+      ).join('');
+      
+      suggestionsEl.style.display = suggestions.length > 0 ? 'block' : 'none';
+    }
+
+    function completeTopicSuggestion(topic) {
+      const input = document.getElementById("post-input");
+      const text = input.value;
+      const words = text.split(/\s+/);
+      words[words.length - 1] = topic + ' ';
+      input.value = words.join(' ');
+      input.focus();
+      hideTopicSuggestions();
+    }
+
+    function hideTopicSuggestions() {
+      const el = document.getElementById('topic-suggestions');
+      if (el) el.style.display = 'none';
+    }
     document.getElementById("post-input").addEventListener("keydown", e => {
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) createPost();
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) createPostWithTopics();
     });
 
     function updateAges() {
@@ -5562,7 +5965,8 @@ window.connectToNetwork = async function() {
     
     // Start maintenance loop
     startMaintenanceLoop();
-    
+    initTopics();
+
     // Set up beforeunload handlers
     window.addEventListener("beforeunload", () => {
       if (maintenanceInterval) clearInterval(maintenanceInterval);

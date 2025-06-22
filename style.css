@@ -799,3 +799,156 @@ body.light-mode h1 {
     filter: brightness(1.3) drop-shadow(0 0 20px #ff8c42);
   }
 }
+/* Add to style.css */
+.topics-section {
+  margin: 20px 0;
+  padding: 15px;
+  background: rgba(255, 140, 66, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 140, 66, 0.2);
+}
+
+.topics-section h3 {
+  margin: 0 0 10px 0;
+  font-size: 16px;
+}
+
+.subscribed-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.topic-tag {
+  background: rgba(255, 140, 66, 0.2);
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.topic-tag.active {
+  background: var(--ember-orange);
+  color: white;
+}
+
+.topic-tag:hover {
+  transform: scale(1.05);
+}
+
+.topic-tag::after {
+  content: '×';
+  margin-left: 6px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.topic-tag:hover::after {
+  opacity: 1;
+}
+
+.topic-input-wrapper {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.topic-input-wrapper input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 140, 66, 0.3);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.subscribe-button {
+  padding: 6px 12px;
+  background: var(--ember-orange);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.topic-stats {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.feed-controls {
+  padding: 15px;
+  background: rgba(0, 0, 0, 0.2);
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.topic-filter select {
+  padding: 6px 10px;
+  background: rgba(255, 140, 66, 0.1);
+  border: 1px solid rgba(255, 140, 66, 0.3);
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+
+.feed-mode {
+  display: flex;
+  gap: 10px;
+}
+
+.mode-button {
+  padding: 6px 15px;
+  background: transparent;
+  border: 1px solid rgba(255, 140, 66, 0.3);
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-button.active {
+  background: var(--ember-orange);
+  color: white;
+  border-color: var(--ember-orange);
+}
+
+/* Post topic indicators */
+.post-topics {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.post-topic-tag {
+  font-size: 12px;
+  padding: 2px 8px;
+  background: rgba(255, 140, 66, 0.15);
+  border-radius: 12px;
+  color: var(--ember-orange);
+}
+
+/* Topic tree visualization */
+.topic-tree-node {
+  padding: 4px 8px;
+  margin: 2px 0;
+  background: rgba(255, 140, 66, 0.1);
+  border-left: 3px solid var(--ember-orange);
+  font-size: 12px;
+}
+
+.topic-tree-node.parent {
+  border-left-color: #4CAF50;
+}
+
+.topic-tree-node.child {
+  margin-left: 20px;
+  border-left-color: #2196F3;
+}
