@@ -1409,6 +1409,18 @@ class KademliaDHT {
         storageSize: this.storage.size
       };
     }
+      // Remove a peer from k-buckets
+  removePeer(peerId) {
+    const bucketIndex = this.getBucketIndex(peerId);
+    const bucket = this.buckets[bucketIndex];
+    
+    const index = bucket.findIndex(p => this.uint8ArrayEquals(p.id, peerId));
+    if (index !== -1) {
+      bucket.splice(index, 1);
+      console.log(`[DHT] Removed peer from k-bucket ${bucketIndex}, bucket size: ${bucket.length}`);
+    }
+  }
+    
   // XOR distance between two node IDs
   distance(id1, id2) {
     const dist = new Uint8Array(20);
