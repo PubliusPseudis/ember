@@ -79,9 +79,7 @@
         <strong>Your Network ID:</strong> <code id="network-id"></code><br />
         <small>Share this with friends to connect directly</small>
       </div>
-      <button id="feed-mode-toggle" class="secondary-button" onclick="toggleFeedMode()">
-          🌐 All Shards
-        </button>
+
         <button id="clear-data-button" class="secondary-button" onclick="clearLocalData()">
   🗑️ Clear Local Data
 </button>
@@ -155,9 +153,7 @@ class MemoryManager {
     // Boost for posts we authored
     if (post.author === state.myIdentity.handle) priority *= 10;
     
-    // Boost for posts in our primary shards
-    const postShard = dynamicSharding.getShardForPost(post.id);
-    if (dynamicSharding.myShards.has(postShard)) priority *= 2;
+
     
     return priority;
   }
@@ -928,24 +924,34 @@ class DandelionRouter {
   }
   
   
-  routePost(post, fromWire = null) {
-      const postData = post.toJSON();
-      
-      // Include VDF proof if present
-      if (post.vdfProof) {
-        postData.vdfProof = post.vdfProof;
-        postData.vdfInput = post.vdfInput;
-      }
-      
-      const msg = {
-        type: "new_post",
-        post: postData,
-        phase: "stem",
-        hopCount: 0
-      };
-      
-      this.propagate(msg, fromWire);
-    }
+routePost(post, fromWire = null) {
+  const postData = post.toJSON();
+  
+  // Include VDF proof if present
+  if (post.vdfProof) {
+    postData.vdfProof = post.vdfProof;
+    postData.vdfInput = post.vdfInput;
+  }
+  
+  // Use Plumtree if available and network is large enough
+  if (state.plumtree && state.peers.size > 5) {
+    state.plumtree.broadcast({
+      type: 'post',
+      data: postData
+    });
+    return;
+  }
+  
+  // Fall back to existing Dandelion routing
+  const msg = {
+    type: "new_post",
+    post: postData,
+    phase: "stem",
+    hopCount: 0
+  };
+  
+  this.propagate(msg, fromWire);
+}
   
   // Route through multiple hops
   routePostSecure(post, fromWire = null) {
@@ -1141,127 +1147,7 @@ class NoiseGenerator {
   }
 }
 
-class DynamicSharding {
-  constructor() {
-    this.baseShards = 10;
-    this.shardMultiplier = 100;
-    this.myShards = new Set();
-    this.shardPeers = new Map(); // Track peers per shard
-  }
-  
-  getOptimalShardCount() {
-    const estimatedUsers = state.peers.size * 10;
-    return Math.max(
-      this.baseShards,
-      Math.ceil(estimatedUsers / this.shardMultiplier)
-    );
-  }
-  
-  selectShards(count = 3) {
-    const totalShards = this.getOptimalShardCount();
-    const selected = new Set();
-    
-    // Always join shard 0 for bootstrap
-    selected.add(0);
-    
-    // Select additional random shards
-    while (selected.size < count) {
-      selected.add(Math.floor(Math.random() * totalShards));
-    }
-    
-    return Array.from(selected);
-  }
-  
-  getShardForPost(postId) {
-    const hash = this.simpleHash(postId);
-    const shardCount = this.getOptimalShardCount();
-    return hash % shardCount;
-  }
-  
-  simpleHash(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = ((hash << 5) - hash) + str.charCodeAt(i);
-      hash = hash & hash;
-    }
-    return Math.abs(hash);
-  }
-  
-  shouldJoinShard(shardId) {
-    // Join if we have posts that belong to this shard
-    for (const [id, post] of state.posts) {
-      if (this.getShardForPost(id) === shardId) {
-        return true;
-      }
-    }
-    return false;
-  }
-  
-  rebalanceShards() {
-    const currentShards = this.myShards;
-    const optimalShards = new Set(this.selectShards(3));
-    
-    // Check which posts we're carrying
-    const neededShards = new Set();
-    for (const [id, post] of state.posts) {
-      if (state.explicitlyCarrying.has(id)) {
-        neededShards.add(this.getShardForPost(id));
-      }
-    }
-    
-    // Join needed shards
-    neededShards.forEach(shard => optimalShards.add(shard));
-    
-    // Leave unnecessary shards
-    currentShards.forEach(shard => {
-      if (!optimalShards.has(shard) && !neededShards.has(shard)) {
-        this.leaveShard(shard);
-      }
-    });
-    
-    // Join new shards
-    optimalShards.forEach(shard => {
-      if (!currentShards.has(shard)) {
-        this.joinShard(shard);
-      }
-    });
-  }
-  
-  joinShard(shardId) {
-    if (this.myShards.has(shardId)) return;
-    
-    console.log(`Joining shard ${shardId}`);
-    this.myShards.add(shardId);
-    
-    // Create and seed the shard
-    const shardData = new Blob([`Ember-Shard-${shardId}`], { type: 'text/plain' });
-    state.client.seed(shardData, { 
-      name: `ember-shard-${shardId}.txt`,
-      announce: state.trackers || []
-    }, torrent => {
-      torrent.on('wire', (wire, addr) => handleWire(wire, addr, shardId));
-    });
-  }
-  
-  leaveShard(shardId) {
-    console.log(`Leaving shard ${shardId}`);
-    this.myShards.delete(shardId);
-    
-    // Find and destroy the torrent
-    const torrent = state.client.torrents.find(t => 
-      t.name === `ember-shard-${shardId}.txt`
-    );
-    if (torrent) {
-      torrent.destroy();
-    }
-  }
-  
-    // Add method to periodically join random shards for discovery
-  enableCrossShardDiscovery() {
-    // Every 2 minutes, temporarily join a random shard
-    //happens in maintenanceloop
-  }
-}
+
 
 class StateManager {
   constructor() {
@@ -1491,6 +1377,638 @@ class StateManager {
 }
 
 
+// --- KADEMLIA DHT IMPLEMENTATION ---
+class KademliaDHT {
+  constructor(nodeId) {
+    this.nodeId = nodeId; // 20-byte ID as Uint8Array
+    this.k = 20; // Bucket size
+    this.alpha = 3; // Concurrency parameter
+    this.buckets = new Array(160).fill(null).map(() => []); // 160 k-buckets
+    this.storage = new Map(); // Local storage for key-value pairs
+    this.rpcHandlers = new Map();
+    this.pendingRPCs = new Map();
+    this.rpcTimeout = 5000;
+    
+    // Initialize RPC handlers
+    this.setupRPCHandlers();
+  }
+  getStats() {
+      let totalPeers = 0;
+      let activeBuckets = 0;
+      
+      for (let i = 0; i < this.buckets.length; i++) {
+        const bucketSize = this.buckets[i].length;
+        totalPeers += bucketSize;
+        if (bucketSize > 0) activeBuckets++;
+      }
+      
+      return {
+        totalPeers,
+        activeBuckets,
+        avgBucketSize: activeBuckets > 0 ? (totalPeers / activeBuckets).toFixed(2) : 0,
+        storageSize: this.storage.size
+      };
+    }
+  // XOR distance between two node IDs
+  distance(id1, id2) {
+    const dist = new Uint8Array(20);
+    for (let i = 0; i < 20; i++) {
+      dist[i] = id1[i] ^ id2[i];
+    }
+    return dist;
+  }
+  
+  // Find the bucket index for a given node ID
+  getBucketIndex(nodeId) {
+    const dist = this.distance(this.nodeId, nodeId);
+    
+    // Find the highest bit position
+    for (let i = 0; i < 160; i++) {
+      const byteIndex = Math.floor(i / 8);
+      const bitIndex = 7 - (i % 8);
+      
+      if ((dist[byteIndex] >> bitIndex) & 1) {
+        return 159 - i;
+      }
+    }
+    return 0; // Same node
+  }
+  
+  // Add a peer to the appropriate k-bucket
+  addPeer(peerId, peerInfo) {
+    if (this.uint8ArrayEquals(peerId, this.nodeId)) return; // Don't add self
+    
+    const bucketIndex = this.getBucketIndex(peerId);
+    const bucket = this.buckets[bucketIndex];
+    
+    // Check if peer already exists in bucket
+    const existingIndex = bucket.findIndex(p => this.uint8ArrayEquals(p.id, peerId));
+    
+    if (existingIndex !== -1) {
+      // Move to end (most recently seen)
+      const peer = bucket.splice(existingIndex, 1)[0];
+      bucket.push(peer);
+      return;
+    }
+    
+    // Add new peer
+    if (bucket.length < this.k) {
+      bucket.push({
+        id: peerId,
+        wire: peerInfo.wire,
+        lastSeen: Date.now(),
+        rtt: 0,
+        failures: 0
+      });
+      console.log(`Added peer to k-bucket ${bucketIndex}, bucket size: ${bucket.length}`);
+    }
+  }
+  
+  // Helper to compare Uint8Arrays
+  uint8ArrayEquals(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+  
+  // Convert string/hex to Uint8Array
+  hexToUint8Array(hex) {
+ // Handle hex strings that might have '0x' prefix
+  if (hex.startsWith('0x')) {
+    hex = hex.slice(2);
+  }
+  
+  if (hex.length % 2) {
+    hex = '0' + hex; // Pad with leading zero if odd length
+  }
+  
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+  
+  // Convert Uint8Array to hex string
+  uint8ArrayToHex(bytes) {
+    return Array.from(bytes)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+  
+  // Hash to node ID using Web Crypto API
+  async hashToNodeId(data) {
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(data);
+    const hashBuffer = await crypto.subtle.digest('SHA-1', dataBuffer);
+    return new Uint8Array(hashBuffer);
+  }
+  
+  setupRPCHandlers() {
+    this.rpcHandlers.set('PING', this.handlePing.bind(this));
+    this.rpcHandlers.set('FIND_NODE', this.handleFindNode.bind(this));
+  }
+  
+  handleRPC(msg, fromWire) {
+    const { method, params, rpcId } = msg;
+    
+    if (msg.isResponse) {
+      const pending = this.pendingRPCs.get(rpcId);
+      if (pending) {
+        clearTimeout(pending.timeout);
+        pending.resolve(msg.result);
+        this.pendingRPCs.delete(rpcId);
+      }
+      return;
+    }
+    
+    const handler = this.rpcHandlers.get(method);
+    if (handler) {
+      const result = handler(params);
+      sendPeer(fromWire, {
+        type: 'dht_rpc',
+        isResponse: true,
+        rpcId,
+        result
+      });
+    }
+  }
+  
+  handlePing() {
+    return { alive: true, nodeId: this.uint8ArrayToHex(this.nodeId) };
+  }
+  
+  handleFindNode(params) {
+    const targetId = this.hexToUint8Array(params.targetId);
+    const closest = this.findClosestPeers(targetId, this.k);
+    
+    return {
+      peers: closest.map(p => ({
+        id: this.uint8ArrayToHex(p.id)
+      }))
+    };
+  }
+  
+  findClosestPeers(targetId, count = this.k) {
+    const allPeers = [];
+    
+    for (const bucket of this.buckets) {
+      for (const peer of bucket) {
+        if (!peer.wire || peer.wire.destroyed) continue;
+        
+        const distance = this.distance(targetId, peer.id);
+        allPeers.push({ peer, distance });
+      }
+    }
+    
+    // Sort by distance
+    allPeers.sort((a, b) => {
+      for (let i = 0; i < 20; i++) {
+        if (a.distance[i] !== b.distance[i]) {
+          return a.distance[i] - b.distance[i];
+        }
+      }
+      return 0;
+    });
+    
+    return allPeers.slice(0, count).map(item => item.peer);
+  }
+}
+
+// --- HYPARVIEW PROTOCOL IMPLEMENTATION ---
+class HyParView {
+  constructor(nodeId, dht) {
+    this.nodeId = nodeId;
+    this.dht = dht;
+    
+    // Protocol parameters
+    this.activeViewSize = 5;
+    this.passiveViewSize = 30;
+    this.shuffleLength = 4;
+    this.shuffleInterval = 10000;
+    
+    // Views
+    this.activeView = new Map();
+    this.passiveView = new Map();
+    
+    // State
+    this.shuffleTimer = null;
+    this.startShuffle();
+  }
+  
+  addToActiveView(peerId, peerInfo) {
+    const peerIdStr = this.dht.uint8ArrayToHex(peerId);
+    
+    if (this.activeView.has(peerIdStr)) return true;
+    
+    if (this.activeView.size >= this.activeViewSize) {
+      const dropped = this.dropFromActiveView();
+      if (!dropped) return false;
+    }
+    
+    this.activeView.set(peerIdStr, {
+      id: peerId,
+      wire: peerInfo.wire,
+      addedAt: Date.now(),
+      isOutgoing: peerInfo.isOutgoing || false
+    });
+    
+    console.log(`[HyParView] Added peer to active view. Active: ${this.activeView.size}/${this.activeViewSize}`);
+    
+    this.passiveView.delete(peerIdStr);
+    return true;
+  }
+  
+  dropFromActiveView() {
+    let candidates = [];
+    
+    // Prefer to drop incoming connections
+    for (const [peerId, peer] of this.activeView) {
+      if (!peer.isOutgoing) {
+        candidates.push(peerId);
+      }
+    }
+    
+    if (candidates.length === 0) {
+      candidates = Array.from(this.activeView.keys());
+    }
+    
+    if (candidates.length === 0) return false;
+    
+    const toDrop = candidates[Math.floor(Math.random() * candidates.length)];
+    const peer = this.activeView.get(toDrop);
+    
+    this.activeView.delete(toDrop);
+    
+    if (peer.wire && !peer.wire.destroyed) {
+      sendPeer(peer.wire, {
+        type: 'hyparview',
+        subtype: 'DISCONNECT'
+      });
+    }
+    
+    return true;
+  }
+  
+  handleMessage(msg, fromWire) {
+    switch (msg.subtype) {
+      case 'JOIN':
+        this.handleJoin(msg, fromWire);
+        break;
+      case 'DISCONNECT':
+        this.handleDisconnect(msg, fromWire);
+        break;
+      case 'SHUFFLE':
+        this.handleShuffle(msg, fromWire);
+        break;
+    }
+  }
+  
+  handleJoin(msg, fromWire) {
+    const senderId = this.dht.hexToUint8Array(msg.sender);
+    this.addToActiveView(senderId, { wire: fromWire, isOutgoing: false });
+  }
+  
+  handleDisconnect(msg, fromWire) {
+    const peer = this.findPeerByWire(fromWire);
+    if (peer) {
+      const peerIdStr = this.dht.uint8ArrayToHex(peer.id);
+      this.activeView.delete(peerIdStr);
+    }
+  }
+  
+  handleShuffle(msg, fromWire) {
+    // Implementation simplified for browser
+  }
+  
+  findPeerByWire(wire) {
+    for (const [peerId, peer] of this.activeView) {
+      if (peer.wire === wire) return peer;
+    }
+    return null;
+  }
+  
+  startShuffle() {
+    this.shuffleTimer = setInterval(() => {
+      this.performShuffle();
+    }, this.shuffleInterval);
+  }
+  
+  performShuffle() {
+    // Simplified shuffle for browser
+  }
+  
+  getActivePeers() {
+    return Array.from(this.activeView.values())
+      .filter(p => p.wire && !p.wire.destroyed);
+  }
+  
+  getStats() {
+    return {
+      activeView: this.activeView.size,
+      passiveView: this.passiveView.size
+    };
+  }
+}
+
+// --- SCRIBE MULTICAST PROTOCOL ---
+class Scribe {
+  constructor(nodeId, dht) {
+    this.nodeId = nodeId;
+    this.dht = dht;
+    
+    this.subscribedTopics = new Map();
+    this.topicMessages = new Map();
+    
+    this.heartbeatInterval = 30000;
+    this.maxChildren = 16;
+  }
+  
+  extractTopics(content) {
+    const topics = new Set();
+    
+    // Extract hashtags
+    const hashtags = content.match(/#\w+/g) || [];
+    hashtags.forEach(tag => topics.add(tag.toLowerCase()));
+    
+    // Always include general topic
+    topics.add('#general');
+    
+    return Array.from(topics);
+  }
+  
+  async subscribe(topic) {
+    if (this.subscribedTopics.has(topic)) return;
+    
+    console.log(`[Scribe] Subscribing to topic: ${topic}`);
+    
+    this.subscribedTopics.set(topic, {
+      parent: null,
+      children: new Set(),
+      lastRefresh: Date.now()
+    });
+  }
+  
+  multicast(topic, message) {
+    const messageId = generateId();
+    this.disseminateMessage(topic, message, messageId, null);
+  }
+  
+  disseminateMessage(topic, message, messageId, fromWire) {
+    const topicInfo = this.subscribedTopics.get(topic);
+    if (!topicInfo) return;
+    
+    // Check for duplicate
+    let recentMessages = this.topicMessages.get(topic);
+    if (!recentMessages) {
+      recentMessages = new Set();
+      this.topicMessages.set(topic, recentMessages);
+    }
+    
+    if (recentMessages.has(messageId)) return;
+    recentMessages.add(messageId);
+    
+    // Clean old messages
+    if (recentMessages.size > 1000) {
+      const arr = Array.from(recentMessages);
+      arr.slice(0, 500).forEach(id => recentMessages.delete(id));
+    }
+    
+    // Forward to all peers (simplified for browser)
+    state.peers.forEach(peer => {
+      if (peer.wire !== fromWire && !peer.wire.destroyed) {
+        sendPeer(peer.wire, {
+          type: 'scribe',
+          subtype: 'MULTICAST',
+          topic,
+          message,
+          messageId
+        });
+      }
+    });
+    
+    // Deliver locally
+    this.deliverMessage(topic, message);
+  }
+  
+  deliverMessage(topic, message) {
+    console.log(`[Scribe] Delivered message on topic ${topic}:`, message);
+  }
+  
+  handleMessage(msg, fromWire) {
+    switch (msg.subtype) {
+      case 'MULTICAST':
+        this.disseminateMessage(msg.topic, msg.message, msg.messageId, fromWire);
+        break;
+    }
+  }
+  
+  getStats() {
+    return {
+      subscribedTopics: this.subscribedTopics.size,
+      topics: Array.from(this.subscribedTopics.keys())
+    };
+  }
+}
+
+// --- PLUMTREE GOSSIP PROTOCOL ---
+class Plumtree {
+  constructor(nodeId, hyparview) {
+    this.nodeId = nodeId;
+    this.hyparview = hyparview;
+    
+    this.eagerPushPeers = new Set();
+    this.lazyPushPeers = new Set();
+    this.missing = new Map();
+    this.receivedMessages = new Map();
+    
+    this.lazyPushDelay = 100;
+    this.missingTimeout = 3000;
+    this.messageHistorySize = 10000;
+    
+    this.metrics = {
+      messagesReceived: 0,
+      duplicatesReceived: 0,
+      messagesRequested: 0
+    };
+    
+    this.initializeEagerPeers();
+  }
+  
+  initializeEagerPeers() {
+    const activePeers = this.hyparview.getActivePeers();
+    activePeers.forEach(peer => {
+      const peerIdStr = this.hyparview.dht.uint8ArrayToHex(peer.id);
+      this.eagerPushPeers.add(peerIdStr);
+    });
+    console.log(`[Plumtree] Initialized with ${this.eagerPushPeers.size} eager peers`);
+  }
+  
+  broadcast(message, excludePeerId = null) {
+    const messageId = message.id || generateId();
+    message.id = messageId;
+    
+    this.receivedMessages.set(messageId, {
+      message,
+      receivedFrom: null,
+      timestamp: Date.now()
+    });
+    
+    this.eagerPush(message, excludePeerId);
+    
+    setTimeout(() => {
+      this.lazyPush(messageId, excludePeerId);
+    }, this.lazyPushDelay);
+    
+    return messageId;
+  }
+  
+  eagerPush(message, excludePeerId = null) {
+    const activePeers = this.hyparview.getActivePeers();
+    
+    activePeers.forEach(peer => {
+      const peerIdStr = this.hyparview.dht.uint8ArrayToHex(peer.id);
+      
+      if (peerIdStr === excludePeerId || !this.eagerPushPeers.has(peerIdStr)) {
+        return;
+      }
+      
+      if (!peer.wire.destroyed) {
+        sendPeer(peer.wire, {
+          type: 'plumtree',
+          subtype: 'GOSSIP',
+          message
+        });
+      }
+    });
+  }
+  
+  lazyPush(messageId, excludePeerId = null) {
+    const activePeers = this.hyparview.getActivePeers();
+    
+    activePeers.forEach(peer => {
+      const peerIdStr = this.hyparview.dht.uint8ArrayToHex(peer.id);
+      
+      if (peerIdStr === excludePeerId || this.eagerPushPeers.has(peerIdStr)) {
+        return;
+      }
+      
+      if (!peer.wire.destroyed) {
+        sendPeer(peer.wire, {
+          type: 'plumtree',
+          subtype: 'IHAVE',
+          messageIds: [messageId]
+        });
+      }
+    });
+  }
+  
+  handleMessage(msg, fromWire) {
+    const fromPeerId = fromWire.peerId ? 
+      this.hyparview.dht.uint8ArrayToHex(fromWire.peerId) : null;
+    
+    switch (msg.subtype) {
+      case 'GOSSIP':
+        this.handleGossip(msg.message, fromPeerId, fromWire);
+        break;
+      case 'IHAVE':
+        this.handleIHave(msg.messageIds, fromPeerId, fromWire);
+        break;
+      case 'GRAFT':
+        this.handleGraft(fromPeerId, msg.messageId);
+        break;
+      case 'PRUNE':
+        this.handlePrune(fromPeerId);
+        break;
+    }
+  }
+  
+  handleGossip(message, fromPeerId, fromWire) {
+    const messageId = message.id;
+    
+    if (this.receivedMessages.has(messageId)) {
+      this.metrics.duplicatesReceived++;
+      return;
+    }
+    
+    this.metrics.messagesReceived++;
+    this.receivedMessages.set(messageId, {
+      message,
+      receivedFrom: fromPeerId,
+      timestamp: Date.now()
+    });
+    
+    if (!this.eagerPushPeers.has(fromPeerId)) {
+      this.graft(fromPeerId);
+    }
+    
+    this.deliver(message);
+    
+    this.eagerPush(message, fromPeerId);
+    setTimeout(() => {
+      this.lazyPush(messageId, fromPeerId);
+    }, this.lazyPushDelay);
+  }
+  
+  handleIHave(messageIds, fromPeerId, fromWire) {
+    messageIds.forEach(messageId => {
+      if (!this.receivedMessages.has(messageId) && !this.missing.has(messageId)) {
+        this.requestMessage(messageId, fromPeerId, fromWire);
+      }
+    });
+  }
+  
+  requestMessage(messageId, fromPeerId, fromWire) {
+    this.metrics.messagesRequested++;
+    
+    sendPeer(fromWire, {
+      type: 'plumtree',
+      subtype: 'GRAFT',
+      messageId
+    });
+    
+    const timeout = setTimeout(() => {
+      this.missing.delete(messageId);
+    }, this.missingTimeout);
+    
+    this.missing.set(messageId, { timeout });
+  }
+  
+  handleGraft(fromPeerId) {
+    this.eagerPushPeers.add(fromPeerId);
+    this.lazyPushPeers.delete(fromPeerId);
+  }
+  
+  handlePrune(fromPeerId) {
+    this.eagerPushPeers.delete(fromPeerId);
+    this.lazyPushPeers.add(fromPeerId);
+  }
+  
+  graft(peerId) {
+    this.eagerPushPeers.add(peerId);
+    this.lazyPushPeers.delete(peerId);
+  }
+  
+  deliver(message) {
+    // Override this method for application-specific delivery
+    console.log(`[Plumtree] Delivered message: ${message.id}`);
+  }
+  
+  getStats() {
+    return {
+      eagerPeers: this.eagerPushPeers.size,
+      lazyPeers: this.lazyPushPeers.size,
+      messagesInHistory: this.receivedMessages.size,
+      metrics: { ...this.metrics }
+    };
+  }
+}
+
+
+
+
   let maintenanceInterval;
 let bonfireUpdateTimeout; 
 function startMaintenanceLoop() {
@@ -1521,30 +2039,27 @@ function startMaintenanceLoop() {
       stateManager.savePeerScores();
     }
     
-    // Every 60 seconds - Shard rebalancing
-    if (tick % 60 === 0) {
-      dynamicSharding.rebalanceShards();
+    // Every 60 seconds - Peer exchange
+    if (tick % 60 === 0 && state.hyparview) {
+        const activePeers = state.hyparview.getActivePeers();
+        if (activePeers.length > 0) {
+            const target = activePeers[Math.floor(Math.random() * activePeers.length)];
+            
+            // Send some known peers
+            const knownPeers = Array.from(state.peers.keys())
+                .filter(id => typeof id === 'string') // Only string IDs for browser peers
+                .slice(0, 10)
+                .map(peerId => ({ id: peerId }));
+            
+            if (knownPeers.length > 0 && target.wire && !target.wire.destroyed) {
+                sendPeer(target.wire, {
+                    type: 'peer_exchange',
+                    peers: knownPeers
+                });
+            }
+        }
     }
     
-    // Every 120 seconds - Cross-shard discovery
-    if (tick % 120 === 0) {
-      const totalShards = dynamicSharding.getOptimalShardCount();
-      const currentShardCount = dynamicSharding.myShards.size;
-      
-      if (currentShardCount < 5) {
-        const randomShard = Math.floor(Math.random() * totalShards);
-        if (!dynamicSharding.myShards.has(randomShard)) {
-          console.log(`Joining shard ${randomShard} for discovery`);
-          dynamicSharding.joinShard(randomShard);
-          
-          setTimeout(() => {
-            if (!dynamicSharding.shouldJoinShard(randomShard)) {
-              dynamicSharding.leaveShard(randomShard);
-            }
-          }, 30000);
-        }
-      }
-    }
     // Every 300 seconds (5 minutes) - Bloom filter stats
     if (tick % 300 === 0) {
       const stats = state.seenMessages.getStats();
@@ -1666,7 +2181,6 @@ const epidemicGossip = new EpidemicGossip();
 const stateManager = new StateManager();
 
 
-const dynamicSharding = new DynamicSharding();
 const noiseGenerator = new NoiseGenerator();
 const trafficMixer = new TrafficMixer();
 
@@ -1882,18 +2396,23 @@ function sanitize(content) {
       }, dur);
     }
 
-    /* ---------- GLOBAL STATE ---------- */
-    const state = {
-      posts: new Map(),
-      peers: new Map(),
-      myIdentity: null,
-      client: null,
-      explicitlyCarrying: new Set(),
-      viewing: new Set(),
-      toxicityClassifier: null,
-      seenMessages: new HierarchicalBloomFilter(),
-      seenPosts: new HierarchicalBloomFilter()
-    };
+/* ---------- GLOBAL STATE ---------- */
+const state = {
+  posts: new Map(),
+  peers: new Map(),
+  myIdentity: null,
+  client: null,
+  explicitlyCarrying: new Set(),
+  viewing: new Set(),
+  toxicityClassifier: null,
+  seenMessages: new HierarchicalBloomFilter(),
+  seenPosts: new HierarchicalBloomFilter(),
+  // Add protocol instances
+  dht: null,
+  hyparview: null,
+  scribe: null,
+  plumtree: null
+};
 
 /* ---------- IDENTITY ---------- */
 async function initIdentity() {
@@ -2010,20 +2529,26 @@ async function initIdentity() {
       const handleInput = document.getElementById('identity-handle-input');
       const confirmButton = document.getElementById('identity-confirm-button');
 
-      const finalize = () => {
+      const finalize = async () => {
           const handle = handleInput.value.trim() || "anon";
 
-          // **NEW**: Generate the signing key pair
-          const keyPair = nacl.sign.keyPair();
-
-        state.myIdentity = {
-            handle: handle,
-            publicKey: keyPair.publicKey,
-            secretKey: keyPair.secretKey,
-            vdfProof: proof,
-            vdfInput: vdfInput, // The full input used for this identity's VDF
-            uniqueId: uniqueId // The short, unique part of the VDF input
-        };
+      // When creating new identity:
+      const keyPair = nacl.sign.keyPair();
+      
+      // Generate node ID from public key (SHA-1 hash)
+      const publicKeyData = new TextEncoder().encode(arrayBufferToBase64(keyPair.publicKey));
+        const hashBuffer = await crypto.subtle.digest('SHA-1', keyPair.publicKey); 
+        const nodeId = new Uint8Array(hashBuffer);
+      
+      state.myIdentity = {
+        handle: handle,
+        publicKey: keyPair.publicKey,
+        secretKey: keyPair.secretKey,
+        vdfProof: proof,
+        vdfInput: vdfInput,
+        uniqueId: uniqueId,
+        nodeId: nodeId // Add this!
+      };
 
           // **NEW**: Convert binary keys for JSON serialization
         const serializableIdentity = {
@@ -2055,6 +2580,11 @@ async function initIdentity() {
     overlay.style.display = 'flex';
   });
 }
+
+
+
+
+
     /* ---------- TOXICITY FILTER ---------- */
     async function initContentFilter() {
       try {
@@ -2175,19 +2705,28 @@ class Post {
      * Includes imageHash for content integrity.
      * @returns {Uint8Array} - The byte array to be signed or verified.
      */
-    toSignable() {
-        const signableData = {
-            id: this.id,
-            content: this.content,
-            timestamp: this.timestamp,
-            parentId: this.parentId,
-            imageHash: this.imageHash, // Now signing the content hash of the image
-            authorPublicKey: arrayBufferToBase64(this.authorPublicKey)
-        };
-        const signedString = JSON.stringify(signableData);
-        console.log(`[Post] Data being signed: ${signedString}`);
-        return new TextEncoder().encode(signedString);
-    }
+toSignable() {
+  // Ensure publicKey is always converted to base64 string for consistent signing
+  let publicKeyBase64;
+  if (typeof this.authorPublicKey === 'string') {
+    publicKeyBase64 = this.authorPublicKey;
+  } else {
+    publicKeyBase64 = arrayBufferToBase64(this.authorPublicKey);
+  }
+  
+  const signableData = {
+    id: this.id,
+    content: this.content,
+    timestamp: this.timestamp,
+    parentId: this.parentId,
+    imageHash: this.imageHash,
+    authorPublicKey: publicKeyBase64
+  };
+  
+  const signedString = JSON.stringify(signableData);
+  console.log(`[Post] Data being signed: ${signedString}`);
+  return new TextEncoder().encode(signedString);
+}
 
     /**
      * Signs the post using the user's private key.
@@ -2263,42 +2802,141 @@ class Post {
      * @param {object} j - The raw object from a JSON payload.
      * @returns {Post} - A complete Post instance.
      */
-    static fromJSON(j) {
-        const p = Object.create(Post.prototype);
-        p.id = j.id;
-        p.content = j.content;
-        p.timestamp = j.timestamp;
-        p.parentId = j.parentId;
-        p.imageHash = j.imageHash;
-        p.imageData = j.imageData; // Will usually be null for received posts, populated by render if image arrives
+static fromJSON(j) {
+    const p = Object.create(Post.prototype);
+    
+    // Copy all basic properties
+    p.id = j.id;
+    p.content = j.content;
+    p.timestamp = j.timestamp;
+    p.parentId = j.parentId;
+    p.imageHash = j.imageHash;
+    p.imageData = j.imageData; // Will usually be null for received posts, populated by render if image arrives
+    p.author = j.author;
+    p.authorUniqueId = j.authorUniqueId;
+    p.authorVdfProof = j.authorVdfProof;
+    p.authorVdfInput = j.authorVdfInput;
+    p.depth = j.depth || 0;
 
-        // Store image metadata if available and we don't have it already
-        if (j.imageMeta && j.imageHash) {
-            if (!imageStore.images.has(j.imageHash)) {
-                imageStore.images.set(j.imageHash, j.imageMeta);
-                console.log(`[Post.fromJSON] Stored image metadata for ${j.imageHash.substring(0, 8)}... (from incoming post)`);
-            } else {
-                console.log(`[Post.fromJSON] Image metadata for ${j.imageHash.substring(0, 8)}... already exists locally.`);
-            }
+    // Store image metadata if available and we don't have it already
+    if (j.imageMeta && j.imageHash) {
+        if (!imageStore.images.has(j.imageHash)) {
+            imageStore.images.set(j.imageHash, j.imageMeta);
+            console.log(`[Post.fromJSON] Stored image metadata for ${j.imageHash.substring(0, 8)}... (from incoming post)`);
+        } else {
+            console.log(`[Post.fromJSON] Image metadata for ${j.imageHash.substring(0, 8)}... already exists locally.`);
         }
-
-        p.author = j.author;
-        p.authorPublicKey = base64ToArrayBuffer(j.authorPublicKey);
-        p.authorUniqueId = j.authorUniqueId;
-        p.authorVdfProof = j.authorVdfProof;
-        p.authorVdfInput = j.authorVdfInput;
-        p.signature = j.signature ? base64ToArrayBuffer(j.signature) : null;
-        p.carriers = new Set(j.carriers);
-        p.replies = new Set(j.replies || []);
-        p.depth = j.depth || 0;
-        return p;
     }
+
+    // Handle public key conversion (with Buffer support)
+    if (typeof j.authorPublicKey === 'string') {
+        p.authorPublicKey = base64ToArrayBuffer(j.authorPublicKey);
+    } else if (j.authorPublicKey && (j.authorPublicKey.type === 'Buffer' || j.authorPublicKey.data)) {
+        // Handle Buffer objects from Node.js
+        p.authorPublicKey = new Uint8Array(j.authorPublicKey.data || j.authorPublicKey);
+    } else if (j.authorPublicKey instanceof Uint8Array) {
+        p.authorPublicKey = j.authorPublicKey;
+    }
+    
+    // Handle signature conversion (with Buffer support)
+    if (typeof j.signature === 'string') {
+        p.signature = base64ToArrayBuffer(j.signature);
+    } else if (j.signature && (j.signature.type === 'Buffer' || j.signature.data)) {
+        // Handle Buffer objects from Node.js
+        p.signature = new Uint8Array(j.signature.data || j.signature);
+    } else if (j.signature instanceof Uint8Array) {
+        p.signature = j.signature;
+    } else {
+        p.signature = null;
+    }
+    
+    // Convert arrays back to Sets
+    p.carriers = new Set(j.carriers || []);
+    p.replies = new Set(j.replies || []);
+    
+    console.log('[Post.fromJSON] Reconstructed post:', {
+        id: p.id,
+        author: p.author,
+        hasPublicKey: !!p.authorPublicKey,
+        hasSignature: !!p.signature,
+        publicKeyType: p.authorPublicKey?.constructor?.name,
+        signatureType: p.signature?.constructor?.name
+    });
+    
+    return p;
+}
 }
 
 
-   
-    
+   function hexToUint8Array (hex) {
+  if (hex.length % 2) throw new Error('hex length must be even');
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
 
+    
+function handleBootstrapWire(wire, addr) {
+  const id = wire.peerId;
+  if (state.peers.has(id)) return;
+  
+  console.log(`Bootstrap peer connected: ${id.toString('hex').substring(0, 12)}...`);
+  
+  // Handle both Buffer (from Node.js) and string peer IDs
+  let peerId;
+  if (typeof wire.peerId === 'string') {
+    peerId = hexToUint8Array(wire.peerId);
+  } else if (wire.peerId instanceof Uint8Array) {
+    peerId = wire.peerId;
+  } else if (wire.peerId && (wire.peerId.type === 'Buffer' || wire.peerId.data)) {
+    // Handle Buffer objects from Node.js
+    peerId = new Uint8Array(wire.peerId.data || wire.peerId);
+  } else {
+    peerId = wire.peerId;
+  }
+  
+  wire.peerId = peerId; // Normalize it
+  
+  const peerData = { 
+    wire, 
+    addr,
+    id: peerId, // Use the normalized peerId
+    messageTimestamps: [],
+    shardIndex: 'bootstrap',
+    connectedAt: Date.now(),
+    bytesReceived: 0,
+    bytesSent: 0
+  };
+
+  state.peers.set(peerId, peerData); // Use peerId as key
+  
+  // Add to DHT with proper ID handling
+  if (state.dht) {
+    state.dht.addPeer(peerId, peerData);
+  }
+  
+  
+  // Add to HyParView if room
+  if (state.hyparview && state.hyparview.activeView.size < state.hyparview.activeViewSize) {
+    state.hyparview.addToActiveView(id, { wire, isOutgoing: false });
+  }
+  
+  attachEphemeralExtension(wire);
+  
+  wire.on('close', () => {
+    console.log(`Bootstrap peer disconnected: ${id.toString('hex').substring(0, 12)}...`);
+    state.peers.delete(id);
+    
+    if (state.dht) state.dht.removePeer(id);
+    if (state.hyparview) state.hyparview.handlePeerFailure(id);
+    
+    updateStatus();
+  });
+  
+  wire.on('error', err => console.error(`Bootstrap wire error:`, err.message));
+}
 
 
     /* ---------- WEBTORRENT NETWORKING ---------- */
@@ -2345,8 +2983,47 @@ function initNetwork() {
       trickle: true
     });
     
-    updateConnectionStatus("WebTorrent client ready");
-    console.log("WebTorrent client created successfully");
+    // Initialize protocols
+    state.dht = new KademliaDHT(state.myIdentity.nodeId);
+    state.hyparview = new HyParView(state.myIdentity.nodeId, state.dht);
+    
+    updateConnectionStatus("Joining DHT bootstrap network...");
+    
+    // CRITICAL: Join the same bootstrap torrent as headless nodes!
+    const bootstrapData = new Blob(['Ember-DHT-Bootstrap-v1'], { type: 'text/plain' });
+    state.client.seed(bootstrapData, { 
+      name: 'ember-bootstrap.txt',
+      announce: state.trackers || []
+    }, torrent => {
+      console.log(`Connected to bootstrap network: ${torrent.infoHash}`);
+      updateConnectionStatus("Connected to Ember bootstrap network!");
+      
+      torrent.on('wire', (wire, addr) => {
+        // Use a special handler for bootstrap connections
+        handleBootstrapWire(wire, addr);
+      });
+    });
+    
+
+    
+    // Bootstrap protocols after network is ready
+    setTimeout(async () => {
+      // Initialize Scribe after HyParView
+      state.scribe = new Scribe(state.myIdentity.nodeId, state.dht);
+      await state.scribe.subscribe('#general');
+      await state.scribe.subscribe('#ember');
+      
+      // Initialize Plumtree
+      state.plumtree = new Plumtree(state.myIdentity.nodeId, state.hyparview);
+      state.plumtree.deliver = (message) => {
+        if (message.type === 'post') {
+          handleNewPost(message.data, null);
+        }
+      };
+      
+      console.log("P2P protocols initialized");
+    }, 3000);
+    
   } catch (e) {
     console.error("Failed to create WebTorrent client:", e);
     updateConnectionStatus(`Failed to initialize: ${e.message}`, 'error');
@@ -2366,66 +3043,9 @@ function initNetwork() {
     console.warn('WebTorrent warning:', err);
   });
 
-  // Override joinShard to add status updates
-  const originalJoinShard = dynamicSharding.joinShard.bind(dynamicSharding);
-  dynamicSharding.joinShard = function(shardId) {
-    if (this.myShards.has(shardId)) return;
-    
-    updateConnectionStatus(`Joining shard ${shardId}...`);
-    console.log(`Joining shard ${shardId}`);
-    
-    this.myShards.add(shardId);
-    
-    // Create and seed the shard
-    const shardData = new Blob([`Ember-Shard-${shardId}`], { type: 'text/plain' });
-    
-    state.client.seed(shardData, { 
-      name: `ember-shard-${shardId}.txt`,
-      announce: state.trackers || []
-    }, torrent => {
-      updateConnectionStatus(`Connected to shard ${shardId}`);
-      console.log(`Torrent ready for shard ${shardId}:`, torrent.infoHash);
-      
-      torrent.on('peer', (addr) => {
-        console.log(`Peer discovered in shard ${shardId}: ${addr}`);
-        updateConnectionStatus(`Found peer in shard ${shardId}!`);
-      });
-      
-      torrent.on('wire', (wire, addr) => {
-        console.log(`Wire connected in shard ${shardId}: ${addr}`);
-        updateConnectionStatus(`Connected to peer!`, 'success');
-        handleWire(wire, addr, shardId);
-      });
-      
-      torrent.on('announce', () => {
-        console.log(`Announced to tracker for shard ${shardId}`);
-      });
-      
-      torrent.on('error', (err) => {
-        console.error(`Torrent error on shard ${shardId}:`, err);
-        updateConnectionStatus(`Shard ${shardId} error: ${err.message}`, 'error');
-      });
-      
-      torrent.on('warning', (err) => {
-        console.warn(`Torrent warning on shard ${shardId}:`, err);
-      });
-    });
-  };
+   updateConnectionStatus("Network ready - using unified bootstrap");
 
-  // Join initial shards
-  updateConnectionStatus("Joining initial shards...");
-  const initialShards = dynamicSharding.selectShards(3);
-  console.log("Initial shards selected:", initialShards);
-  
-  initialShards.forEach((shardId, index) => {
-    setTimeout(() => {
-      dynamicSharding.joinShard(shardId);
-    }, index * 500); // Stagger shard joins by 500ms
-  });
-  
-  // Enable cross-shard discovery
-  dynamicSharding.enableCrossShardDiscovery();
-  
+ 
   // Set up periodic status check
   let lastPeerCount = 0;
   const statusCheckInterval = setInterval(() => {
@@ -2458,11 +3078,10 @@ function initNetwork() {
   window.networkStartTime = Date.now();
   
   // Log initial state
-  console.log("Network initialization complete", {
-    client: !!state.client,
-    shards: Array.from(dynamicSharding.myShards),
-    trackers: trackers.length
-  });
+console.log("Network initialization complete", {
+  client: !!state.client,
+  trackers: trackers.length
+});
 }
 
 // Helper function to update connection status
@@ -2490,7 +3109,7 @@ function updateConnectionStatus(message, type = 'info') {
 }
 
 // Handle new wire connections with status updates
-function handleWire(wire, addr, shardIndex) {
+function handleWire(wire, addr) {
   const id = wire.peerId;
   if (state.peers.has(id)) return;
   
@@ -2499,29 +3118,29 @@ function handleWire(wire, addr, shardIndex) {
     updateConnectionStatus(`Connected to peer ${state.peers.size + 1}!`, 'success');
   }
   
-  // Limit connections per shard
-  const peersInShard = Array.from(state.peers.values())
-    .filter(p => p.shardIndex === shardIndex).length;
-  
-  if (peersInShard > 10) { // Max 10 peers per shard
-    console.log(`Shard ${shardIndex} full, rejecting peer`);
-    wire.destroy();
-    return;
-  }
-  
-  console.log(`New peer connection on shard #${shardIndex}: ${id}`);
+  console.log(`New peer connection: ${id}`);
   
   const peerData = { 
     wire, 
     addr,
     id: id, 
     messageTimestamps: [], 
-    shardIndex,
     connectedAt: Date.now(),
     bytesReceived: 0,
     bytesSent: 0
   };
   
+  state.peers.set(id, peerData);
+  
+  // Add to DHT
+  if (state.dht) {
+    state.dht.addPeer(id, peerData);
+  }
+  
+  // Add to HyParView if room
+  if (state.hyparview && state.hyparview.activeView.size < state.hyparview.activeViewSize) {
+    state.hyparview.addToActiveView(id, { wire, isOutgoing: false });
+  }
   state.peers.set(id, peerData);
   peerManager.updateScore(id, 'connection', 1);
   updateStatus();
@@ -2549,6 +3168,11 @@ function handleWire(wire, addr, shardIndex) {
   wire.on('close', () => {
     console.log(`Disconnected from peer: ${id}`);
     state.peers.delete(id);
+    
+    // Notify protocols
+    if (state.dht) state.dht.removePeer(id);
+    if (state.hyparview) state.hyparview.handlePeerFailure(id);
+    
     updateStatus();
   });
   
@@ -2557,26 +3181,27 @@ function handleWire(wire, addr, shardIndex) {
 
 
 
-    const sendPeer = (wire, msg) => {
-      if (!wire || wire.destroyed) return;
-      
-      try {
-        // Convert string to Uint8Array (browser-compatible)
-        const encoder = new TextEncoder();
-        const data = encoder.encode(JSON.stringify(msg));
-        
-        // Multiple ways to check for extension readiness
-        if (wire.ephemeral_msg && wire.ephemeral_msg._ready && wire.ephemeral_msg.peerId !== undefined) {
-          wire.extended(wire.ephemeral_msg.peerId, data);
-        } else if (wire.extendedMapping && wire.extendedMapping.ephemeral_msg !== undefined) {
-          wire.extended(wire.extendedMapping.ephemeral_msg, data);
-        } else {
-          console.warn('Extension not ready yet for peer.');
-        }
-      } catch (e) {
-        console.warn("sendPeer fail", e.message);
-      }
-    };
+const sendPeer = (wire, msg) => {
+  if (!wire || wire.destroyed) return;
+  
+  try {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(JSON.stringify(msg));
+    
+    if (wire.ephemeral_msg && wire.ephemeral_msg._ready && wire.ephemeral_msg.peerId !== undefined) {
+      wire.extended(wire.ephemeral_msg.peerId, data);
+    } else if (wire.extendedMapping && wire.extendedMapping.ephemeral_msg !== undefined) {
+      wire.extended(wire.extendedMapping.ephemeral_msg, data);
+    } else {
+      // Queue the message for later (this was missing!)
+      if (!wire._pendingMessages) wire._pendingMessages = [];
+      wire._pendingMessages.push(msg);
+      console.log('[Extension] Queued message for later delivery');
+    }
+  } catch (e) {
+    console.warn("sendPeer fail", e.message);
+  }
+};
 
     
     /* ------------------------------------------------------------------ */
@@ -2594,28 +3219,37 @@ function handleWire(wire, addr, shardIndex) {
       EphemeralExtension.prototype.name = 'ephemeral_msg';
       
       // Called when extended handshake completes
-      EphemeralExtension.prototype.onExtendedHandshake = function(handshake) {
-        console.log('Extension handshake received:', handshake);
-        
-        if (!handshake.m || typeof handshake.m.ephemeral_msg === 'undefined') {
-          console.warn('Peer does not support ephemeral_msg');
-          return;
-        }
-        
-        // Store the message type ID assigned by peer
-        this.peerId = handshake.m.ephemeral_msg;
-        this._ready = true;
-        
-        console.log('Extension ready! PeerID:', this.peerId);
-        
-        // Add delay before first message
-        setTimeout(() => {
-          if (!wire.destroyed && this._ready) {
-            sendPeer(wire, { type: 'request_posts' });
-            console.log('Sent initial request_posts');
+        EphemeralExtension.prototype.onExtendedHandshake = function(handshake) {
+          console.log('Extension handshake received:', handshake);
+          
+          if (!handshake.m || typeof handshake.m.ephemeral_msg === 'undefined') {
+            console.warn('Peer does not support ephemeral_msg');
+            return;
           }
-        }, 1000);
-      };
+          
+          this.peerId = handshake.m.ephemeral_msg;
+          this._ready = true;
+          
+          // Store reference on wire (this was missing!)
+          wire.ephemeral_msg = this;
+          
+          console.log('Extension ready! PeerID:', this.peerId);
+          
+          // Send any queued messages (this was missing!)
+          if (wire._pendingMessages && wire._pendingMessages.length > 0) {
+            console.log(`[Extension] Sending ${wire._pendingMessages.length} queued messages`);
+            wire._pendingMessages.forEach(msg => sendPeer(wire, msg));
+            wire._pendingMessages = [];
+          }
+          
+          // Add delay before first message
+          setTimeout(() => {
+            if (!wire.destroyed && this._ready) {
+              sendPeer(wire, { type: 'request_posts' });
+              console.log('Sent initial request_posts');
+            }
+          }, 1000);
+        };
       
       // Called when a message for this extension is received
       EphemeralExtension.prototype.onMessage = function(buf) {
@@ -2648,49 +3282,15 @@ function broadcast(msg, excludeWire = null) {
   }
   epidemicGossip.messageTTL.set(msg.msgId, msg.hops);
   
-  // Clean old TTL entries
-  if (epidemicGossip.messageTTL.size > 10000) {
-    const entries = Array.from(epidemicGossip.messageTTL.entries());
-    entries.slice(0, 5000).forEach(([id]) => epidemicGossip.messageTTL.delete(id));
-  }
-  
-  // Calculate fanout based on network size
-  const networkSize = state.peers.size;
-  let fanout = Math.ceil(Math.log2(networkSize + 1)) + 2;
-  fanout = Math.min(fanout, 8); // Cap at 8
-  
-  // Special handling for important messages
-  if (msg.type === 'new_post' && msg.post) {
-    const postShard = dynamicSharding.getShardForPost(msg.post.id);
-    
-    // Send to peers in the same shard first
-    const shardPeers = Array.from(state.peers.values())
-      .filter(p => p.shardIndex === postShard && p.wire !== excludeWire);
-    
-    const selectedShardPeers = epidemicGossip.selectRandomPeers(
-      Math.min(fanout, shardPeers.length), 
-      [excludeWire]
-    );
-    
-    selectedShardPeers.forEach(peer => {
-      epidemicGossip.sendWithExponentialBackoff(peer, msg);
-    });
-    
-    // Cross-shard propagation with reduced fanout
-    const crossShardFanout = Math.max(1, Math.floor(fanout / 3));
-    const otherShardPeers = Array.from(state.peers.values())
-      .filter(p => p.shardIndex !== postShard && p.wire !== excludeWire);
-    
-    const selectedCrossShardPeers = epidemicGossip.selectRandomPeers(
-      crossShardFanout,
-      [excludeWire, ...selectedShardPeers.map(p => p.wire)]
-    );
-    
-    selectedCrossShardPeers.forEach(peer => {
-      epidemicGossip.sendWithExponentialBackoff(peer, msg);
-    });
+  // Use Plumtree for efficient dissemination
+  if (state.plumtree && state.hyparview && state.hyparview.getActivePeers().length > 2) {
+    state.plumtree.broadcast(msg, excludeWire?.peerId?.toString('hex'));
   } else {
-    // Regular broadcast for other message types
+    // Fallback for small networks or before Plumtree is ready
+    const networkSize = state.peers.size;
+    let fanout = Math.ceil(Math.log2(networkSize + 1)) + 2;
+    fanout = Math.min(fanout, 8);
+    
     const selected = epidemicGossip.selectRandomPeers(fanout, [excludeWire]);
     selected.forEach(peer => {
       epidemicGossip.sendWithExponentialBackoff(peer, msg);
@@ -2824,11 +3424,59 @@ function handleImageResponse(msg) {
         if (msg.type === "new_post" || msg.type === "carrier_update") {
             trafficMixer.addToMixPool(msg, fromWire);
           }
-    switch (msg.type) {
+      switch (msg.type) {
+        case "dht_rpc":
+          if (state.dht) {
+            state.dht.handleRPC(msg, fromWire);
+          }
+          break;
+          
+        case "hyparview":
+          if (state.hyparview) {
+            state.hyparview.handleMessage(msg, fromWire);
+          }
+          break;
+          
+        case "scribe":
+          if (state.scribe) {
+            state.scribe.handleMessage(msg, fromWire);
+          }
+          break;
+          
+        case "plumtree":
+          if (state.plumtree) {
+            state.plumtree.handleMessage(msg, fromWire);
+          }
+          break;
       case "onion_relay":
         dandelion.handleOnionRelay(msg, fromWire);
         break;
-              
+    case "peer_exchange":
+      // Handle peer exchange messages from headless nodes
+      if (msg.peers && Array.isArray(msg.peers)) {
+        msg.peers.forEach(peerInfo => {
+          try {
+            let peerId;
+            // Handle different ID formats
+            if (typeof peerInfo.id === 'string') {
+              // Hex string from headless node
+              peerId = hexToUint8Array(peerInfo.id);
+            } else if (peerInfo.id instanceof Uint8Array) {
+              peerId = peerInfo.id;
+            } else if (peerInfo.id && (peerInfo.id.type === 'Buffer' || peerInfo.id.data)) {
+              // Buffer object
+              peerId = new Uint8Array(peerInfo.id.data || peerInfo.id);
+            }
+            
+            if (peerId && state.dht && !state.dht.uint8ArrayEquals(peerId, state.myIdentity.nodeId)) {
+              state.dht.addPeer(peerId, { wire: null });
+            }
+          } catch (e) {
+            console.error("Error in peer exchange:", e);
+          }
+        });
+      }
+      break;
       case "noise":
         // Silently drop noise messages
         return;
@@ -2839,7 +3487,7 @@ function handleImageResponse(msg) {
           dandelion.handleRoutedPost(msg, fromWire);
         } else {
           // Handle posts that are not part of the Dandelion protocol (for backward compatibility).
-          await handleNewPost(msg.post, fromWire);
+            await handleNewPost(msg.post || msg, fromWire);
         }
         break;
         case "request_chunks":
@@ -3011,21 +3659,20 @@ function removeImage() {
 
 
 async function handleNewPost(data, fromWire) {
+    // Handle both browser format (with .post) and headless format (direct)
+    const postData = data.post || data;
+    
     // Deduplication check early
-    if (state.seenPosts.has(data.id)) {
-        console.log(`[handleNewPost] Post ${data.id} already seen, skipping.`);
-        return;
-    }
-    if (state.posts.has(data.id)) {
-        console.log(`[handleNewPost] Post ${data.id} already in state.posts, skipping.`);
+    if (!postData?.id || state.posts.has(postData.id) || state.seenPosts.has(postData.id)) {
+        console.log(`[handleNewPost] Post ${postData?.id} already seen, skipping.`);
         return;
     }
 
-    if (data.content.length > CONFIG.MAX_POST_SIZE) {
-        console.warn(`[handleNewPost] Post content too long (${data.content.length} > ${CONFIG.MAX_POST_SIZE}), dropping.`);
+    if (postData.content.length > CONFIG.MAX_POST_SIZE) {
+        console.warn(`[handleNewPost] Post content too long (${postData.content.length} > ${CONFIG.MAX_POST_SIZE}), dropping.`);
         return;
     }
-
+    
     // Identity and VDF proof verification
     if (!data.authorUniqueId || !data.authorVdfProof || !data.authorVdfInput) {
         console.warn(`[handleNewPost] Dropping post ${data.id}: Missing author identity proof components.`, data.author);
@@ -3623,18 +4270,32 @@ function updateStatus() {
   document.getElementById("post-count").textContent = state.posts.size;
   document.getElementById("status-dot").classList.toggle("connecting", pc === 0);
   
-  // Add shard info
-  const shardInfo = `Shards: ${Array.from(dynamicSharding.myShards).join(', ')}`;
-  const privacyStatus = dandelion.onionLayers > 0 ? "🔒 Onion Routing" : "⚠️ Direct";
+  // Add protocol stats
+  const dhtStats = state.dht ? state.dht.getStats() : null;
+  const hvStats = state.hyparview ? state.hyparview.getStats() : null;
   
-  // Update or add privacy indicator
-  let privacyEl = document.getElementById("privacy-status");
-  if (!privacyEl) {
-    privacyEl = document.createElement("span");
-    privacyEl.id = "privacy-status";
-    document.getElementById("status").appendChild(privacyEl);
+  const protocolInfo = dhtStats ? `DHT: ${dhtStats.totalPeers} peers` : '';
+  const overlayInfo = hvStats ? `HyParView: ${hvStats.activeView}/${hvStats.passiveView}` : '';
+  
+  // Update or add protocol indicator
+  let protocolEl = document.getElementById("protocol-status");
+  if (!protocolEl) {
+    protocolEl = document.createElement("span");
+    protocolEl.id = "protocol-status";
+    document.getElementById("status").appendChild(protocolEl);
   }
-  privacyEl.innerHTML = `<br/>${privacyStatus} | ${shardInfo}`;
+  protocolEl.innerHTML = `<br/>${protocolInfo} | ${overlayInfo}`;
+  
+const privacyStatus = dandelion.onionLayers > 0 ? "🔒 Onion Routing" : "⚠️ Direct";
+
+// Update or add privacy indicator
+let privacyEl = document.getElementById("privacy-status");
+if (!privacyEl) {
+  privacyEl = document.createElement("span");
+  privacyEl.id = "privacy-status";
+  document.getElementById("status").appendChild(privacyEl);
+}
+privacyEl.innerHTML = `<br/>${privacyStatus} | Unified Bootstrap`;
   
   // Debounce bonfire updates
   clearTimeout(bonfireUpdateTimeout);
@@ -3736,41 +4397,7 @@ function findRootPost(postId) {
 
 let showAllShards = true; // Default to showing all content
 
-function toggleFeedMode() {
-  showAllShards = !showAllShards;
-  const button = document.getElementById('feed-mode-toggle');
-  button.textContent = showAllShards ? '🌐 All Shards' : '📍 My Shards';
-  
-  const postsContainer = document.getElementById('posts');
-  postsContainer.innerHTML = ''; // Clear the feed
 
-  // Create a function to render a post and its replies
-  const renderThread = (post) => {
-    // Check if the post should be rendered based on the current mode
-    const inMyShards = dynamicSharding.myShards.has(dynamicSharding.getShardForPost(post.id));
-    if (showAllShards || inMyShards) {
-      renderPost(post);
-      // If the post has replies, recursively render them
-      if (post.replies.size > 0) {
-        post.replies.forEach(replyId => {
-          const replyPost = state.posts.get(replyId);
-          if (replyPost) {
-            // Note: We don't need to check the mode for replies,
-            // as we assume they should be shown if the parent is shown.
-            renderPost(replyPost); 
-          }
-        });
-      }
-    }
-  };
-
-  // Iterate over all posts and render the top-level ones, which will trigger reply rendering
-  state.posts.forEach(post => {
-    if (!post.parentId) {
-      renderThread(post);
-    }
-  });
-}
     /* ---------- THEME TOGGLING ---------- */
     function applyTheme(theme) {
       const button = document.getElementById('theme-toggle-button');
