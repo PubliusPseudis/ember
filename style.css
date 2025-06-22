@@ -952,3 +952,7 @@ body.light-mode h1 {
   margin-left: 20px;
   border-left-color: #2196F3;
 }
+#column-controls {
+  overflow-y: auto;
+  padding-right: 10px; /* Consistent padding for the scrollbar */
+}

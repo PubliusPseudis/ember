@@ -64,13 +64,26 @@
   <div id="app-container">
 
     <div class="app-column" id="column-controls">
-      <header>
+     
         <h1>🔥 Ember</h1>
         <p class="tagline">Fan the flames or watch them die</p>
               <div id="controls-footer">
         <button id="theme-toggle-button" class="secondary-button">☀️ Light Mode</button>
       </div>
-      </header>
+      
+              <div id="compose">
+          <textarea id="post-input" placeholder="Write something ephemeral…" maxlength="500"></textarea>
+          <div class="image-preview" id="image-preview" style="display:none;">
+            <img id="preview-img" />
+            <button onclick="removeImage()">✕</button>
+          </div>
+          <div class="compose-footer">
+            <input type="file" id="image-input" accept="image/*" style="display:none;" onchange="handleImageSelect(this)" />
+            <button onclick="document.getElementById('image-input').click()" class="image-button">📷</button>
+            <span class="char-count"><span id="char-current">0</span>/500</span>
+            <button id="send-button" class="primary-button" onclick="createPostWithTopics()">🔥 Light it up</button>
+          </div>
+        </div>
       <div id="status">
         <span><span class="status-indicator" id="status-dot"></span>Connected to <span id="peer-count">0</span> peers</span>
         <span><span id="post-count">0</span> posts alive</span>
@@ -79,7 +92,25 @@
         <strong>Your Network ID:</strong> <code id="network-id"></code><br />
         <small>Share this with friends to connect directly</small>
       </div>
-<div class="topics-section">
+
+        <button id="clear-data-button" class="secondary-button" onclick="clearLocalData()">
+  🗑️ Clear Local Data
+</button>
+
+        
+        <footer>
+    <p class="network-notice">
+        ⚠️ Public Network: Do not share sensitive information.
+    </p>
+</footer>
+        
+    </div>
+
+    <div class="app-column" id="column-feed">
+      <div class="column-header">
+        <h2>The Void</h2>
+      </div>
+      <div class="topics-section">
   <h3>📡 Topics</h3>
   <div class="subscribed-topics" id="subscribed-topics">
     <div class="topic-tag active" data-topic="#general">#general</div>
@@ -106,35 +137,8 @@
     <button class="mode-button" onclick="setFeedMode('topics')">My Topics</button>
   </div>
 </div>
-        <button id="clear-data-button" class="secondary-button" onclick="clearLocalData()">
-  🗑️ Clear Local Data
-</button>
-        <div id="compose">
-          <textarea id="post-input" placeholder="Write something ephemeral…" maxlength="500"></textarea>
-          <div class="image-preview" id="image-preview" style="display:none;">
-            <img id="preview-img" />
-            <button onclick="removeImage()">✕</button>
-          </div>
-          <div class="compose-footer">
-            <input type="file" id="image-input" accept="image/*" style="display:none;" onchange="handleImageSelect(this)" />
-            <button onclick="document.getElementById('image-input').click()" class="image-button">📷</button>
-            <span class="char-count"><span id="char-current">0</span>/500</span>
-            <button id="send-button" class="primary-button" onclick="createPostWithTopics()">🔥 Light it up</button>
-          </div>
-        </div>
-        
-        <footer>
-    <p class="network-notice">
-        ⚠️ Public Network: Do not share sensitive information.
-    </p>
-</footer>
-        
-    </div>
-
-    <div class="app-column" id="column-feed">
-      <div class="column-header">
-        <h2>The Void</h2>
-      </div>
+      
+      
       <div id="posts">
         </div>
     </div>
