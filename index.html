@@ -3648,39 +3648,43 @@ async function initIdentity() {
 async function subscribeToTopic() {
   const input = document.getElementById('topic-input');
   let topic = input.value.trim().toLowerCase();
-  
+
   if (!topic) return;
-  
-  // Ensure topic starts with #
+
   if (!topic.startsWith('#')) {
     topic = '#' + topic;
   }
-  
-  // Validate topic
+
   if (!/^#\w+$/.test(topic)) {
     notify('Invalid topic format. Use #alphanumeric');
     return;
   }
-  
+
   if (state.subscribedTopics.has(topic)) {
     notify('Already subscribed to ' + topic);
     return;
   }
+
+  // --- FIX: UI and State updates now happen immediately ---
+  // 1. Add to the local state.
+  state.subscribedTopics.add(topic);
   
-  // Subscribe via Scribe
+  // 2. Update the UI components.
+  addTopicToUI(topic);
+  updateTopicFilter();
+  
+  // 3. Persist the change and clear the input.
+  saveTopicSubscriptions();
+  input.value = '';
+  notify(`Subscribed to ${topic}`);
+
+  // --- Network action happens when possible ---
+  // 4. Tell the P2P network to join the topic.
   if (state.scribe) {
     await state.scribe.subscribe(topic);
-    state.subscribedTopics.add(topic);
-    
-    // Update UI
-    addTopicToUI(topic);
-    updateTopicFilter();
-    
-    notify(`Subscribed to ${topic}`);
-    input.value = '';
-    
-    // Save to localStorage
-    saveTopicSubscriptions();
+  } else {
+    // This warning is for developers; the user experience is already handled.
+    console.warn("Scribe not ready, but UI has been updated. Network will join topic upon initialization.");
   }
 }
 
