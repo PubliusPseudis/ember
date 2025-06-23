@@ -3778,40 +3778,53 @@ function applyTopicFilter() {
   const posts = document.querySelectorAll('.post');
   let visibleCount = 0;
   
+  // Get the values from the state
+  const currentFeedMode = state.feedMode;
+  const topicDropdownFilter = state.topicFilter;
+
   posts.forEach(postEl => {
     const postId = postEl.id.replace('post-', '');
     const post = state.posts.get(postId);
     if (!post) return;
-    
+
     const postTopics = state.scribe ? state.scribe.extractTopics(post.content) : [];
-    let shouldShow = true;
-    
-    // Apply feed mode filter
-    if (state.feedMode === 'topics') {
-      // Show only posts from subscribed topics
-      shouldShow = postTopics.some(topic => state.subscribedTopics.has(topic));
+    let isVisible = false; // Start by assuming the post is hidden
+
+    // Step 1: Determine base visibility from the "All Posts" / "My Topics" buttons
+    if (currentFeedMode === 'all') {
+      // In 'all' mode, every post is a potential candidate to be shown.
+      isVisible = true;
+    } else { // feedMode is 'topics'
+      // In 'topics' mode, only posts that have at least one of our subscribed topics are candidates.
+      isVisible = postTopics.some(topic => state.subscribedTopics.has(topic));
     }
-    
-    // Apply specific topic filter
-    if (shouldShow && state.topicFilter) {
-      shouldShow = postTopics.includes(state.topicFilter);
+
+    // Step 2: If the post is still a candidate, apply the secondary dropdown filter.
+    // This will only run if a specific topic is selected in the dropdown.
+    if (isVisible && topicDropdownFilter) {
+      isVisible = postTopics.includes(topicDropdownFilter);
     }
-    
-    postEl.style.display = shouldShow ? 'block' : 'none';
-    if (shouldShow) visibleCount++;
+
+    // Step 3: Set the final visibility
+    postEl.style.display = isVisible ? 'block' : 'none';
+    if (isVisible) {
+      visibleCount++;
+    }
   });
   
-  // Show message if no posts visible
+  // This part for showing the "empty state" message remains the same and is still correct.
   let emptyMessage = document.getElementById('filter-empty-message');
-  if (visibleCount === 0 && !emptyMessage) {
-    emptyMessage = document.createElement('div');
-    emptyMessage.id = 'filter-empty-message';
-    emptyMessage.className = 'empty-state';
-    emptyMessage.textContent = state.topicFilter ? 
-      `No posts in ${state.topicFilter}` : 
+  if (visibleCount === 0 && (currentFeedMode === 'topics' || topicDropdownFilter)) {
+    if (!emptyMessage) {
+        emptyMessage = document.createElement('div');
+        emptyMessage.id = 'filter-empty-message';
+        emptyMessage.className = 'empty-state';
+        document.getElementById('posts').appendChild(emptyMessage);
+    }
+    emptyMessage.textContent = topicDropdownFilter ? 
+      `No posts in ${topicDropdownFilter}` : 
       'No posts in your subscribed topics';
-    document.getElementById('posts').appendChild(emptyMessage);
-  } else if (visibleCount > 0 && emptyMessage) {
+  } else if (emptyMessage) {
     emptyMessage.remove();
   }
 }
