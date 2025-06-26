@@ -1,0 +1,58 @@
+### **Upgrade Plan: Modifying the Existing Codebase for the "Penumbra" Protocol**
+
+**Objective:** To refactor the current Ember implementation to resolve identified vulnerabilities. This involves replacing the current identity model and Dandelion routing logic with a more secure, multi-layered cryptographic protocol.
+
+#### **1. Refactoring the Identity Core (`initIdentity` function)**
+
+The current `initIdentity` function creates a single keypair for all purposes. This is the root of the linkage vulnerability and must be completely replaced.
+
+* **1.1. Implement HD Key Generation:**
+    * **Action:** Replace the call to `nacl.sign.keyPair()` with logic that generates a BIP-39 mnemonic (master seed). This seed must be stored securely (in `localStorage` for the browser, `identity.json` for the headless node).
+    * **Why:** To provide a recoverable, single source for all future keys and to enable the necessary separation of identities.
+
+* **1.2. Derive and Assign the `NodeKey`:**
+    * **Action:** From the master seed, derive a stable `NodeKey` using a fixed, hardened HD path (e.g., `m/44'/Ember'/0'`). The `state.myIdentity` object must be updated to store `NodePublicKey` and `NodePrivateKey`. The `NodeID` (used for the DHT) will now be `SHA1(NodePublicKey)`.
+    * **Why:** To create a stable, long-term network identity for routing and connectivity that is mathematically separate from any keys used to sign posts. This directly mitigates the linkage vulnerability.
+
+* **1.3. Manage `AuthorKey` Personas:**
+    * **Action:** The `state.myIdentity` object will also need to manage a list of public-facing "personas." Each persona will be associated with a different hardened HD path (e.g., `m/A0'/0'`). The application must store the `PersonaCommitment` (`HASH(PersonaPublicKey)`) as the public identifier for each handle.
+    * **Why:** To provide a secure mechanism for persistent, reputable identities that are cryptographically unlinked from the node's network identity.
+
+#### **2. Integrating ZKP System Components**
+
+This involves adding new static assets and logic to the existing client structure.
+
+* **2.1. Add Cryptographic Keys as Static Assets:**
+    * **Action:** The canonical ZKP `ProvingKey` and `VerifyingKey` must be generated and included as static files in the project. The `init` function must be updated to load the `VerifyingKey` into memory on startup, similar to how it currently loads the toxicity models. The larger `ProvingKey` can be loaded on-demand when the user is about to create a post.
+    * **Why:** To ensure every node on the network uses the same universal, trusted standard for verifying content moderation proofs.
+
+#### **3. Updating the Sender-Side Logic (`createPostWithTopics` and `Post` class)**
+
+The process of creating and sending a post must be significantly altered.
+
+* **3.1. Modify the `Post` Class:**
+    * **Action:** The `Post` class constructor must be modified. It will no longer use `state.myIdentity.publicKey`. Instead, it will be passed a `PerPostPublicKey` and a `PersonaCommitment`. These will be stored as new fields on the post object. The `sign` method will take a `PerPostPrivateKey`.
+    * **Why:** To ensure the post object itself carries the correct metadata for the new ZKP-based identity model.
+
+* **3.2. Update the `createPostWithTopics` Function:**
+    * **Action:** The function's workflow must be re-ordered and expanded:
+        1.  First, derive a new `PerPostKey` pair from the user's selected persona.
+        2.  After the local toxicity check passes, insert a new, computationally intensive step: **ZKP Generation**. This new logic will use the `ProvingKey` to generate the `proof`.
+        3.  The call to `dandelion.routePostSecure` must be modified. Before it's called, the client must first perform a DHT lookup for the `NodePublicKey`s of the chosen relay nodes.
+        4.  The `dandelion.createOnionMessage` function must be rewritten to perform asymmetric encryption (`nacl.box`) using the fetched `NodePublicKey`s.
+        5.  The final call to `sendPeer` will transmit a new, bundled packet containing the `EncryptedOnionMessage` and the `Proof`, not just the post object.
+    * **Why:** This new sequence ensures that a post is proven compliant *before* it is encrypted and that it is encrypted *specifically* for the nodes that will relay it, achieving both verifiable moderation and confidentiality.
+
+#### **4. Updating the Network-Side Logic (`handlePeerMessage` and `DandelionRouter`)**
+
+Every node must be updated to handle the new packet format and enforce the new rules.
+
+* **4.1. Modify `handlePeerMessage`:**
+    * **Action:** The `switch (msg.type)` statement must be modified. The old `"new_post"` case will be removed (for relays). A new case, e.g., `"penumbra_packet"`, will be added.
+    * **Action:** The first operation in this new case *must* be to call the ZKP verification logic. If the proof is invalid, the function must `return` immediately, dropping the packet.
+    * **Why:** This turns every node into a gatekeeper, enforcing the moderation rules across the network at the entry point of every relay hop.
+
+* **4.2. Rewrite `DandelionRouter.handleOnionRelay`:**
+    * **Action:** This function must be fundamentally changed. Instead of accessing `msg.payload`, it will now use the node's `NodePrivateKey` to call `nacl.box.open` on the incoming encrypted blob.
+    * **Action:** The decrypted content will reveal the `NodeID` of the next hop and the inner encrypted blob. The function will then forward the packet to the next peer.
+    * **Why:** This implements the "peel-the-onion" layer, ensuring confidentiality is maintained at every step of the relay process. Using the `NodePrivateKey` correctly utilizes the network identity for its intended purpose.

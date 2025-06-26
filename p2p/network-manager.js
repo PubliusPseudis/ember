@@ -1,0 +1,678 @@
+// This module handles the core WebTorrent setup, peer wire management,
+// and acts as the main dispatcher for all incoming P2P messages.
+
+// --- IMPORTS ---
+import { epidemicGossip } from '../main.js';
+import { state, peerManager, imageStore, dandelion, handleNewPost, handleProvisionalClaim, handleConfirmationSlip, handleParentUpdate, handlePostsResponse, handleCarrierUpdate, handleVerificationResults } from '../main.js';
+import { updateConnectionStatus, notify, updateStatus, refreshPost } from '../ui.js';
+import { CONFIG } from '../config.js';
+import { generateId, hexToUint8Array, normalizePeerId } from '../utils.js';
+import { KademliaDHT } from './dht.js';
+import { HyParView } from './hyparview.js';
+import { Scribe } from './scribe.js';
+import { Plumtree } from './plumtree.js';
+
+
+// --- FUNCTION DEFINITIONS ---
+
+function initNetwork() {
+  updateConnectionStatus("Initializing WebTorrent...");
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  console.log("Initializing network... iOS:", isIOS);
+
+  if (!window.RTCPeerConnection) {
+    console.error("WebRTC not supported!");
+    updateConnectionStatus("WebRTC not supported on this device", 'error');
+    notify("WebRTC not supported on this device");
+    return;
+  }
+
+  updateConnectionStatus("Setting up peer connections...");
+
+  const trackers = [
+    'wss://tracker.openwebtorrent.com',
+    'wss://tracker.webtorrent.dev',
+    'wss://tracker.btorrent.xyz',
+    'wss://tracker.files.fm:7073/announce',
+    'wss://spacetradersapi-chatbox.herokuapp.com:443/announce'
+  ];
+
+  state.trackers = trackers;
+
+  try {
+    state.client = new WebTorrent({
+      dht: !isIOS,
+      maxConns: isIOS ? 20 : 100,
+      tracker: {
+        announce: trackers,
+        rtcConfig: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        }
+      },
+      trickle: true
+    });
+
+    // Initialize protocols
+    state.dht = new KademliaDHT(state.myIdentity.nodeId);
+    state.hyparview = new HyParView(state.myIdentity.nodeId, state.dht);
+
+    updateConnectionStatus("Joining DHT bootstrap network...");
+
+    const bootstrapData = new Blob(['Ember-DHT-Bootstrap-v1'], { type: 'text/plain' });
+    state.client.seed(bootstrapData, {
+      name: 'ember-bootstrap.txt',
+      announce: state.trackers || []
+    }, torrent => {
+      console.log(`Connected to bootstrap network: ${torrent.infoHash}`);
+      updateConnectionStatus("Connected to Ember bootstrap network!");
+      torrent.on('wire', (wire, addr) => {
+        handleBootstrapWire(wire, addr);
+      });
+    });
+
+    setTimeout(async () => {
+      try {
+        state.scribe = new Scribe(state.myIdentity.nodeId, state.dht);
+        await state.scribe.subscribe('#general');
+        await state.scribe.subscribe('#ember');
+      } catch (e) {
+        console.error("Failed to initialize Scribe:", e);
+      }
+
+      state.plumtree = new Plumtree(state.myIdentity.nodeId, state.hyparview);
+      state.plumtree.deliver = (message) => {
+        if (message.type === 'post') {
+          handleNewPost(message.data, null);
+        }
+      };
+    state.scribe.deliverMessage = (topic, message) => {
+        console.log(`[Scribe] Message on ${topic}:`, message);
+        if (message.type === 'new_post' && message.post) {
+            // Check if this is our own post
+            if (message.post.author === state.myIdentity.handle) {
+                console.log(`[Scribe] Ignoring our own post ${message.post.id?.substring(0,8)}...`);
+                return;
+            }
+            handleNewPost(message.post, null);
+        }
+    };
+
+      console.log("P2P protocols initialized");
+    }, 3000);
+
+  } catch (e) {
+    console.error("Failed to create WebTorrent client:", e);
+    updateConnectionStatus(`Failed to initialize: ${e.message}`, 'error');
+    throw e;
+  }
+
+  state.client.on("error", e => {
+    console.error("Client error:", e.message);
+    updateConnectionStatus(`Network error: ${e.message}`, 'error');
+    if (!/Connection error|WebSocket/.test(e.message)) {
+      notify("Network error: " + e.message);
+    }
+  });
+
+  state.client.on('warning', (err) => {
+    console.warn('WebTorrent warning:', err);
+  });
+
+  updateConnectionStatus("Network ready - using unified bootstrap");
+
+  let lastPeerCount = 0;
+  const statusCheckInterval = setInterval(() => {
+    const currentPeerCount = state.peers.size;
+    if (currentPeerCount !== lastPeerCount) {
+      console.log(`Peer count changed: ${lastPeerCount} → ${currentPeerCount}`);
+      if (currentPeerCount > 0 && lastPeerCount === 0) {
+        updateConnectionStatus(`Connected! ${currentPeerCount} peer${currentPeerCount > 1 ? 's' : ''}`, 'success');
+        setTimeout(() => clearInterval(statusCheckInterval), 3000);
+      } else if (currentPeerCount > lastPeerCount) {
+        updateConnectionStatus(`${currentPeerCount} peers connected`, 'success');
+      }
+      lastPeerCount = currentPeerCount;
+    }
+    if (state.peers.size === 0 && document.getElementById("loading").style.display !== "none") {
+      const timeSinceStart = Date.now() - (window.networkStartTime || Date.now());
+      if (timeSinceStart > 10000) {
+        updateConnectionStatus("Still searching for peers... This may take a moment if the network is quiet.", 'info');
+      }
+    }
+  }, 1000);
+
+  window.networkStartTime = Date.now();
+  console.log("Network initialization complete", {
+    client: !!state.client,
+    trackers: trackers.length
+  });
+}
+
+function handleBootstrapWire(wire, addr) {
+  const originalId = wire.peerId;
+  const idKey = normalizePeerId(originalId);
+
+  if (!idKey) {
+    console.error('Invalid bootstrap peer ID');
+    return;
+  }
+  if (state.peers.has(idKey)) return;
+
+  console.log(`Bootstrap peer connected: ${idKey.substring(0, 12)}...`);
+  wire.peerId = idKey;
+
+  const peerData = {
+    wire,
+    addr,
+    id: originalId,
+    idKey: idKey,
+    messageTimestamps: [],
+    shardIndex: 'bootstrap',
+    connectedAt: Date.now(),
+    bytesReceived: 0,
+    bytesSent: 0
+  };
+
+  state.peers.set(idKey, peerData);
+
+  if (state.dht && originalId) {
+    let uint8Id;
+    if (originalId instanceof Uint8Array) {
+      uint8Id = originalId;
+    } else if (ArrayBuffer.isView(originalId)) {
+      uint8Id = new Uint8Array(originalId.buffer, originalId.byteOffset, originalId.byteLength);
+    } else if (typeof originalId === 'string') {
+      const hex = originalId.replace(/^0x/, '');
+      if (hex.length % 2 === 0) {
+        uint8Id = new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+      }
+    } else if (originalId && (originalId.type === 'Buffer' || originalId.data)) {
+      uint8Id = new Uint8Array(originalId.data || originalId);
+    }
+
+    if (uint8Id) {
+      state.dht.addPeer(uint8Id, peerData);
+    }
+  }
+
+  if (state.hyparview && state.hyparview.activeView.size < state.hyparview.activeViewSize) {
+    state.hyparview.addToActiveView(originalId, { wire, isOutgoing: false });
+  }
+
+  attachEphemeralExtension(wire);
+
+  wire.on('close', () => {
+    console.log(`Bootstrap peer disconnected: ${idKey.substring(0, 12)}...`);
+    state.peers.delete(idKey);
+    if (state.dht && originalId) state.dht.removePeer(originalId);
+    if (state.hyparview && originalId) state.hyparview.handlePeerFailure(originalId);
+    updateStatus();
+  });
+
+  wire.on('error', err => console.error(`Bootstrap wire error:`, err.message));
+}
+
+function handleWire(wire, addr) {
+  const originalId = wire.peerId;
+  const idKey = normalizePeerId(originalId);
+
+  if (!idKey) {
+    console.error('Invalid peer ID, rejecting connection');
+    return;
+  }
+  if (state.peers.has(idKey)) return;
+
+  wire.peerId = idKey;
+  console.log(`New peer connection: ${idKey.substring(0, 12)}...`);
+
+  const peerData = {
+    wire,
+    addr,
+    id: originalId,
+    idKey: idKey,
+    messageTimestamps: [],
+    connectedAt: Date.now(),
+    bytesReceived: 0,
+    bytesSent: 0
+  };
+
+  state.peers.set(idKey, peerData);
+
+  if (state.dht) {
+    let uint8Id;
+    if (originalId instanceof Uint8Array) {
+      uint8Id = originalId;
+    } else if (ArrayBuffer.isView(originalId)) {
+      uint8Id = new Uint8Array(originalId.buffer, originalId.byteOffset, originalId.byteLength);
+    } else if (typeof originalId === 'string') {
+      const hex = originalId.replace(/^0x/, '');
+      if (hex.length % 2 === 0) {
+        uint8Id = new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+      }
+    } else if (originalId && (originalId.type === 'Buffer' || originalId.data)) {
+      uint8Id = new Uint8Array(originalId.data || originalId);
+    }
+    if (uint8Id) {
+      state.dht.addPeer(uint8Id, peerData);
+    }
+  }
+
+  if (state.hyparview && state.hyparview.activeView.size < state.hyparview.activeViewSize) {
+    state.hyparview.addToActiveView(originalId, { wire, isOutgoing: false });
+  }
+
+  peerManager.updateScore(idKey, 'connection', 1);
+  updateStatus();
+
+  wire.on('download', (bytes) => {
+    peerData.bytesReceived += bytes;
+    peerManager.updateScore(idKey, 'data', bytes / 1000);
+  });
+
+  wire.on('upload', (bytes) => {
+    peerData.bytesSent += bytes;
+  });
+
+  attachEphemeralExtension(wire);
+
+  const delay = Math.random() * 10000;
+  setTimeout(() => {
+    if (!wire.destroyed) {
+      sendPeer(wire, { type: 'request_posts' });
+    }
+  }, delay);
+
+  wire.on('close', () => {
+    console.log(`Disconnected from peer: ${idKey}`);
+    state.peers.delete(idKey);
+    if (state.dht && originalId) state.dht.removePeer(originalId);
+    if (state.hyparview && originalId) state.hyparview.handlePeerFailure(originalId);
+    updateStatus();
+  });
+
+  wire.on('error', err => console.error(`Wire error ${idKey}:`, err.message));
+}
+
+const sendPeer = (wire, msg) => {
+  if (!wire || wire.destroyed) return;
+
+  try {
+    const encoder = new TextEncoder();
+    const msgStr = JSON.stringify(msg);
+    
+    // Add debug logging for chunk responses
+    if (msg.type === 'chunk_response') {
+      console.log(`[SendPeer] Sending chunk_response with ${msg.chunks.length} chunks for image ${msg.imageHash.substring(0, 8)}...`);
+      console.log(`[SendPeer] Message size: ${msgStr.length} bytes (max: ${CONFIG.MAX_MESSAGE_SIZE})`);
+    }
+    
+    if (msgStr.length > CONFIG.MAX_MESSAGE_SIZE) {
+      console.warn("Message too large, dropping:", msgStr.length);
+      return;
+    }
+    const data = encoder.encode(msgStr);
+
+    // Add more debug info
+    const extensionReady = wire.ephemeral_msg && wire.ephemeral_msg._ready;
+    if (msg.type === 'chunk_response') {
+      console.log(`[SendPeer] Extension ready: ${extensionReady}, wire destroyed: ${wire.destroyed}`);
+    }
+
+    if (wire.ephemeral_msg && wire.ephemeral_msg._ready && wire.ephemeral_msg.peerId !== undefined) {
+      wire.extended(wire.ephemeral_msg.peerId, data);
+      if (msg.type === 'chunk_response') {
+        console.log('[SendPeer] Sent via ephemeral_msg extension');
+      }
+    } else if (wire.extendedMapping && wire.extendedMapping.ephemeral_msg !== undefined) {
+      wire.extended(wire.extendedMapping.ephemeral_msg, data);
+      if (msg.type === 'chunk_response') {
+        console.log('[SendPeer] Sent via extendedMapping');
+      }
+    } else {
+      if (!wire._pendingMessages) wire._pendingMessages = [];
+      wire._pendingMessages.push(msg);
+      console.log('[Extension] Queued message for later delivery');
+    }
+  } catch (e) {
+    console.warn("sendPeer fail", e.message);
+  }
+};;
+
+function attachEphemeralExtension(wire) {
+  function EphemeralExtension() {
+    const self = this;
+    self._ready = false;
+  }
+  EphemeralExtension.prototype.name = 'ephemeral_msg';
+
+  EphemeralExtension.prototype.onExtendedHandshake = function (handshake) {
+    if (!handshake.m || typeof handshake.m.ephemeral_msg === 'undefined') {
+      console.warn('Peer does not support ephemeral_msg');
+      return;
+    }
+    this.peerId = handshake.m.ephemeral_msg;
+    this._ready = true;
+    wire.ephemeral_msg = this;
+    console.log('Extension ready! PeerID:', this.peerId);
+    if (wire._pendingMessages && wire._pendingMessages.length > 0) {
+      console.log(`[Extension] Sending ${wire._pendingMessages.length} queued messages`);
+      wire._pendingMessages.forEach(msg => sendPeer(wire, msg));
+      wire._pendingMessages = [];
+    }
+    setTimeout(() => {
+      if (!wire.destroyed && this._ready) {
+        sendPeer(wire, { type: 'request_posts' });
+        console.log('Sent initial request_posts');
+      }
+    }, 1000);
+  };
+
+  EphemeralExtension.prototype.onMessage = function (buf) {
+    try {
+      const msg = JSON.parse(new TextDecoder().decode(buf));
+      console.log('Received message:', msg.type);
+      handlePeerMessage(msg, wire);
+    } catch (e) {
+      console.error('Bad peer message:', e);
+    }
+  };
+  wire.use(EphemeralExtension);
+}
+
+function broadcast(msg, excludeWire = null) {
+  if (!msg.msgId) {
+    msg.msgId = generateId();
+    msg.hops = 0;
+  }
+
+  if (epidemicGossip.messageTTL.has(msg.msgId)) {
+    const hops = epidemicGossip.messageTTL.get(msg.msgId);
+    if (hops >= epidemicGossip.maxHops) return;
+    msg.hops = hops + 1;
+  }
+  epidemicGossip.messageTTL.set(msg.msgId, msg.hops);
+
+  if (state.plumtree && state.hyparview && state.hyparview.getActivePeers().length > 2) {
+    state.plumtree.broadcast(msg, excludeWire?.peerId?.toString('hex'));
+  } else {
+    const networkSize = state.peers.size;
+    let fanout = Math.ceil(Math.log2(networkSize + 1)) + 2;
+    fanout = Math.min(fanout, 8);
+    const selected = epidemicGossip.selectRandomPeers(fanout, [excludeWire]);
+    selected.forEach(peer => {
+      epidemicGossip.sendWithExponentialBackoff(peer, msg);
+    });
+  }
+}
+
+async function handlePeerMessage(msg, fromWire) {
+  if (msg.msgId && state.seenMessages.has(msg.msgId)) {
+    return;
+  }
+  if (msg.msgId) {
+    state.seenMessages.add(msg.msgId);
+  }
+
+  const peerId = fromWire.peerId;
+  const peerData = state.peers.get(peerId);
+  if (peerData) {
+    const now = Date.now();
+    peerData.messageTimestamps.push(now);
+    peerData.messageTimestamps = peerData.messageTimestamps.filter(
+      ts => now - ts < CONFIG.RATE_LIMIT_WINDOW
+    );
+    const rateLimitedMessageTypes = ['new_post', 'parent_update'];
+    if (rateLimitedMessageTypes.includes(msg.type)) {
+      if (peerData.messageTimestamps.length > CONFIG.RATE_LIMIT_MESSAGES) {
+        console.warn(`Rate limit exceeded for peer ${peerId} for message type: ${msg.type}. Dropping message.`);
+        return;
+      }
+    }
+  }
+  
+  if (state.trafficMixer && (msg.type === "new_post" || msg.type === "carrier_update")) {
+      state.trafficMixer.addToMixPool(msg, fromWire);
+  }
+
+  switch (msg.type) {
+    case "dht_rpc":
+      if (state.dht) state.dht.handleRPC(msg, fromWire);
+      break;
+    case "hyparview":
+      if (state.hyparview) state.hyparview.handleMessage(msg, fromWire);
+      break;
+    case "scribe":
+      if (state.scribe) state.scribe.handleMessage(msg, fromWire);
+      break;
+    case "plumtree":
+        if (state.plumtree) state.plumtree.handleMessage(msg, fromWire);
+        break;
+    case "onion_relay":
+        dandelion.handleOnionRelay(msg, fromWire);
+        break;
+    case 'provisional_identity_claim':
+        await handleProvisionalClaim(msg.claim);
+        break;
+    case "request_image_chunks":
+      if (msg.imageHash && Array.isArray(msg.chunkHashes) && msg.chunkHashes.length <= 100) {
+        handleChunkRequest(msg.imageHash, msg.chunkHashes, fromWire);
+      }
+      break;
+
+    case "chunk_response":
+      if (msg.imageHash && msg.chunks) {
+        handleChunkResponse(msg);
+      }
+      break;
+    case 'identity_confirmation_slip':
+        await handleConfirmationSlip(msg.slip);
+        break;
+    case "peer_exchange":
+      if (msg.peers && Array.isArray(msg.peers)) {
+        msg.peers.forEach(peerInfo => {
+          try {
+            let peerId;
+            if (typeof peerInfo.id === 'string') {
+              peerId = hexToUint8Array(peerInfo.id);
+            } else if (peerInfo.id instanceof Uint8Array) {
+              peerId = peerInfo.id;
+            } else if (peerInfo.id && (peerInfo.id.type === 'Buffer' || peerInfo.id.data)) {
+              peerId = new Uint8Array(peerInfo.id.data || peerInfo.id);
+            }
+            if (peerId && state.dht && !state.dht.uint8ArrayEquals(peerId, state.myIdentity.nodeId)) {
+              state.dht.addPeer(peerId, { wire: null });
+            }
+          } catch (e) {
+            console.error("Error in peer exchange:", e);
+          }
+        });
+      }
+      break;
+    case "noise":
+      return;
+    case "new_post":
+      if (msg.phase === "stem" || msg.phase === "fluff") {
+        dandelion.handleRoutedPost(msg, fromWire);
+      } else {
+        await handleNewPost(msg.post || msg, fromWire);
+      }
+      break;
+    case "request_image":
+      handleImageRequest(msg.imageHash, fromWire);
+      break;
+    case "image_response":
+      handleImageResponse(msg);
+      break;
+    case "parent_update":
+      handleParentUpdate(msg);
+      break;
+    case "request_posts":
+      if (fromWire) {
+        const list = [...state.posts.values()].map(p => p.toJSON());
+        sendPeer(fromWire, { type: "posts_response", posts: list });
+      }
+      break;
+    case "posts_response":
+      await handlePostsResponse(msg.posts, fromWire);
+      break;
+    case "carrier_update":
+      handleCarrierUpdate(msg);
+      break;
+  }
+}
+
+async function handleImageRequest(imageHash, fromWire) {
+    const metadata = imageStore.images.get(imageHash);
+    if (!metadata) {
+        console.log(`[ImageRequest] Peer requested image ${imageHash.substring(0, 8)}... but we don't have its metadata.`);
+        return;
+    }
+    console.log(`[ImageRequest] Peer requested image ${imageHash.substring(0, 8)}.... We have metadata and will send available chunks.`);
+
+    const chunks = [];
+    for (const chunkMeta of metadata.chunks) {
+        const chunkData = imageStore.chunks.get(chunkMeta.hash);
+        if (chunkData) {
+            chunks.push({ hash: chunkMeta.hash, data: chunkData });
+        } else {
+            console.warn(`[ImageRequest] Missing chunk ${chunkMeta.hash.substring(0, 8)}... for image ${imageHash.substring(0, 8)}... that we should have.`);
+        }
+    }
+
+    sendPeer(fromWire, {
+        type: "image_response",
+        imageHash: imageHash,
+        metadata: metadata,
+        chunks: chunks
+    });
+}
+
+async function handleImageResponse(msg) {
+    console.log(`[ImageResponse] Received image response for hash: ${msg.imageHash.substring(0, 8)}...`);
+
+    if (!imageStore.images.has(msg.imageHash)) {
+        imageStore.images.set(msg.imageHash, msg.metadata);
+    }
+
+    let newChunksCount = 0;
+    for (const chunk of msg.chunks) {
+        if (!imageStore.chunks.has(chunk.hash)) {
+            const actualHash = await imageStore.sha256(chunk.data);
+            if (actualHash === chunk.hash) {
+                imageStore.chunks.set(chunk.hash, chunk.data);
+                newChunksCount++;
+            } else {
+                console.warn(`[ImageResponse] Chunk hash mismatch! Expected ${chunk.hash}, got ${actualHash}`);
+            }
+        }
+    }
+
+    imageStore.retrieveImage(msg.imageHash).then(imageData => {
+        if (imageData) {
+            for (const [id, post] of state.posts) {
+                if (post.imageHash === msg.imageHash && !post.imageData) { 
+                    post.imageData = imageData;
+                    refreshPost(post);
+                }
+            }
+        } else {
+            const metadata = imageStore.images.get(msg.imageHash);
+            if (metadata) {
+                const missingChunkHashes = metadata.chunks
+                    .filter(chunkMeta => !imageStore.chunks.has(chunkMeta.hash))
+                    .map(chunkMeta => chunkMeta.hash);
+                if (missingChunkHashes.length > 0) {
+                    const peers = Array.from(state.peers.values()).slice(0, 3);
+                    for (const peer of peers) {
+                        sendPeer(peer.wire, {
+                            type: "request_chunks",
+                            imageHash: msg.imageHash,
+                            chunkHashes: missingChunkHashes
+                        });
+                    }
+                }
+            }
+        }
+    });
+}
+
+function handleChunkRequest(imageHash, requestedHashes, fromWire) {
+    console.log(`[ChunkRequest] Peer requested ${requestedHashes.length} chunks for image ${imageHash.substring(0, 8)}...`);
+    
+    const chunks = [];
+    for (const hash of requestedHashes) {
+        const chunk = imageStore.chunks.get(hash);
+        if (chunk) {
+            chunks.push({ hash, data: chunk });
+        }
+    }
+    
+    if (chunks.length > 0) {
+        console.log(`[ChunkRequest] Sending ${chunks.length} chunks for image ${imageHash.substring(0, 8)}...`);
+        sendPeer(fromWire, {
+            type: "chunk_response",
+            imageHash: imageHash,
+            chunks: chunks
+        });
+    } else {
+        console.log(`[ChunkRequest] No chunks found for image ${imageHash.substring(0, 8)}...`);
+    }
+}
+
+async function handleChunkResponse(msg) {
+    if (!msg || !msg.imageHash || !Array.isArray(msg.chunks)) {
+        console.warn("Received an incomplete chunk response, ignoring.");
+        return;
+    }
+    
+    console.log(`[ChunkResponse] Received ${msg.chunks.length} chunks for image ${msg.imageHash.substring(0, 8)}...`);
+    
+    let newChunksCount = 0;
+    for (const { hash, data } of msg.chunks) {
+        if (!imageStore.chunks.has(hash)) {
+            // Verify chunk hash before storing
+            const actualHash = await imageStore.sha256(data);
+            if (actualHash === hash) {
+                imageStore.chunks.set(hash, data);
+                newChunksCount++;
+                
+                // Notify the image store about the received chunk
+                if (imageStore.onChunkReceived) {
+                    imageStore.onChunkReceived(hash, data, msg.imageHash);
+                }
+            } else {
+                console.warn(`[ChunkResponse] Chunk hash mismatch! Expected ${hash.substring(0, 8)}..., got ${actualHash.substring(0, 8)}...`);
+            }
+        }
+    }
+    
+    if (newChunksCount > 0) {
+        console.log(`[ChunkResponse] Stored ${newChunksCount} new chunks for image ${msg.imageHash.substring(0, 8)}...`);
+        
+        // Try to retrieve the image now that we have new chunks
+        const imageData = await imageStore.retrieveImage(msg.imageHash);
+        if (imageData) {
+            // Update all posts that need this image
+            for (const [id, post] of state.posts) {
+                if (post.imageHash === msg.imageHash && !post.imageData) {
+                    post.imageData = imageData;
+                    refreshPost(post);
+                }
+            }
+        }
+    }
+}
+
+
+// --- EXPORTS ---
+// Export the functions that main.js needs to call.
+export {
+  initNetwork,
+  broadcast,
+  sendPeer,
+  handlePeerMessage
+};
