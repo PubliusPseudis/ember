@@ -2,15 +2,15 @@
 // and acts as the main dispatcher for all incoming P2P messages.
 
 // --- IMPORTS ---
-import { epidemicGossip } from '../main.js';
-import { state, peerManager, imageStore, dandelion, handleNewPost, handleProvisionalClaim, handleConfirmationSlip, handleParentUpdate, handlePostsResponse, handleCarrierUpdate, handleVerificationResults } from '../main.js';
+import { epidemicGossip, state, peerManager, imageStore, dandelion, handleNewPost, handleProvisionalClaim, handleConfirmationSlip, handleParentUpdate, handlePostsResponse, handleCarrierUpdate, handleVerificationResults, generateAndBroadcastAttestation,evaluatePostTrust, handleDirectMessage } from '../main.js';
 import { updateConnectionStatus, notify, updateStatus, refreshPost } from '../ui.js';
 import { CONFIG } from '../config.js';
-import { generateId, hexToUint8Array, normalizePeerId } from '../utils.js';
+import { generateId, hexToUint8Array, normalizePeerId, arrayBufferToBase64, base64ToArrayBuffer } from '../utils.js';
 import { KademliaDHT } from './dht.js';
 import { HyParView } from './hyparview.js';
 import { Scribe } from './scribe.js';
 import { Plumtree } from './plumtree.js';
+
 
 
 // --- FUNCTION DEFINITIONS ---
@@ -35,7 +35,6 @@ function initNetwork() {
     'wss://tracker.webtorrent.dev',
     'wss://tracker.btorrent.xyz',
     'wss://tracker.files.fm:7073/announce',
-    'wss://spacetradersapi-chatbox.herokuapp.com:443/announce'
   ];
 
   state.trackers = trackers;
@@ -56,9 +55,6 @@ function initNetwork() {
       trickle: true
     });
 
-    // Initialize protocols
-    state.dht = new KademliaDHT(state.myIdentity.nodeId);
-    state.hyparview = new HyParView(state.myIdentity.nodeId, state.dht);
 
     updateConnectionStatus("Joining DHT bootstrap network...");
 
@@ -72,37 +68,15 @@ function initNetwork() {
       torrent.on('wire', (wire, addr) => {
         handleBootstrapWire(wire, addr);
       });
+        // Check peer count after a delay
+      setTimeout(() => {
+        if (torrent.numPeers === 0) {
+          updateConnectionStatus("No peers found - you might be the first node! 🌟", 'info');
+        }
+      }, 10000);
     });
 
-    setTimeout(async () => {
-      try {
-        state.scribe = new Scribe(state.myIdentity.nodeId, state.dht);
-        await state.scribe.subscribe('#general');
-        await state.scribe.subscribe('#ember');
-      } catch (e) {
-        console.error("Failed to initialize Scribe:", e);
-      }
 
-      state.plumtree = new Plumtree(state.myIdentity.nodeId, state.hyparview);
-      state.plumtree.deliver = (message) => {
-        if (message.type === 'post') {
-          handleNewPost(message.data, null);
-        }
-      };
-    state.scribe.deliverMessage = (topic, message) => {
-        console.log(`[Scribe] Message on ${topic}:`, message);
-        if (message.type === 'new_post' && message.post) {
-            // Check if this is our own post
-            if (message.post.author === state.myIdentity.handle) {
-                console.log(`[Scribe] Ignoring our own post ${message.post.id?.substring(0,8)}...`);
-                return;
-            }
-            handleNewPost(message.post, null);
-        }
-    };
-
-      console.log("P2P protocols initialized");
-    }, 3000);
 
   } catch (e) {
     console.error("Failed to create WebTorrent client:", e);
@@ -125,25 +99,28 @@ function initNetwork() {
   updateConnectionStatus("Network ready - using unified bootstrap");
 
   let lastPeerCount = 0;
-  const statusCheckInterval = setInterval(() => {
-    const currentPeerCount = state.peers.size;
-    if (currentPeerCount !== lastPeerCount) {
-      console.log(`Peer count changed: ${lastPeerCount} → ${currentPeerCount}`);
-      if (currentPeerCount > 0 && lastPeerCount === 0) {
-        updateConnectionStatus(`Connected! ${currentPeerCount} peer${currentPeerCount > 1 ? 's' : ''}`, 'success');
-        setTimeout(() => clearInterval(statusCheckInterval), 3000);
-      } else if (currentPeerCount > lastPeerCount) {
-        updateConnectionStatus(`${currentPeerCount} peers connected`, 'success');
+    const statusCheckInterval = setInterval(() => {
+      const currentPeerCount = state.peers.size;
+      
+      if (currentPeerCount !== lastPeerCount) {
+        console.log(`Peer count changed: ${lastPeerCount} → ${currentPeerCount}`);
+        if (currentPeerCount > 0 && lastPeerCount === 0) {
+          updateConnectionStatus(`Connected! ${currentPeerCount} peer${currentPeerCount > 1 ? 's' : ''}`, 'success');
+          notify("🔥 Another node joined the network!");
+        } else if (currentPeerCount > lastPeerCount) {
+          updateConnectionStatus(`${currentPeerCount} peers connected`, 'success');
+        }
+        lastPeerCount = currentPeerCount;
       }
-      lastPeerCount = currentPeerCount;
-    }
-    if (state.peers.size === 0 && document.getElementById("loading").style.display !== "none") {
+      
+      // Special handling for first node
       const timeSinceStart = Date.now() - (window.networkStartTime || Date.now());
-      if (timeSinceStart > 10000) {
-        updateConnectionStatus("Still searching for peers... This may take a moment if the network is quiet.", 'info');
+      if (state.peers.size === 0 && timeSinceStart > 15000) {
+        // After 15 seconds with no peers, assume we're first
+        updateConnectionStatus("Running as first node - waiting for others to join... 🌟", 'info');
+        clearInterval(statusCheckInterval); // Stop checking so frequently
       }
-    }
-  }, 1000);
+    }, 1000);
 
   window.networkStartTime = Date.now();
   console.log("Network initialization complete", {
@@ -288,6 +265,7 @@ function handleWire(wire, addr) {
 
   wire.on('close', () => {
     console.log(`Disconnected from peer: ${idKey}`);
+    peerManager.updateScore(idKey, 'disconnection', 1);
     state.peers.delete(idKey);
     if (state.dht && originalId) state.dht.removePeer(originalId);
     if (state.hyparview && originalId) state.hyparview.handlePeerFailure(originalId);
@@ -462,7 +440,9 @@ async function handlePeerMessage(msg, fromWire) {
         handleChunkRequest(msg.imageHash, msg.chunkHashes, fromWire);
       }
       break;
-
+    case 'post_attestation':
+      handlePostAttestation(msg, fromWire);
+      break;
     case "chunk_response":
       if (msg.imageHash && msg.chunks) {
         handleChunkResponse(msg);
@@ -483,14 +463,22 @@ async function handlePeerMessage(msg, fromWire) {
             } else if (peerInfo.id && (peerInfo.id.type === 'Buffer' || peerInfo.id.data)) {
               peerId = new Uint8Array(peerInfo.id.data || peerInfo.id);
             }
-            if (peerId && state.dht && !state.dht.uint8ArrayEquals(peerId, state.myIdentity.nodeId)) {
-              state.dht.addPeer(peerId, { wire: null });
+            if (peerId && state.dht) {
+              // Check if the peer is our own ID. Only perform this check if our identity has been created.
+              const isSelf = state.myIdentity && state.dht.uint8ArrayEquals(peerId, state.myIdentity.nodeId);
+              
+              if (!isSelf) {
+                state.dht.addPeer(peerId, { wire: null });
+              }
             }
           } catch (e) {
             console.error("Error in peer exchange:", e);
           }
         });
       }
+      break;
+    case "e2e_dm":
+      await handleDirectMessage(msg, fromWire);
       break;
     case "noise":
       return;
@@ -522,6 +510,94 @@ async function handlePeerMessage(msg, fromWire) {
     case "carrier_update":
       handleCarrierUpdate(msg);
       break;
+  }
+}
+
+
+async function handlePostAttestation(msg, fromWire) {
+  const { attestation, attesterHandle, attesterPublicKey, signature } = msg;
+  
+  if (!attestation || !attesterHandle || !attesterPublicKey || !signature) {
+    console.warn('[Attestation] Invalid attestation message format');
+    return;
+  }
+  
+  // Verify the signature
+  try {
+    const dataToVerify = JSON.stringify(attestation);
+    const publicKey = base64ToArrayBuffer(attesterPublicKey);
+    const sig = base64ToArrayBuffer(signature);
+    
+    const verified = nacl.sign.open(sig, publicKey);
+    if (!verified) {
+      console.warn(`[Attestation] Invalid signature from ${attesterHandle}`);
+      return;
+    }
+    
+    const decodedData = new TextDecoder().decode(verified);
+    if (decodedData !== dataToVerify) {
+      console.warn(`[Attestation] Signature mismatch from ${attesterHandle}`);
+      return;
+    }
+  } catch (e) {
+    console.error('[Attestation] Signature verification failed:', e);
+    return;
+  }
+  
+  // Check attestation age (prevent replay attacks)
+  const age = Date.now() - attestation.timestamp;
+  if (age > 60000) { // Reject attestations older than 1 minute
+    console.warn(`[Attestation] Attestation too old: ${age}ms`);
+    return;
+  }
+  
+  // Get attester's reputation
+  const peerId = fromWire.peerId;
+  const reputation = peerManager.getScore(peerId);
+  const canTrust = peerManager.canTrustAttestations(peerId);
+  
+  console.log(`[Attestation] Received from ${attesterHandle} (rep: ${reputation.toFixed(2)}, trusted: ${canTrust})`);
+  
+  // Find the post (could be in pendingVerification or already in posts)
+  let post = state.pendingVerification.get(attestation.postId);
+  if (!post) {
+    post = state.posts.get(attestation.postId);
+  }
+  
+  if (!post) {
+    console.log(`[Attestation] Post ${attestation.postId} not found`);
+    return;
+  }
+  
+  // Add attestation to the post
+  const wasNew = post.addAttestation(attesterHandle, reputation);
+  
+  if (wasNew) {
+    console.log(`[Attestation] Added to post ${attestation.postId}, trust score: ${post.trustScore.toFixed(2)}`);
+    
+    // Track attestation for reputation
+    peerManager.updateScore(peerId, 'attestation', 1);
+    
+    // Nudge the verifier so we don't wait for the next scheduled sweep
+    if (state.pendingVerification.has(attestation.postId)) { 
+        evaluatePostTrust(attestation.postId); 
+    }
+    
+    // If post is still pending and now has enough trust, promote it
+    if (state.pendingVerification.has(attestation.postId) && 
+        post.hasSufficientTrust(CONFIG.TRUST_THRESHOLD)) {
+      console.log(`[Attestation] Post ${attestation.postId} reached trust threshold, promoting without verification`);
+      
+      // Move from pending to verified
+      state.pendingVerification.delete(attestation.postId);
+      post.verified = true;
+      state.posts.set(post.id, post);
+      renderPost(post);
+      notify(`Post verified by peer attestations`);
+      
+      // The attester gets credit for a correct attestation
+      peerManager.updateScore(peerId, 'correct_attestation', 1);
+    }
   }
 }
 

@@ -105,12 +105,17 @@ export class StateManager {
             if (postData.carriers.length === 0) return;
             
             // Recreate the post
-            const post = Post.fromJSON(postData);
-            
+            const post = Post.fromJSON(postData);            
+
+            // Ensure trust properties are initialized
+            if (!post.trustScore) post.trustScore = 0;
+            if (!post.attesters) post.attesters = new Set();
+            if (!post.attestationTimestamps) post.attestationTimestamps = new Map();
+
             // Queue for verification instead of marking as verified
             post.verified = false;
             state.pendingVerification.set(post.id, post);
-            
+
             // Decay carriers based on time away
             const hoursAway = Math.floor((now - postData.lastSeen) / (60 * 60 * 1000));
             const decayFactor = Math.max(0.5, 1 - (hoursAway * 0.1)); // Lose 10% per hour away

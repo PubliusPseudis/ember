@@ -150,6 +150,18 @@
         </div>
     </div>
 
+  <div id="dm-panel" style="display: none;">
+    <div class="dm-header">
+      <button onclick="closeDMPanel()" class="close-button">✕</button>
+      <h3>Messages with <span id="dm-recipient"></span></h3>
+    </div>
+    <div id="dm-messages" class="dm-messages"></div>
+    <div class="dm-compose">
+      <textarea id="dm-input" placeholder="Type a message..." maxlength="500"></textarea>
+      <button onclick="sendDM()" class="primary-button">Send</button>
+    </div>
+  </div>
+
   </div>
 
     <script type="module" src="main.js"></script>

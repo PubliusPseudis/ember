@@ -15,6 +15,23 @@ export class KademliaDHT {
     // Initialize RPC handlers
     this.setupRPCHandlers();
   }
+  
+  async getWithTimeout(key, timeoutMs = 5000) {
+      // If no peers, check local storage only
+      if (this.buckets.every(bucket => bucket.length === 0)) {
+        console.log(`[DHT] No peers - checking local storage for ${key}`);
+        return this.storage.get(key) || null;
+      }
+      
+      // Otherwise do normal lookup with timeout
+      const getPromise = this.get(key);
+      const timeoutPromise = new Promise((resolve) => 
+        setTimeout(() => resolve(null), timeoutMs)
+      );
+      
+      return Promise.race([getPromise, timeoutPromise]);
+    }
+  
    // Compares two Uint8Arrays, returns -1, 0, or 1
   compareUint8Arrays(a, b) {
     const len = Math.min(a.length, b.length);
@@ -390,31 +407,36 @@ export class KademliaDHT {
   
   // Store a value in the DHT
     async store(key, value) {
-        const keyId = await this.hashToNodeId(key);
-        const closest = await this.findNode(keyId);
-
-        // If we are the only node (or can't find any others), store it locally.
-        if (closest.length === 0) {
-            console.log(`No other nodes found. Storing key ${key} locally.`);
-            this.storage.set(key, value);
-            return true; // Return true for local success
-        }
-
-        const storePromises = closest.slice(0, this.k).map(peer =>
-          this.sendRPC(peer, 'STORE', { key, value }).catch(() => false)
-        );
-
-        const results = await Promise.all(storePromises);
-        const stored = results.filter(r => r && r.stored).length;
-
-        console.log(`Stored key ${key} at <span class="math-inline">\{stored\}/</span>{this.k} nodes`);
-
-        // Also store it locally for our own lookups.
-        if (stored > 0) {
-            this.storage.set(key, value);
-        }
-
-        return stored > 0;
+      const keyId = await this.hashToNodeId(key);
+      
+      // Always store locally first
+      this.storage.set(key, value);
+      console.log(`[DHT] Stored ${key} locally`);
+      
+      // If we have no peers, that's OK - we're done
+      const totalPeers = this.buckets.reduce((sum, bucket) => sum + bucket.length, 0);
+      if (totalPeers === 0) {
+        console.log(`[DHT] No peers available - stored ${key} locally only`);
+        return true; // Return success for local storage
+      }
+      
+      // Otherwise try to replicate to k closest peers
+      const closest = await this.findNode(keyId);
+      
+      if (closest.length === 0) {
+        console.log(`[DHT] No reachable peers for replication of ${key}`);
+        return true; // Still return true since we stored it locally
+      }
+      
+      const storePromises = closest.slice(0, this.k).map(peer =>
+        this.sendRPC(peer, 'STORE', { key, value }).catch(() => false)
+      );
+      
+      const results = await Promise.all(storePromises);
+      const stored = results.filter(r => r && r.stored).length;
+      
+      console.log(`[DHT] Stored key ${key} at ${stored}/${this.k} remote nodes (plus local)`);
+      return true; // Always return true since we at least stored locally
     }
   
   // Retrieve a value from the DHT

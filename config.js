@@ -10,5 +10,7 @@ export const CONFIG = {
   TOXICITY_THRESHOLD: 0.9,
   LOCAL_MODE: false,
   IDENTITY_CONFIRMATION_THRESHOLD: 1,
-  NSFWJS_MODEL_PATH: 'nsfwjs-model/'
+  NSFWJS_MODEL_PATH: 'nsfwjs-model/',
+  TRUST_THRESHOLD: 30, // Minimum trust score to skip verification
+  ATTESTATION_TIMEOUT: 1000, // Max time to wait for attestations (1 second)
 };

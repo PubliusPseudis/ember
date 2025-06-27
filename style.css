@@ -1062,3 +1062,117 @@ body.light-mode h1 {
 .reply-compose .image-button:hover {
     background: rgba(255, 140, 66, 0.1);
 }
+
+/* Direct Messages Panel */
+#dm-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 350px;
+  height: 500px;
+  background: var(--background-compose-area);
+  border: 1px solid var(--border-color-light);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+}
+
+.dm-header {
+  padding: 15px;
+  border-bottom: 1px solid var(--border-color-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dm-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-accent);
+}
+
+.close-button {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+}
+
+.dm-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dm-message {
+  max-width: 70%;
+  word-wrap: break-word;
+}
+
+.dm-message.sent {
+  align-self: flex-end;
+}
+
+.dm-message.received {
+  align-self: flex-start;
+}
+
+.dm-message-content {
+  background: var(--background-input);
+  padding: 10px 15px;
+  border-radius: 18px;
+  color: var(--text-primary);
+}
+
+.dm-message.sent .dm-message-content {
+  background: var(--background-button-primary);
+  color: var(--text-button-primary);
+}
+
+.dm-message-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  padding: 0 5px;
+}
+
+.dm-compose {
+  padding: 15px;
+  border-top: 1px solid var(--border-color-light);
+  display: flex;
+  gap: 10px;
+}
+
+#dm-input {
+  flex: 1;
+  background: var(--background-input);
+  border: 1px solid var(--border-color-light);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  border-radius: 20px;
+  resize: none;
+  font-size: 14px;
+}
+
+.dm-button {
+  background: transparent;
+  border: 1px solid var(--text-tertiary);
+  color: var(--text-secondary);
+  padding: 4px 12px;
+  font-size: 14px;
+  margin-left: 10px;
+}
+
+.dm-button:hover {
+  border-color: var(--border-color-accent);
+  color: var(--border-color-accent);
+}

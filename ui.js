@@ -3,7 +3,8 @@
 // interacting with the DOM, rendering content, and handling UI events.
 
 // --- IMPORTS ---
-import { state, imageStore, toggleCarry, createReply, createPostWithTopics, findRootPost, isImageToxic, isToxic } from './main.js';
+import { state, imageStore, toggleCarry, createReply, createPostWithTopics, findRootPost, isImageToxic, isToxic,sendDirectMessage } from './main.js';
+import { sanitize } from './utils.js';
 import { CONFIG } from './config.js';
 
 
@@ -15,6 +16,8 @@ const isReply = (post) => post && post.parentId;
 // Top-level constants and variables that manage UI state.
 let bonfireUpdateTimeout;
 let showAllShards = true;
+
+export let currentDMRecipient = null;
 
 const animationObserver = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
@@ -51,10 +54,11 @@ export function updateConnectionStatus(message, type = 'info') {
     }
   }
 }
-function notify(msg, dur = 3000) {
+function notify(msg, dur = 3000, onClick = null) {
   const n = document.createElement("div");
   n.className = "notification";
   n.textContent = msg;
+   if (onClick) n.addEventListener('click', () => { onClick(); n.remove(); });
   document.body.appendChild(n);
   setTimeout(() => {
     n.style.animationDirection = "reverse";
@@ -204,6 +208,7 @@ el.innerHTML = `
             <button class="reply-button" onclick="toggleReplyForm('${p.id}')">
                 💬 Reply
             </button>
+            ${!isAuthor ? `<button class="dm-button" onclick="openDMPanel('${p.author}')">📨 DM</button>` : ''}
             ${hasReplies ? `<span class="collapse-thread" onclick="toggleThread('${p.id}')">[${el.classList.contains('collapsed') ? '+' : '-'}]</span>` : ''}
         </div>
     </div>
@@ -740,6 +745,20 @@ function updateStatus() {
     }
     privacyEl.innerHTML = `<br/>${privacyStatus} | Unified Bootstrap`;
 
+    if (state.peers.size === 0 && state.posts.size === 0) {
+      let firstNodeEl = document.getElementById("first-node-status");
+      if (!firstNodeEl) {
+        firstNodeEl = document.createElement("div");
+        firstNodeEl.id = "first-node-status";
+        firstNodeEl.style.cssText = "text-align: center; padding: 10px; color: #ffa500; font-size: 12px;";
+        firstNodeEl.innerHTML = "🌟 Running as first node - share the network to invite others!";
+        document.getElementById("status").appendChild(firstNodeEl);
+      }
+    } else {
+      const firstNodeEl = document.getElementById("first-node-status");
+      if (firstNodeEl) firstNodeEl.remove();
+    }
+
     clearTimeout(bonfireUpdateTimeout);
     bonfireUpdateTimeout = setTimeout(() => {
         updateBonfire();
@@ -855,6 +874,91 @@ function removeReplyImage(postId) {
         imageInput.value = '';
     }
 }
+
+// DM UI Functions
+window.currentDMConversation = null;
+
+function openDMPanel(handle) {
+  currentDMRecipient = handle; // FIX: Was window.currentDMConversation
+  
+  // Show DM panel
+  document.getElementById('dm-panel').style.display = 'block';
+  document.getElementById('dm-recipient').textContent = handle;
+  
+  // Load conversation history
+  loadDMConversation(handle);
+  
+  // Focus input
+  document.getElementById('dm-input').focus();
+}
+
+function closeDMPanel() {
+  document.getElementById('dm-panel').style.display = 'none';
+  currentDMRecipient = null; // FIX: Was window.currentDMConversation
+}
+
+function loadDMConversation(handle) {
+  const messagesEl = document.getElementById('dm-messages');
+  messagesEl.innerHTML = '';
+  
+  // Load from localStorage
+  const key = `ember-dms-${handle}`;
+  let conversation = [];
+  
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      conversation = JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error('Failed to load DM history:', e);
+  }
+  
+  // Render messages
+  conversation.forEach(msg => {
+    addMessageToConversation(handle, msg.message, msg.direction, msg.timestamp);
+  });
+  
+  // Scroll to bottom
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+export function addMessageToConversation(handle, messageText, direction, timestamp = Date.now()) {
+  const messagesEl = document.getElementById('dm-messages');
+  
+  const msgEl = document.createElement('div');
+  msgEl.className = `dm-message ${direction}`;
+  msgEl.innerHTML = `
+    <div class="dm-message-content">${sanitize(messageText)}</div>
+    <div class="dm-message-time">${new Date(timestamp).toLocaleTimeString()}</div>
+  `;
+  
+  messagesEl.appendChild(msgEl);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+async function sendDM() {
+  const input = document.getElementById('dm-input');
+  const message = input.value.trim();
+  
+  const recipient = currentDMRecipient;
+  if (!message || !recipient) return;
+
+   const success = await sendDirectMessage(recipient, message);
+  
+  if (success) {
+    // Clear input
+    input.value = '';
+    
+    // Add to conversation display
+    addMessageToConversation(recipient, message, 'sent');
+  }
+}
+
+// Make functions available globally
+window.openDMPanel = openDMPanel;
+window.closeDMPanel = closeDMPanel;
+window.sendDM = sendDM;
 
 
 

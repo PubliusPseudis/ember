@@ -1,3 +1,5 @@
 old
 ember-headless-node
 vdf-wasm/target
+concatenated_output.txt
+concat.sh

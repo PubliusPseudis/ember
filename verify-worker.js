@@ -18,7 +18,9 @@ async function initializeWasm() {
 // Nacl for signature verification - use CDN or bundle it
 import nacl from 'https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/+esm';
 
-// Helper functions from main code
+/**
+ * Converts a Base64 string to a Uint8Array 
+ */
 function base64ToArrayBuffer(base64) {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
@@ -27,27 +29,41 @@ function base64ToArrayBuffer(base64) {
     }
     return bytes;
 }
+/**
+ * Converts a Uint8Array into a Base64 string.
+ */
+function arrayBufferToBase64(buffer) {
+    let binary = '';
+    // The post object arrives via structured cloning, so buffer might be a plain object
+    const bytes = new Uint8Array(Object.values(buffer));
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+}
 
 function verifySignature(post) {
     console.log(`[SIG_VERIFY] --- Starting verification for post ${post.id} ---`);
-    
-    // Debug: log what fields this post object actually has
     console.log('[SIG_VERIFY] Post fields:', Object.keys(post));
-    console.log('[SIG_VERIFY] Full post object:', post);
     
     if (!post.signature || !post.authorPublicKey) {
         console.error(`[SIG_VERIFY] ❌ FAILED: Post ${post.id} is missing signature or public key.`);
         return false;
     }
     console.log(`[SIG_VERIFY] Post has signature and public key. Proceeding...`);
-    console.log(`[SIG_VERIFY]   > Public Key (b64): ${post.authorPublicKey}`);
     
     try {
-        const publicKeyBytes = base64ToArrayBuffer(post.authorPublicKey);
-        const signatureBytes = base64ToArrayBuffer(post.signature);
-        console.log(`[SIG_VERIFY] Decoded keys and signature into byte arrays.`);
+        const publicKeyBytes = new Uint8Array(Object.values(post.authorPublicKey));
+        const signatureBytes = new Uint8Array(Object.values(post.signature));
+
+        console.log(`[SIG_VERIFY] Correctly handled keys and signature as byte arrays.`);
         console.log(`[SIG_VERIFY]   > Public Key length: ${publicKeyBytes.length} bytes`);
         console.log(`[SIG_VERIFY]   > Signature length: ${signatureBytes.length} bytes`);
+        
+        // For reconstructing the message, we must convert the public key
+        // back to the Base64 string that was used when the message was originally signed.
+        const authorPublicKeyBase64 = arrayBufferToBase64(post.authorPublicKey);
 
         // Reconstruct the exact data object that was signed.
         const signableData = {
@@ -56,11 +72,11 @@ function verifySignature(post) {
             timestamp: post.timestamp,
             parentId: post.parentId,
             imageHash: post.imageHash,
-            authorPublicKey: post.authorPublicKey // Use the Base64 string from the post object
+            authorPublicKey: authorPublicKeyBase64 // Use the Base64 string here
         };
         console.log('[SIG_VERIFY] Reconstructed signableData object:', signableData);
-
-        // This is the most critical part: This string MUST EXACTLY MATCH the one created before signing.
+        
+        // This string MUST EXACTLY MATCH the one created before signing.
         const messageToVerifyString = JSON.stringify(signableData);
         console.log('[SIG_VERIFY] Stringified data to verify:', messageToVerifyString);
 
@@ -75,11 +91,10 @@ function verifySignature(post) {
             return false;
         }
         console.log('[SIG_VERIFY] ✅ nacl.sign.open succeeded. Signature is valid for the public key.');
-
+        
         // Final check: Does the message content match?
         const decodedMessage = new TextDecoder().decode(verifiedMessageBytes);
         console.log('[SIG_VERIFY] Decoded message from signature:', decodedMessage);
-
         if (decodedMessage !== messageToVerifyString) {
             console.error(`[SIG_VERIFY] ❌ FAILED: Message content mismatch after verification!`);
             console.error(`[SIG_VERIFY]   > Expected: ${messageToVerifyString}`);

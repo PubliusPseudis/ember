@@ -6,23 +6,25 @@
 import { CONFIG } from './config.js';
 import { Post } from './models/post.js';
 import { VerificationQueue } from './verification-queue.js';
-
-import { applyTheme, setupThemeToggle, showConnectScreen, updateLoadingMessage, renderPost, refreshPost, dropPost, updateStatus, notify, loadTopicSubscriptions, updateTopicFilter, addTopicToUI, updateAges, updateTopicStats, handleImageSelect, removeImage, toggleReplyForm, discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, scrollToPost , subscribeToTopic,handleReplyImageSelect,removeReplyImage } from './ui.js';
+import { KademliaDHT } from './p2p/dht.js';
+import {currentDMRecipient,addMessageToConversation, applyTheme, setupThemeToggle, showConnectScreen, updateLoadingMessage, renderPost, refreshPost, dropPost, updateStatus, notify, loadTopicSubscriptions, updateTopicFilter, addTopicToUI, updateAges, updateTopicStats, handleImageSelect, removeImage, toggleReplyForm, discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, scrollToPost , subscribeToTopic,handleReplyImageSelect,removeReplyImage } from './ui.js';
 import { StateManager } from './storage.js';
 import { MemoryManager } from './services/memory-manager.js';
 import { PeerManager } from './services/peer-manager.js';
 import { ContentAddressedImageStore } from './services/image-store.js';
-import { initIdentity } from './identity/identity-flow.js';
+import { createNewIdentity } from './identity/identity-flow.js';
 import { IdentityRegistry } from './identity/identity-manager.js';
 import { ProgressiveVDF } from './identity/vdf.js';
 import { initNetwork, broadcast, sendPeer} from './p2p/network-manager.js';
 import { NoiseGenerator } from './p2p/noise-generator.js';
 import { TrafficMixer } from './p2p/traffic-mixer.js';
 import { DandelionRouter } from './p2p/dandelion.js';
-import { HierarchicalBloomFilter, BloomFilter, generateId, isReply, arrayBufferToBase64, base64ToArrayBuffer, JSONStringifyWithBigInt } from './utils.js';
+import { HierarchicalBloomFilter, BloomFilter, generateId, isReply, arrayBufferToBase64, base64ToArrayBuffer, JSONStringifyWithBigInt, JSONParseWithBigInt } from './utils.js';
 import wasmVDF from './vdf-wrapper.js'; 
 import { EpidemicGossip } from './p2p/epidemic-gossip.js';
-
+import { HyParView } from './p2p/hyparview.js';
+import { Scribe } from './p2p/scribe.js';
+import { Plumtree } from './p2p/plumtree.js';
 
 // --- 2. GLOBAL STATE ---
 export const state = {
@@ -47,6 +49,9 @@ export const state = {
   feedMode: 'all',
   pendingVerification: new Map(),
 };
+
+// Trust evaluation system for incoming posts
+const trustEvaluationTimers = new Map(); // postId -> timer
 
 
 // --- 3. SERVICE INSTANCES ---
@@ -142,10 +147,11 @@ export async function handleNewPost(data, fromWire) {
   const p = Post.fromJSON(postData);
   state.pendingVerification.set(p.id, p);
 
-  verificationQueue.addBatch([postData], 'high', (results) => {
-    handleVerificationResults(results);
-  });
+  //  Use trust-based verification flow
+  console.log(`[Trust] New post ${p.id} from ${p.author}, scheduling trust evaluation`);
+  scheduleTrustEvaluation(p);
 
+  // Continue broadcasting
   broadcast({ type: "new_post", post: postData }, fromWire);
 }
 
@@ -166,8 +172,9 @@ export function findRootPost(postId) {
 export async function handlePostsResponse(list, fromWire) {
   if (!Array.isArray(list)) return;
 
-  console.log(`Received ${list.length} posts, queuing for verification...`);
-  const postsToVerify = [];
+  console.log(`Received ${list.length} posts, queuing for trust evaluation...`);
+  const postsToEvaluate = [];
+  
   for (const postData of list) {
     if (!postData?.id || state.posts.has(postData.id) || state.seenPosts.has(postData.id)) {
       continue;
@@ -178,17 +185,17 @@ export async function handlePostsResponse(list, fromWire) {
     state.seenPosts.add(postData.id);
     const p = Post.fromJSON(postData);
     state.pendingVerification.set(p.id, p);
-    postsToVerify.push(postData);
+    postsToEvaluate.push(p);
   }
 
-  if (postsToVerify.length > 0) {
-    postsToVerify.sort((a, b) => {
-      if (!a.parentId && b.parentId) return -1;
-      if (a.parentId && !b.parentId) return 1;
-      return a.timestamp - b.timestamp;
-    });
-    verificationQueue.addBatch(postsToVerify, 'normal', (results) => {
-      handleVerificationResults(results);
+  if (postsToEvaluate.length > 0) {
+    // Sort by timestamp (oldest first)
+    postsToEvaluate.sort((a, b) => a.timestamp - b.timestamp);
+    
+    // Schedule trust evaluation for each post
+    postsToEvaluate.forEach(post => {
+      console.log(`[Trust] Scheduling evaluation for ${post.id}`);
+      scheduleTrustEvaluation(post);
     });
   }
 }
@@ -262,6 +269,12 @@ export async function handleVerificationResults(results) {
             console.log(`[Debug] Added post ${post.id.substring(0,8)}... to state.posts. Total posts: ${state.posts.size}`);
             renderPost(post);
             newlyVerifiedCount++;
+            // Generate and broadcast attestation for this verified post
+            generateAndBroadcastAttestation(post);
+            
+            // Update peer reputation if this came from a peer
+            // (We'll need to track which peer sent each post - for now just log)
+            console.log(`[Attestation] Would update peer reputation for valid post`);
         }
         
         state.pendingVerification.delete(result.id);
@@ -273,6 +286,114 @@ export async function handleVerificationResults(results) {
         notify(`Added ${newlyVerifiedCount} new verified posts`);
     }
 }
+
+export async function generateAndBroadcastAttestation(post) {
+  // Only generate attestations if we have an identity and the post is verified
+  if (!state.myIdentity || !post.verified) return;
+  
+  // Create attestation data with timestamp to prevent replay attacks
+  const attestationData = {
+    postId: post.id,
+    postAuthor: post.author,
+    timestamp: Date.now(),
+    vdfIterations: post.vdfProof?.iterations?.toString() || '0'
+  };
+  
+  // Sign the attestation
+  const dataToSign = JSON.stringify(attestationData);
+  const signature = nacl.sign(
+    new TextEncoder().encode(dataToSign),
+    state.myIdentity.secretKey
+  );
+  
+  // Create attestation message
+  const attestationMsg = {
+    type: 'post_attestation',
+    attestation: attestationData,
+    attesterHandle: state.myIdentity.handle,
+    attesterPublicKey: arrayBufferToBase64(state.myIdentity.publicKey),
+    signature: arrayBufferToBase64(signature)
+  };
+  
+  console.log(`[Attestation] Broadcasting attestation for post ${post.id} by ${post.author}`);
+  
+  // Broadcast to network
+  broadcast(attestationMsg);
+}
+
+
+
+
+export function evaluatePostTrust(postId) {
+  const post = state.pendingVerification.get(postId);
+  if (!post) {
+    // Post was already processed
+    trustEvaluationTimers.delete(postId);
+    return;
+  }
+  
+  // Check if post has reached trust threshold
+  if (post.hasSufficientTrust(CONFIG.TRUST_THRESHOLD)) {
+    console.log(`[Trust] Post ${postId} reached trust threshold (${post.trustScore.toFixed(2)}), accepting without local verification`);
+    
+    // Clear timer
+    trustEvaluationTimers.delete(postId);
+    
+    // Accept the post directly
+    handleVerificationResults([{
+      id: postId,
+      valid: true,
+      errors: []
+    }]);
+    
+    // Give attesters credit for correct attestations
+    for (const attesterHandle of post.attesters) {
+      // Find peer by handle (this is a simplification - in production you'd track this better)
+      for (const [peerId, peer] of state.peers) {
+        // We'd need to map handles to peerIds properly
+        peerManager.updateScore(peerId, 'correct_attestation', 0.1); // Partial credit
+      }
+    }
+    
+    return;
+  }
+  
+  // Check if we've waited long enough
+  const waitTime = Date.now() - post.timestamp;
+  if (waitTime >= CONFIG.ATTESTATION_TIMEOUT) {
+    console.log(`[Trust] Timeout waiting for attestations for post ${postId} (trust: ${post.trustScore.toFixed(2)}), proceeding with local verification`);
+    
+    // Clear timer
+    trustEvaluationTimers.delete(postId);
+    
+    // Send to verification queue
+    verificationQueue.addBatch([post], 'normal', (results) => {
+      handleVerificationResults(results);
+    });
+  }
+}
+
+export function scheduleTrustEvaluation(post) {
+  const postId = post.id;
+  
+  // Clear any existing timer
+  if (trustEvaluationTimers.has(postId)) {
+    clearInterval(trustEvaluationTimers.get(postId));
+  }
+  
+  // Schedule periodic evaluation
+  const timer = setInterval(() => {
+    evaluatePostTrust(postId);
+  }, 100); // Check every 100ms
+  
+  trustEvaluationTimers.set(postId, timer);
+  
+  // Also do an immediate check
+  evaluatePostTrust(postId);
+}
+
+
+
 
 export async function handleProvisionalClaim(claim) {
     if (!claim || !claim.handle || !claim.vdfProof || !claim.signature) {
@@ -570,6 +691,164 @@ export async function createReply(parentId) {
     notify("Gas'd the thread!");
 }
 
+
+// Direct Message Functions
+export async function sendDirectMessage(recipientHandle, messageText) {
+  try {
+    const recipientClaim = await state.identityRegistry.lookupHandle(recipientHandle);
+    if (!recipientClaim) {
+      notify(`User ${recipientHandle} not found`);
+      return false;
+    }
+    
+    if (!recipientClaim.encryptionPublicKey) {
+      notify(`User ${recipientHandle} doesn't support encrypted messages`);
+      return false;
+    }
+    
+    const nonce = nacl.randomBytes(24);
+    const messageBytes = new TextEncoder().encode(messageText);
+    const recipientPublicKey = base64ToArrayBuffer(recipientClaim.encryptionPublicKey);
+    const ciphertext = nacl.box(
+      messageBytes,
+      nonce,
+      recipientPublicKey,
+      state.myIdentity.encryptionSecretKey
+    );
+    
+    const dmPacket = {
+      type: 'e2e_dm',
+      recipient: recipientHandle,
+      sender: state.myIdentity.handle,
+      ciphertext: arrayBufferToBase64(ciphertext),
+      nonce: arrayBufferToBase64(nonce),
+      timestamp: Date.now()
+    };
+
+    const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
+    const closestPeers = await state.dht.findNode(recipientNodeId);
+    
+    if (closestPeers.length === 0) {
+      notify(`Cannot reach ${recipientHandle} - no route found`);
+      return false;
+    }
+    
+    // *** The logic for determining success is changed here ***
+    let sent = false;
+    for (const peer of closestPeers) {
+      sendPeer(peer.wire, dmPacket);
+      sent = true; // Assume success if we have at least one peer to send to.
+    }
+    
+    if (sent) {
+      storeDMLocally(recipientHandle, messageText, 'sent');
+      // This notification will now correctly show "Message sent"
+      notify(`Message sent to ${recipientHandle}`);
+      return true;
+    } else {
+      // This branch is now less likely to be hit, but kept for robustness
+      notify(`Failed to send message to ${recipientHandle}`);
+      return false;
+    }
+  } catch (error) {
+    console.error('DM send error:', error);
+    notify(`Error sending message: ${error.message}`);
+    return false;
+  }
+}
+
+export async function handleDirectMessage(msg, fromWire) {
+  try {
+    // Verify this message is for us
+    if (msg.recipient !== state.myIdentity.handle) {
+      // Not for us - try to forward it
+      const recipientClaim = await state.identityRegistry.lookupHandle(msg.recipient);
+      if (recipientClaim && recipientClaim.nodeId) {
+        const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
+        const closestPeers = state.dht.findClosestPeers(recipientNodeId, 3);
+        
+        // Forward to peers closer to recipient
+        for (const peer of closestPeers) {
+          if (peer.wire !== fromWire) {
+            // *** FIX: Pass peer.wire to sendPeer, not the whole peer object ***
+            sendPeer(peer.wire, msg);
+          }
+        }
+      }
+      return;
+    }
+    
+    // Look up sender's identity
+    const senderClaim = await state.identityRegistry.lookupHandle(msg.sender);
+    if (!senderClaim || !senderClaim.encryptionPublicKey) {
+      console.warn(`DM from unknown or invalid sender: ${msg.sender}`);
+      return;
+    }
+    
+    // Decrypt the message
+    const ciphertext = base64ToArrayBuffer(msg.ciphertext);
+    const nonce = base64ToArrayBuffer(msg.nonce);
+    const senderPublicKey = base64ToArrayBuffer(senderClaim.encryptionPublicKey);
+    
+    const decryptedBytes = nacl.box.open(
+      ciphertext,
+      nonce,
+      senderPublicKey,
+      state.myIdentity.encryptionSecretKey
+    );
+    if (!decryptedBytes) {
+      console.error('Failed to decrypt DM - invalid ciphertext or keys');
+      return;
+    }
+    
+    const messageText = new TextDecoder().decode(decryptedBytes);
+    // Store and display the message
+    storeDMLocally(msg.sender, messageText, 'received');
+    // Show notification
+     notify(`📬 New message from ${msg.sender}`, 6000,
+        () => openDMPanel(msg.sender));
+    // Update UI if DM panel is open
+    if (currentDMRecipient === msg.sender) {
+      addMessageToConversation(msg.sender, messageText, 'received');
+      
+    }
+    
+  } catch (error) {
+    console.error('DM receive error:', error);
+  }
+}
+
+// Helper function to store DMs locally
+function storeDMLocally(otherHandle, messageText, direction) {
+  const key = `ember-dms-${otherHandle}`;
+  let conversation = [];
+  
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      conversation = JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error('Failed to load DM history:', e);
+  }
+  
+  conversation.push({
+    message: messageText,
+    direction: direction,
+    timestamp: Date.now()
+  });
+  
+  // Keep only last 100 messages
+  if (conversation.length > 100) {
+    conversation = conversation.slice(-100);
+  }
+  
+  localStorage.setItem(key, JSON.stringify(conversation));
+}
+
+
+
+
 async function initTopics() {
     loadTopicSubscriptions();
     updateTopicFilter();
@@ -677,16 +956,122 @@ async function init() {
   applyTheme(localStorage.getItem('ephemeral-theme') || 'dark');
   setupThemeToggle();
   applyConfigToUI();
+  
   try {
     await wasmVDF.initialize();
     await verificationQueue.init();
     await stateManager.init();
-    await initIdentity();    
+    
+    // Check for stored identity but DON'T set it yet
+    const stored = localStorage.getItem("ephemeral-id");
+    let storedIdentity = null;
+    
+    if (stored) {
+      try {
+        const identity = JSONParseWithBigInt(stored);
+        if (identity.nodeId) {
+            if (typeof identity.nodeId === 'string') {
+            // stored as base-64
+            identity.nodeId = base64ToArrayBuffer(identity.nodeId);
+            } else if (Array.isArray(identity.nodeId)) {
+            // stored as JSON array
+            identity.nodeId = new Uint8Array(identity.nodeId);
+           }
+        }       
+        
+        
+        if (identity.secretKey) {
+          if (Array.isArray(identity.secretKey)) {
+            identity.secretKey = new Uint8Array(identity.secretKey);
+          }
+        }
+        if (identity.publicKey && typeof identity.publicKey === 'string') {
+          identity.publicKey = base64ToArrayBuffer(identity.publicKey);
+        }
+        if (identity.encryptionPublicKey && typeof identity.encryptionPublicKey === 'string') {
+          identity.encryptionPublicKey = base64ToArrayBuffer(identity.encryptionPublicKey);
+        }
+        if (identity.encryptionSecretKey && Array.isArray(identity.encryptionSecretKey)) {
+          identity.encryptionSecretKey = new Uint8Array(identity.encryptionSecretKey);
+        }
+        if (identity.vdfProof && identity.vdfProof.iterations) {
+          if (typeof identity.vdfProof.iterations === 'string') {
+            identity.vdfProof.iterations = BigInt(identity.vdfProof.iterations);
+          }
+        }
+        storedIdentity = identity;
+      } catch (e) {
+        console.error("Failed to parse stored identity:", e);
+      }
+    }
+    
+    // Initialize network FIRST with temporary node ID
+    const tempNodeId = (storedIdentity && storedIdentity.nodeId instanceof Uint8Array)
+                        ? storedIdentity.nodeId
+                        : crypto.getRandomValues(new Uint8Array(20));
+    
+    await initNetworkWithTempId(tempNodeId);
+    
+    // Wait for DHT to be ready
+    await new Promise(resolve => {
+      const checkInterval = setInterval(() => {
+        if (state.dht && state.identityRegistry) {
+          clearInterval(checkInterval);
+          resolve();
+        }
+      }, 100);
+    });
+    
+    await new Promise(resolve => {
+      let waitTime = 0;
+      const checkInterval = setInterval(() => {
+        waitTime += 100;
+        
+        if (state.dht && state.identityRegistry) {
+          clearInterval(checkInterval);
+          
+          // Check if we're likely the first node
+          if (waitTime > 5000 && state.peers.size === 0) {
+            notify("🎉 Welcome, pioneer! You appear to be the first node on the network!");
+          }
+          
+          resolve();
+        }
+      }, 100);
+    });
+        
+    
+    // Now handle identity
+    if (storedIdentity && storedIdentity.handle) {
+      // Verify stored identity
+      const isValid = await state.identityRegistry.verifyOwnIdentity(storedIdentity);
+      
+      if (isValid) {
+        // Identity was successfully verified on the network
+        state.myIdentity = storedIdentity;
+        notify(`Welcome back, ${storedIdentity.handle}!`);
+      } else if (state.peers.size === 0) {
+        // If verification fails BUT we have no peers, we are the first node.
+        // We should trust the local identity and assume it's valid.
+        console.warn("Could not verify identity on DHT (no peers found), trusting local storage.");
+        state.myIdentity = storedIdentity;
+        notify(`Welcome back, pioneer ${storedIdentity.handle}!`);
+      } else {
+        // Stored identity is invalid or taken because verification failed and there ARE peers.
+        notify("Stored identity is no longer valid. Please create a new one.");
+        await createNewIdentity();
+      }
+    } else {
+      // No stored identity
+      await createNewIdentity();
+    }
+    
+    // Continue with rest of initialization
     await stateManager.loadUserState();
-    await stateManager.loadImageChunks(); 
+    await stateManager.loadImageChunks();
     await initContentFilter();
     await initImageFilter();
-
+    
     const loadedPostCount = await stateManager.loadPosts();
     
     if (state.pendingVerification.size > 0) {
@@ -696,15 +1081,82 @@ async function init() {
         handleVerificationResults(results);
         notify(`Restored ${results.filter(r => r.valid).length} posts from your last session.`);
       });
-    }     
+    }
     
     await stateManager.loadPeerScores();
-    showConnectScreen(loadedPostCount);
-
+    
+    // Hide loading screen and show main app
+    document.getElementById("loading").style.display = "none";
+    initializeP2PProtocols();
+    startMaintenanceLoop();
+    initTopics();
+    
+    window.addEventListener("beforeunload", () => {
+      if (maintenanceInterval) clearInterval(maintenanceInterval);
+      stateManager.savePosts();
+      stateManager.saveUserState();
+      stateManager.savePeerScores();
+      if (state.client) state.client.destroy();
+    });
+    
+    if (!localStorage.getItem("ephemeral-tips")) {
+      setTimeout(() => notify("💡 Tip: Posts live only while carried by peers"), 1000);
+      setTimeout(() => notify("💡 Tip: Ctrl+Enter to post quickly"), 6000);
+      localStorage.setItem("ephemeral-tips", "yes");
+    }
+    
   } catch (e) {
     console.error("Init failed:", e);
     document.getElementById("loading").innerHTML = `<div class="loading-content"><h2>Init Failed</h2><p>${e.message}</p><button onclick="location.reload()">Try Again</button></div>`;
   }
+}
+
+
+function initializeP2PProtocols() {
+  if (!state.myIdentity) {
+    console.error("Cannot initialize P2P protocols without an identity.");
+    return;
+  }
+  
+  // HyParView is created in identity-flow, but we ensure it's here for returning users
+  if (!state.hyparview) {
+      state.hyparview = new HyParView(state.myIdentity.nodeId, state.dht);
+      state.hyparview.bootstrap().catch(e => console.error("HyParView bootstrap failed:", e));
+  }
+
+  // Initialize Scribe
+  try {
+    state.scribe = new Scribe(state.myIdentity.nodeId, state.dht);
+    state.scribe.deliverMessage = (topic, message) => {
+      if (message.type === 'new_post' && message.post) {
+        if (message.post.author === state.myIdentity.handle) return;
+        handleNewPost(message.post, null);
+      }
+    };
+  } catch (e) {
+    console.error("Failed to initialize Scribe:", e);
+  }
+
+  // Initialize Plumtree
+  state.plumtree = new Plumtree(state.myIdentity.nodeId, state.hyparview);
+  state.plumtree.deliver = (message) => {
+    if (message.type === 'post') {
+      handleNewPost(message.data, null);
+    }
+  };
+  
+  console.log("Dependent P2P protocols (Scribe, Plumtree) initialized.");
+}
+
+// helper function for init
+async function initNetworkWithTempId(tempNodeId) {
+  initNetwork(); // This will create state.client
+  
+  // Initialize DHT and identity registry immediately
+  state.dht = new KademliaDHT(tempNodeId);
+  state.identityRegistry = new IdentityRegistry(state.dht);
+  
+  // The rest of the protocols will initialize after the bootstrap connection
 }
 
 export function sendToPeer(peer, message) {
@@ -719,92 +1171,11 @@ export function sendToPeer(peer, message) {
     }
 }
 
-async function connectToNetwork() {
-  document.getElementById("loading").innerHTML = `<div class="loading-content"><div class="spinner"></div><div>🔥 Igniting the Ember Network...</div><div style="font-size:12px;margin-top:10px;color:#ff8c42">Securing identity...</div></div>`;
-  await new Promise(r => setTimeout(r, 500));
-  
-  try {
-    //await wasmVDF.initialize();
-    //await verificationQueue.init();
-    //await initIdentity();
-    initNetwork();
 
-    if (state.dht) {
-      state.identityRegistry = new IdentityRegistry(state.dht);
-      setTimeout(async () => {
-        if (state.myIdentity && state.myIdentity.handle) {
-          try {
-            const isRegistered = await state.identityRegistry.verifyOwnIdentity(state.myIdentity);
-            if (isRegistered) {
-              state.myIdentity.registrationVerified = true;
-            } else {
-              const keyPair = {
-                publicKey: state.myIdentity.publicKey,
-                secretKey: state.myIdentity.secretKey
-              };
-              try {
-                const identityClaim = await state.identityRegistry.registerIdentity(
-                  state.myIdentity.handle,
-                  keyPair
-                );
-                state.myIdentity.identityClaim = identityClaim;
-                state.myIdentity.isRegistered = true;
-                state.myIdentity.registrationVerified = true;
-                const serializableIdentity = {
-                  ...state.myIdentity,
-                  publicKey: arrayBufferToBase64(state.myIdentity.publicKey),
-                  secretKey: Array.from(state.myIdentity.secretKey),
-                  vdfProof: state.myIdentity.vdfProof,
-                  deviceCalibration: state.myIdentity.deviceCalibration
-                };
-                localStorage.setItem("ephemeral-id", JSONStringifyWithBigInt(serializableIdentity));
-                notify(`Identity "${state.myIdentity.handle}" registered in network! 🎉`);
-              } catch (registerError) {
-                console.error(`[Identity] Failed to register identity in DHT:`, registerError);
-                notify(`Warning: Could not register identity in network`, 5000);
-              }
-            }
-          } catch (e) {
-            console.warn("Could not verify/register identity:", e);
-          }
-        }
-      }, 5000);
-    }
-
-    startMaintenanceLoop();
-    initTopics();
-
-    window.addEventListener("beforeunload", () => {
-      if (maintenanceInterval) clearInterval(maintenanceInterval);
-      stateManager.savePosts();
-      stateManager.saveUserState();
-      stateManager.savePeerScores();
-      if (state.client) state.client.destroy();
-    });
-
-    setTimeout(() => {
-      document.getElementById("loading").style.display = "none";
-      if (!localStorage.getItem("ephemeral-tips")) {
-        setTimeout(() => notify("💡 Tip: Posts live only while carried by peers"), 1000);
-        setTimeout(() => notify("💡 Tip: Ctrl+Enter to post quickly"), 6000);
-        localStorage.setItem("ephemeral-tips", "yes");
-      }
-      if (state.posts.size > 0) {
-        notify(`Welcome back! ${state.posts.size} embers still burning 🔥`);
-      }
-    }, 1500);
-
-  } catch (error) {
-      console.error("Network initialization failed:", error);
-      document.getElementById("loading").innerHTML = `<div class="loading-content"><h2>Connection Failed</h2><p>${error.message}</p><button onclick="connectToNetwork()" class="primary-button">Try Again</button></div>`;
-  }
-}
 
 export function debugPostRemoval(postId, reason) {
   // This allows for live debugging via the browser console, e.g.:
-  // window.ephemeralDebug.preventRemoval = true;
-  // window.ephemeralDebug.protectedPosts.add('some_post_id');
-  
+
   if (window.ephemeralDebug?.preventRemoval) {
     console.warn(`[Debug] Removal of post ${postId} PREVENTED by global flag. Reason: ${reason}`);
     return true; // Return true to PREVENT removal
@@ -835,10 +1206,11 @@ window.discoverAndFilterTopic = discoverAndFilterTopic;
 window.completeTopicSuggestion = completeTopicSuggestion;
 window.scrollToPost = scrollToPost;
 window.clearLocalData = () => stateManager.clearLocalData();
-window.connectToNetwork = connectToNetwork;
 window.handleReplyImageSelect = handleReplyImageSelect;
 window.removeReplyImage = removeReplyImage;
-
+window.openDMPanel = openDMPanel;
+window.closeDMPanel = closeDMPanel;
+window.sendDM = sendDM;
 // Start the application initialization process once the page is loaded.
 window.addEventListener("load", init);
 
@@ -848,5 +1220,12 @@ window.ephemeralDebug = {
   peers: () => state.peers,
   id: () => state.myIdentity,
   stats: () => ({ posts: state.posts.size, peers: state.peers.size }),
-    wasmVDF: wasmVDF 
+  wasmVDF: wasmVDF,
+  // ADD THIS NEW DEBUG COMMAND:
+  reputations: () => {
+    console.table(peerManager.debugReputations());
+    const stats = peerManager.getReputationStats();
+    console.log('Reputation distribution:', stats);
+    return stats;
+  }
 };

@@ -48,6 +48,11 @@ export class Post {
         this.carriers = new Set([state.myIdentity.handle]);
         this.replies = new Set();
         this.depth = 0;
+        
+        // Trust-related transient properties (not serialized)
+        this.trustScore = 0;
+        this.attesters = new Set(); // Set of handles who have attested
+        this.attestationTimestamps = new Map(); // handle -> timestamp
     }
 
     async processImage() {
@@ -133,6 +138,59 @@ toSignable() {
         console.log("[Post] Signature successfully verified.");
         return true;
     }
+
+
+    /**
+     * Add an attestation from a peer
+     * @param {string} attesterHandle - The handle of the attesting peer
+     * @param {number} reputationScore - The reputation score of the attester
+     * @returns {boolean} - True if attestation was new, false if already existed
+     */
+    addAttestation(attesterHandle, reputationScore) {
+        if (this.attesters.has(attesterHandle)) {
+            return false; // Already attested
+        }
+        
+        this.attesters.add(attesterHandle);
+        this.attestationTimestamps.set(attesterHandle, Date.now());
+        
+        // Add reputation score to trust score
+        // Use logarithmic scaling to prevent single high-rep peer from dominating
+        // But ensure even rep=0 peers contribute something (minimum 1 point)
+        const scoreContribution = Math.max(1, Math.log(1 + reputationScore) * 10);
+        this.trustScore += scoreContribution;
+        
+        console.log(`[Post] Added attestation from ${attesterHandle}, trust score now: ${this.trustScore.toFixed(2)}`);
+        return true;
+    }
+
+    /**
+     * Check if post has sufficient trust to skip verification
+     * @param {number} threshold - The trust threshold required
+     * @returns {boolean}
+     */
+    hasSufficientTrust(threshold) {
+        return this.trustScore >= threshold;
+    }
+
+    /**
+     * Get age of oldest attestation in milliseconds
+     * @returns {number}
+     */
+    getOldestAttestationAge() {
+        if (this.attestationTimestamps.size === 0) return 0;
+        
+        const now = Date.now();
+        let oldestAge = 0;
+        
+        for (const timestamp of this.attestationTimestamps.values()) {
+            const age = now - timestamp;
+            if (age > oldestAge) oldestAge = age;
+        }
+        
+        return oldestAge;
+    }
+
 
     /**
      * Prepares the entire Post object for network transmission.
@@ -249,6 +307,11 @@ toSignable() {
         // Convert arrays back to Sets
         p.carriers = new Set(j.carriers || []);
         p.replies = new Set(j.replies || []);
+        
+        // Initialize trust properties for loaded/received posts
+        p.trustScore = 0;
+        p.attesters = new Set();
+        p.attestationTimestamps = new Map();
         
         console.log('[Post.fromJSON] Reconstructed post:', {
             id: p.id,
