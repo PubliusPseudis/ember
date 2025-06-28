@@ -22,27 +22,51 @@ export class Scribe {
   }
   
   // Extract topics from post content
-  extractTopics(content) {
-    const topics = new Set();
-    
-    // Extract hashtags
-    const hashtags = content.match(/#\w+/g) || [];
-    hashtags.forEach(tag => topics.add(tag.toLowerCase()));
-    
-    // Extract keywords (simple approach)
-    const keywords = ['tech', 'news', 'art', 'music', 'politics', 'science','bitcoin','finance','war','coding','computers', 'cryptography','cryptocurrency'];
-    const contentLower = content.toLowerCase();
-    keywords.forEach(keyword => {
-      if (contentLower.includes(keyword)) {
-        topics.add(`#${keyword}`);
-      }
-    });
-    
-    // Always include a default topic
-    topics.add('#general');
-    
-    return Array.from(topics);
-  }
+    extractTopics(content) {
+        const topics = new Set();
+        
+        // ADDED: Limit content length for regex
+        const maxContentLength = 1000;
+        const truncatedContent = content.length > maxContentLength 
+            ? content.substring(0, maxContentLength) 
+            : content;
+        
+        // Extract hashtags with limits
+        const MAX_TOPICS = 10;
+        const MAX_TOPIC_LENGTH = 50;
+        
+        const hashtags = truncatedContent.match(/#\w{1,50}/g) || [];
+        
+        // ADDED: Limit number of hashtags processed
+        hashtags.slice(0, MAX_TOPICS).forEach(tag => {
+            const cleaned = tag.toLowerCase();
+            if (cleaned.length <= MAX_TOPIC_LENGTH) {
+                topics.add(cleaned);
+            }
+        });
+        
+        // Extract keywords with same limits
+        const keywords = ['tech', 'news', 'art', 'music', 'politics', 
+                         'science', 'bitcoin', 'finance', 'war', 'coding', 
+                         'computers', 'cryptography', 'cryptocurrency'];
+        const contentLower = truncatedContent.toLowerCase();
+        
+        let keywordsAdded = 0;
+        for (const keyword of keywords) {
+            if (topics.size >= MAX_TOPICS) break;
+            if (contentLower.includes(keyword) && keywordsAdded < 5) {
+                topics.add(`#${keyword}`);
+                keywordsAdded++;
+            }
+        }
+        
+        // Always include a default topic
+        if (topics.size < MAX_TOPICS) {
+            topics.add('#general');
+        }
+        
+        return Array.from(topics);
+    }
   
   // Get rendezvous node for a topic
   async getRendezvousNode(topic) {

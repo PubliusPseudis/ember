@@ -66,13 +66,22 @@ function verifySignature(post) {
         const authorPublicKeyBase64 = arrayBufferToBase64(post.authorPublicKey);
 
         // Reconstruct the exact data object that was signed.
+        // This includes the VDF fields, ensuring they are covered by the signature check.
         const signableData = {
             id: post.id,
             content: post.content,
             timestamp: post.timestamp,
             parentId: post.parentId,
             imageHash: post.imageHash,
-            authorPublicKey: authorPublicKeyBase64 // Use the Base64 string here
+            authorPublicKey: authorPublicKeyBase64, // Use the Base64 string here
+            vdfInput: post.vdfInput, // Add the VDF input for verification
+            vdfProof: post.vdfProof ? { // Re-serialize the proof for a perfect match
+                y: post.vdfProof.y,
+                pi: post.vdfProof.pi,
+                l: post.vdfProof.l,
+                r: post.vdfProof.r,
+                iterations: post.vdfProof.iterations ? post.vdfProof.iterations.toString() : null
+            } : null
         };
         console.log('[SIG_VERIFY] Reconstructed signableData object:', signableData);
         

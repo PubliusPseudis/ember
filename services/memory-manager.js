@@ -127,22 +127,6 @@ export class MemoryManager {
             }
         }
         
-        // Clean up bloom filters if they're too large
-        if (state.seenMessages instanceof HierarchicalBloomFilter) {
-          // Check the actual size of stored timestamps
-          if (state.seenMessages.timestamps && state.seenMessages.timestamps.size > 50000) {
-            state.seenMessages.cleanup();
-            console.log("Cleaned up message bloom filter");
-          }
-        } else if (state.seenMessages.bits && state.seenMessages.bits.length > 50000) {
-          state.seenMessages = new BloomFilter(100000, 4);
-          console.log("Reset message bloom filter");
-        }
-        
-        if (state.seenPosts.bits.length > 50000) {
-            state.seenPosts = new BloomFilter(100000, 4);
-            console.log("Reset post bloom filter");
-        }
     }
     
     async emergencyCleanup() {

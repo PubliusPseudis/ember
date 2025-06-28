@@ -39,11 +39,12 @@ export class BloomFilter {
 export class HierarchicalBloomFilter {
   constructor() {
     this.levels = [
-      { filter: new BloomFilter(10000, 3), maxAge: 3600000, name: 'recent' },     // 1 hour
-      { filter: new BloomFilter(50000, 4), maxAge: 86400000, name: 'daily' },     // 24 hours
-      { filter: new BloomFilter(100000, 5), maxAge: 604800000, name: 'weekly' }   // 7 days
+      { filter: new BloomFilter(10000, 3), maxAge: 3600000, name: 'recent' },
+      { filter: new BloomFilter(50000, 4), maxAge: 86400000, name: 'daily' },
+      { filter: new BloomFilter(100000, 5), maxAge: 604800000, name: 'weekly' }
     ];
     this.timestamps = new Map();
+    this.maxTimestamps = 50000; // ADDED: Maximum timestamps to store
   }
   
   add(item) {
@@ -54,11 +55,11 @@ export class HierarchicalBloomFilter {
       level.filter.add(item);
     });
     
-    // Track timestamp
+    // Track timestamp with size limit
     this.timestamps.set(item, now);
     
-    // Cleanup old timestamps periodically
-    if (this.timestamps.size > 10000) {
+    // Force cleanup if over limit
+    if (this.timestamps.size > this.maxTimestamps) {
       this.cleanup();
     }
   }
@@ -76,47 +77,52 @@ export class HierarchicalBloomFilter {
       }
     }
     
+    // Item is too old, remove it
+    this.timestamps.delete(item);
     return false;
   }
   
-    cleanup() {
-      const now = Date.now();
-      const maxAge = this.levels[this.levels.length - 1].maxAge;
-      
-      // Count items before cleanup
-      const beforeSize = this.timestamps.size;
-      
-      // Remove old timestamps
-      for (const [item, timestamp] of this.timestamps) {
-        if (now - timestamp > maxAge) {
-          this.timestamps.delete(item);
-        }
-      }
-      
-      // If we removed more than 50% of items, reset bloom filters
-    if (this.timestamps.size < beforeSize / 2) {
-        console.log(`Resetting bloom filters (cleaned ${beforeSize - this.timestamps.size} items)`);
-        // Re-add remaining items to new filters
-        const remainingItems = Array.from(this.timestamps.keys());
-        this.levels.forEach(level => {
-            level.filter = new BloomFilter(
-                level.filter.size, 
-                level.filter.numHashes
-            );
-        });
-        // Re-add all remaining items
-        remainingItems.forEach(item => {
-            this.levels.forEach(level => level.filter.add(item));
-        });
+  cleanup() {
+    const now = Date.now();
+    const maxAge = this.levels[this.levels.length - 1].maxAge;
+    
+    const beforeSize = this.timestamps.size;
+    
+    // Remove old timestamps
+    const toDelete = [];
+    for (const [item, timestamp] of this.timestamps) {
+      if (now - timestamp > maxAge) {
+        toDelete.push(item);
       }
     }
+    
+    toDelete.forEach(item => this.timestamps.delete(item));
+    
+    // If still too many, remove oldest
+    if (this.timestamps.size > this.maxTimestamps * 0.8) {
+      const sorted = Array.from(this.timestamps.entries())
+        .sort((a, b) => a[1] - b[1]);
+      
+      const toRemove = sorted.slice(0, sorted.length - Math.floor(this.maxTimestamps * 0.7));
+      toRemove.forEach(([item]) => this.timestamps.delete(item));
+    }
+    
+    // Reset bloom filters if we removed many items
+    if (this.timestamps.size < beforeSize / 2) {
+      console.log(`Resetting bloom filters (cleaned ${beforeSize - this.timestamps.size} items)`);
+      const remainingItems = Array.from(this.timestamps.keys());
+      this.levels.forEach(level => {
+        level.filter = new BloomFilter(level.filter.size, level.filter.numHashes);
+      });
+      remainingItems.forEach(item => {
+        this.levels.forEach(level => level.filter.add(item));
+      });
+    }
+  }
 
   reset() {
     this.levels.forEach(level => {
-      level.filter = new BloomFilter(
-        level.filter.size, 
-        level.filter.numHashes
-      );
+      level.filter = new BloomFilter(level.filter.size, level.filter.numHashes);
     });
     this.timestamps.clear();
   }
@@ -146,34 +152,45 @@ export async function waitForWebTorrent() {
     }
 
 
-export const generateId = () => Math.random().toString(36).substr(2, 9);
+export const generateId = () => {
+  const bytes = new Uint8Array(16); // 128 bits of randomness
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+};
 export function sanitize(content) {
-  // 1 · Trim early
+  // 1. Trim early
   if (content.length > CONFIG.MAX_POST_SIZE) {
     content = content.slice(0, CONFIG.MAX_POST_SIZE);
   }
 
-  // 2 · Use DOMPurify when available
+  // 2. Use DOMPurify when available with SAFE settings
   if (window.DOMPurify) {
     const purified = DOMPurify.sanitize(content, {
-      ALLOWED_TAGS: [ 'b', 'i', 'em', 'strong', 'a', 'code', 'br' ],
-      ALLOWED_ATTR: [ 'href', 'target', 'rel' ],   // ← array form
-      ALLOW_URI_WITHOUT_PROTOCOL: true,            // allow “example.com”
+      ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'code', 'br'],
+      ALLOWED_ATTR: ['href', 'target', 'rel'],
+      ALLOW_URI_WITHOUT_PROTOCOL: false,  // CHANGED: Disallow protocol-less URLs
+      ALLOWED_URI_REGEXP: /^https?:\/\//,  // ADDED: Only allow http/https
       RETURN_TRUSTED_TYPE: false
     });
 
-    // 3 · Optional: force safe link behaviour
+    // 3. Force safe link behaviour
     DOMPurify.addHook('afterSanitizeAttributes', node => {
       if (node.tagName === 'A' && node.hasAttribute('href')) {
         node.setAttribute('target', '_blank');
-        node.setAttribute('rel',   'noopener noreferrer');
+        node.setAttribute('rel', 'noopener noreferrer');
+        // Additional check for javascript: URLs
+        if (node.getAttribute('href').toLowerCase().startsWith('javascript:')) {
+          node.removeAttribute('href');
+        }
       }
     });
 
     return purified;
   }
 
-  // 4 · Fallback: plain-text escape
+  // 4. Fallback: plain-text escape
   const d = document.createElement('div');
   d.textContent = content;
   return d.innerHTML;
@@ -264,8 +281,18 @@ export const JSONStringifyWithBigInt = (obj) => {
 
 export const JSONParseWithBigInt = (str) => {
     return JSON.parse(str, (key, value) => {
+        // More strict check for BigInt format
         if (typeof value === 'string' && /^\d+n$/.test(value)) {
-            return BigInt(value.slice(0, -1));
+            // Additional validation: check if the number part is valid
+            const numPart = value.slice(0, -1);
+            if (/^\d+$/.test(numPart) && numPart.length < 100) { // Limit BigInt size
+                try {
+                    return BigInt(numPart);
+                } catch (e) {
+                    // If BigInt creation fails, return original string
+                    return value;
+                }
+            }
         }
         return value;
     });

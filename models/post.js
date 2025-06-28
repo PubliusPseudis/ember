@@ -1,5 +1,6 @@
 import { state, imageStore } from '../main.js'; 
 import { generateId, sanitize, arrayBufferToBase64, base64ToArrayBuffer } from '../utils.js';
+import { CONFIG } from '../config.js';
 
 function serializeVdfProof(proof) {
     if (!proof) return null;
@@ -15,6 +16,15 @@ function serializeVdfProof(proof) {
 /* ---------- POST CLASS WITH SIGNATURES ---------- */
 export class Post {
     constructor(content, parentId = null, imageData = null) {
+        // ADDED: Validate content before creating post
+        if (!content || typeof content !== 'string') {
+            throw new Error('Post content must be a non-empty string');
+        }
+        
+        if (content.length > CONFIG.MAX_POST_SIZE) {
+            throw new Error(`Post content too long: ${content.length} characters (max ${CONFIG.MAX_POST_SIZE})`);
+        }
+        
         // Core post data
         this.id = generateId();
         this.content = sanitize(content);
@@ -24,6 +34,10 @@ export class Post {
         this.imageHash = null; // Will be populated by processImage()
 
         // Author's identity information
+        if (!state.myIdentity || !state.myIdentity.handle) {
+            throw new Error('Cannot create post without identity');
+        }
+        
         this.author = state.myIdentity.handle;
         this.authorPublicKey = state.myIdentity.publicKey;
         this.authorUniqueId = state.myIdentity.uniqueId;
@@ -51,8 +65,8 @@ export class Post {
         
         // Trust-related transient properties (not serialized)
         this.trustScore = 0;
-        this.attesters = new Set(); // Set of handles who have attested
-        this.attestationTimestamps = new Map(); // handle -> timestamp
+        this.attesters = new Set();
+        this.attestationTimestamps = new Map();
     }
 
     async processImage() {
@@ -70,39 +84,54 @@ export class Post {
      * Includes imageHash for content integrity.
      * @returns {Uint8Array} - The byte array to be signed or verified.
      */
-toSignable() {
-  // Ensure publicKey is always in the same format
-  let publicKeyBase64;
-  if (typeof this.authorPublicKey === 'string') {
-    // Already base64
-    publicKeyBase64 = this.authorPublicKey;
-  } else if (this.authorPublicKey instanceof ArrayBuffer || this.authorPublicKey instanceof Uint8Array) {
-    // Convert to base64
-    publicKeyBase64 = arrayBufferToBase64(this.authorPublicKey);
-  } else {
-    console.error('Unknown publicKey type:', typeof this.authorPublicKey);
-    publicKeyBase64 = '';
-  }
-  
-  const signableData = {
-    id: this.id,
-    content: this.content,
-    timestamp: this.timestamp,
-    parentId: this.parentId,
-    imageHash: this.imageHash,
-    authorPublicKey: publicKeyBase64
-  };
-  
-  const signedString = JSON.stringify(signableData);
-  return new TextEncoder().encode(signedString);
-}
+    toSignable() {
+      // Ensure publicKey is always in the same format
+      let publicKeyBase64;
+      if (typeof this.authorPublicKey === 'string') {
+        // Already base64
+        publicKeyBase64 = this.authorPublicKey;
+      } else if (this.authorPublicKey instanceof ArrayBuffer || this.authorPublicKey instanceof Uint8Array) {
+        // Convert to base64
+        publicKeyBase64 = arrayBufferToBase64(this.authorPublicKey);
+      } else {
+        console.error('Unknown publicKey type:', typeof this.authorPublicKey);
+        publicKeyBase64 = '';
+      }
+
+      // This cryptographically links the proof-of-work to the post content and author.
+      const signableData = {
+        id: this.id,
+        content: this.content,
+        timestamp: this.timestamp,
+        parentId: this.parentId,
+        imageHash: this.imageHash,
+        authorPublicKey: publicKeyBase64,
+        vdfInput: this.vdfInput, // Add VDF input to the signature
+        vdfProof: this.vdfProof ? serializeVdfProof(this.vdfProof) : null // Add serialized VDF proof
+      };
+      const signedString = JSON.stringify(signableData);
+      return new TextEncoder().encode(signedString);
+    }
 
     /**
      * Signs the post using the user's private key.
      * @param {Uint8Array} secretKey - The user's secret signing key.
      */
     sign(secretKey) {
-        const messageBytes = this.toSignable();
+        // Re-create the signable data at the moment of signing
+        // to capture any properties added after the constructor, like the reply's VDF proof.
+        const signableData = {
+          id: this.id,
+          content: this.content,
+          timestamp: this.timestamp,
+          parentId: this.parentId,
+          imageHash: this.imageHash,
+          authorPublicKey: arrayBufferToBase64(this.authorPublicKey),
+          vdfInput: this.vdfInput,
+          vdfProof: this.vdfProof ? serializeVdfProof(this.vdfProof) : null
+        };
+
+        const messageBytes = new TextEncoder().encode(JSON.stringify(signableData));
         this.signature = nacl.sign(messageBytes, secretKey);
         console.log(`[Post] Post signed. Signature: ${arrayBufferToBase64(this.signature).substring(0, 16)}...`);
     }
@@ -117,7 +146,19 @@ toSignable() {
             return false;
         }
 
-        const messageToVerifyBytes = this.toSignable(); // Re-create signable data
+        // Use the same logic as the new sign() method to reconstruct the data.
+        const signableData = {
+          id: this.id,
+          content: this.content,
+          timestamp: this.timestamp,
+          parentId: this.parentId,
+          imageHash: this.imageHash,
+          authorPublicKey: arrayBufferToBase64(this.authorPublicKey),
+          vdfInput: this.vdfInput,
+          vdfProof: this.vdfProof ? serializeVdfProof(this.vdfProof) : null
+        };
+        
+        const messageToVerifyBytes = new TextEncoder().encode(JSON.stringify(signableData));
         const originalMessage = nacl.sign.open(this.signature, this.authorPublicKey);
 
         if (originalMessage === null) {
@@ -240,23 +281,42 @@ toSignable() {
      * @returns {Post} - A complete Post instance.
      */
     static fromJSON(j) {
+        // ADDED: Validate input structure
+        if (!j || typeof j !== 'object') {
+            throw new Error('Invalid post data: must be an object');
+        }
+        
+        // ADDED: Required field validation
+        const requiredFields = ['id', 'content', 'timestamp', 'author'];
+        for (const field of requiredFields) {
+            if (!(field in j)) {
+                throw new Error(`Invalid post data: missing required field "${field}"`);
+            }
+        }
+        
+        // ADDED: Type validation
+        if (typeof j.id !== 'string' || typeof j.content !== 'string' || 
+            typeof j.timestamp !== 'number' || typeof j.author !== 'string') {
+            throw new Error('Invalid post data: incorrect field types');
+        }
+        
         const p = Object.create(Post.prototype);
         
-        // Copy all basic properties
+        // Copy all basic properties with validation
         p.id = j.id;
-        p.content = j.content;
+        p.content = sanitize(j.content); // Re-sanitize for safety
         p.timestamp = j.timestamp;
-        p.parentId = j.parentId;
-        p.imageHash = j.imageHash;
-        p.imageData = j.imageData;
+        p.parentId = j.parentId || null;
+        p.imageHash = j.imageHash || null;
+        p.imageData = j.imageData || null;
         p.author = j.author;
-        p.authorUniqueId = j.authorUniqueId;
-        p.authorVdfInput = j.authorVdfInput;
-        p.vdfInput = j.vdfInput;
-        p.depth = j.depth || 0;
+        p.authorUniqueId = j.authorUniqueId || null;
+        p.authorVdfInput = j.authorVdfInput || null;
+        p.vdfInput = j.vdfInput || null;
+        p.depth = typeof j.depth === 'number' ? j.depth : 0;
 
-        // Deserialize VDF proofs (convert iterations back from string)
-        if (j.authorVdfProof) {
+        // Deserialize VDF proofs with validation
+        if (j.authorVdfProof && typeof j.authorVdfProof === 'object') {
             p.authorVdfProof = {
                 y: j.authorVdfProof.y,
                 pi: j.authorVdfProof.pi,
@@ -264,9 +324,11 @@ toSignable() {
                 r: j.authorVdfProof.r,
                 iterations: j.authorVdfProof.iterations ? BigInt(j.authorVdfProof.iterations) : null
             };
+        } else {
+            p.authorVdfProof = null;
         }
         
-        if (j.vdfProof) {
+        if (j.vdfProof && typeof j.vdfProof === 'object') {
             p.vdfProof = {
                 y: j.vdfProof.y,
                 pi: j.vdfProof.pi,
@@ -274,6 +336,8 @@ toSignable() {
                 r: j.vdfProof.r,
                 iterations: j.vdfProof.iterations ? BigInt(j.vdfProof.iterations) : null
             };
+        } else {
+            p.vdfProof = null;
         }
 
         // Store image metadata if available
@@ -284,16 +348,18 @@ toSignable() {
             }
         }
 
-        // Handle public key conversion
+        // Handle public key conversion with validation
         if (typeof j.authorPublicKey === 'string') {
             p.authorPublicKey = base64ToArrayBuffer(j.authorPublicKey);
         } else if (j.authorPublicKey && (j.authorPublicKey.type === 'Buffer' || j.authorPublicKey.data)) {
             p.authorPublicKey = new Uint8Array(j.authorPublicKey.data || j.authorPublicKey);
         } else if (j.authorPublicKey instanceof Uint8Array) {
             p.authorPublicKey = j.authorPublicKey;
+        } else {
+            p.authorPublicKey = null;
         }
         
-        // Handle signature conversion
+        // Handle signature conversion with validation
         if (typeof j.signature === 'string') {
             p.signature = base64ToArrayBuffer(j.signature);
         } else if (j.signature && (j.signature.type === 'Buffer' || j.signature.data)) {
@@ -304,9 +370,9 @@ toSignable() {
             p.signature = null;
         }
         
-        // Convert arrays back to Sets
-        p.carriers = new Set(j.carriers || []);
-        p.replies = new Set(j.replies || []);
+        // Convert arrays back to Sets with validation
+        p.carriers = new Set(Array.isArray(j.carriers) ? j.carriers : []);
+        p.replies = new Set(Array.isArray(j.replies) ? j.replies : []);
         
         // Initialize trust properties for loaded/received posts
         p.trustScore = 0;

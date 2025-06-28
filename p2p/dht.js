@@ -298,18 +298,66 @@ export class KademliaDHT {
     };
   }
   
-  handleStore(params, senderId) {
-    const { key, value } = params;
-    this.storage.set(key, value);
-    
-    // Clean up old entries if storage is too large
-    if (this.storage.size > 10000) {
-      const entries = Array.from(this.storage.entries());
-      entries.slice(0, 5000).forEach(([k]) => this.storage.delete(k));
-    }
-    
-    return { stored: true };
+handleStore(params, senderId) {
+  const { key, value } = params;
+  
+  // ADDED: Validate key and value
+  if (!key || typeof key !== 'string' || key.length > 256) {
+    console.warn('[DHT] Invalid key in STORE request');
+    return { stored: false, error: 'Invalid key' };
   }
+  
+  // ADDED: Size limit for values
+  const valueStr = JSON.stringify(value);
+  if (valueStr.length > 64 * 1024) { // 64KB max per value
+    console.warn('[DHT] Value too large in STORE request');
+    return { stored: false, error: 'Value too large' };
+  }
+  
+  // ADDED: Rate limiting per sender
+  if (!this.storeRateLimits) {
+    this.storeRateLimits = new Map();
+  }
+  
+  const now = Date.now();
+  let senderLimits = this.storeRateLimits.get(senderId);
+  if (!senderLimits) {
+    senderLimits = { count: 0, resetTime: now + 60000 }; // 1 minute window
+    this.storeRateLimits.set(senderId, senderLimits);
+  }
+  
+  if (now > senderLimits.resetTime) {
+    senderLimits.count = 0;
+    senderLimits.resetTime = now + 60000;
+  }
+  
+  senderLimits.count++;
+  if (senderLimits.count > 100) { // Max 100 stores per minute per peer
+    console.warn(`[DHT] Rate limit exceeded for peer ${senderId}`);
+    return { stored: false, error: 'Rate limit exceeded' };
+  }
+  
+  // Store with size tracking
+  this.storage.set(key, value);
+  
+  // Clean up old entries if storage is too large
+  if (this.storage.size > 10000) {
+    const entries = Array.from(this.storage.entries());
+    entries.slice(0, 5000).forEach(([k]) => this.storage.delete(k));
+  }
+  
+  // Clean up rate limits periodically
+  if (this.storeRateLimits.size > 1000) {
+    const cutoff = now - 300000; // 5 minutes
+    const toDelete = [];
+    this.storeRateLimits.forEach((limits, id) => {
+      if (limits.resetTime < cutoff) toDelete.push(id);
+    });
+    toDelete.forEach(id => this.storeRateLimits.delete(id));
+  }
+  
+  return { stored: true };
+}
   
   // High-level operations
   async ping(peer) {

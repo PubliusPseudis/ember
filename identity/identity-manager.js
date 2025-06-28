@@ -11,69 +11,90 @@ export class IdentityRegistry {
   }
   
   // Create and register a new identity
-async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
-    console.log(`[Identity] Attempting to register handle: ${handle}`);
+    async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
+        console.log(`[Identity] Attempting to register handle: ${handle}`);
+        
+        // Add a registry lock to prevent race conditions
+        const lockKey = `identity:lock:${handle.toLowerCase()}`;
+        const lockBytes = new Uint8Array(16);
+        crypto.getRandomValues(lockBytes);
+        const lockValue = Array.from(lockBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+        
+        // Try to acquire lock
+        const existingLock = await this.dht.get(lockKey);
+        if (existingLock) {
+            throw new Error(`Handle "${handle}" is being registered by another user`);
+        }
+        
+        // Set lock with 30 second expiry
+        await this.dht.store(lockKey, { value: lockValue, expires: Date.now() + 30000 });
+        
+        try {
+            // Double-check handle is still available
+            const existingClaim = await this.lookupHandle(handle);
+            if (existingClaim) {
+                throw new Error(`Handle "${handle}" is already registered`);
+            }
 
-    // Check if handle is already taken
-    const existingClaim = await this.lookupHandle(handle);
-    if (existingClaim) {
-        throw new Error(`Handle "${handle}" is already registered`);
+            // Create identity claim WITH VDF proof
+            const claim = {
+                handle: handle,
+                publicKey: typeof keyPair.publicKey === 'string' ? 
+                    keyPair.publicKey : arrayBufferToBase64(keyPair.publicKey),
+                encryptionPublicKey: state.myIdentity.encryptionPublicKey, 
+                vdfProof: {
+                    y: vdfProof.y,
+                    pi: vdfProof.pi,
+                    l: vdfProof.l,
+                    r: vdfProof.r,
+                    iterations: vdfProof.iterations.toString()
+                },
+                vdfInput: vdfInput,
+                claimedAt: Date.now(),
+                nodeId: arrayBufferToBase64(await crypto.subtle.digest('SHA-1', 
+                    typeof keyPair.publicKey === 'string' ? 
+                        base64ToArrayBuffer(keyPair.publicKey) : keyPair.publicKey))
+            };
+
+            // Sign the ENTIRE claim including VDF proof
+            const claimData = JSON.stringify({
+                handle: claim.handle,
+                publicKey: claim.publicKey,
+                vdfProof: claim.vdfProof,
+                vdfInput: claim.vdfInput,
+                claimedAt: claim.claimedAt
+            });
+
+            const signature = nacl.sign(new TextEncoder().encode(claimData), keyPair.secretKey);
+            claim.signature = arrayBufferToBase64(signature);
+
+            // Store in DHT
+            const handleKey = `identity:handle:${handle.toLowerCase()}`;
+            const success = await this.dht.store(handleKey, claim);
+
+            if (!success && state.peers.size === 0) {
+                console.log(`[Identity] No peers available, storing identity locally in DHT`);
+                this.dht.storage.set(handleKey, claim);
+            } else if (!success) {
+                throw new Error("Failed to register identity in DHT");
+            }
+
+            // Store reverse mapping
+            const pubkeyKey = `identity:pubkey:${claim.publicKey}`;
+            await this.dht.store(pubkeyKey, { handle: handle, claimedAt: claim.claimedAt });
+            
+            if (state.peers.size === 0) {
+                this.dht.storage.set(pubkeyKey, { handle: handle, claimedAt: claim.claimedAt });
+            }
+
+            console.log(`[Identity] Successfully registered ${handle} with VDF proof`);
+            return claim;
+            
+        } finally {
+            // Always release lock
+            await this.dht.store(lockKey, null);
+        }
     }
-
-    // Create identity claim WITH VDF proof
-    const claim = {
-        handle: handle,
-        publicKey: typeof keyPair.publicKey === 'string' ? 
-            keyPair.publicKey : arrayBufferToBase64(keyPair.publicKey),
-        encryptionPublicKey: state.myIdentity.encryptionPublicKey, 
-        vdfProof: {
-            y: vdfProof.y,
-            pi: vdfProof.pi,
-            l: vdfProof.l,
-            r: vdfProof.r,
-            iterations: vdfProof.iterations.toString() // Convert BigInt to string for storage
-        },
-        vdfInput: vdfInput,
-        claimedAt: Date.now(),
-        nodeId: arrayBufferToBase64(await crypto.subtle.digest('SHA-1', 
-            typeof keyPair.publicKey === 'string' ? 
-                base64ToArrayBuffer(keyPair.publicKey) : keyPair.publicKey))
-    };
-
-    // Sign the ENTIRE claim including VDF proof
-    const claimData = JSON.stringify({
-        handle: claim.handle,
-        publicKey: claim.publicKey,
-        vdfProof: claim.vdfProof,
-        vdfInput: claim.vdfInput,
-        claimedAt: claim.claimedAt
-    });
-
-    const signature = nacl.sign(new TextEncoder().encode(claimData), keyPair.secretKey);
-    claim.signature = arrayBufferToBase64(signature);
-
-    // Store in DHT
-    const handleKey = `identity:handle:${handle.toLowerCase()}`;
-    const success = await this.dht.store(handleKey, claim);
-
-    if (!success && state.peers.size === 0) {
-        console.log(`[Identity] No peers available, storing identity locally in DHT`);
-        this.dht.storage.set(handleKey, claim);
-    } else if (!success) {
-        throw new Error("Failed to register identity in DHT");
-    }
-
-    // Store reverse mapping
-    const pubkeyKey = `identity:pubkey:${claim.publicKey}`;
-    await this.dht.store(pubkeyKey, { handle: handle, claimedAt: claim.claimedAt });
-    
-    if (state.peers.size === 0) {
-        this.dht.storage.set(pubkeyKey, { handle: handle, claimedAt: claim.claimedAt });
-    }
-
-    console.log(`[Identity] Successfully registered ${handle} with VDF proof`);
-    return claim;
-}
   
   // Look up who owns a handle
     async lookupHandle(handle) {
@@ -172,11 +193,35 @@ async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
   }
   
   // Check if we own a handle (for reconnection)
-  async verifyOwnIdentity(identity) {
-    const claim = await this.lookupHandle(identity.handle);
-    if (!claim) return false;
-    
-    const ourPubKey = arrayBufferToBase64(identity.publicKey);
-    return claim.publicKey === ourPubKey;
-  }
+    async verifyOwnIdentity(identity, maxRetries = 5) {
+      // Add retry logic for DHT bootstrap period
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          const claim = await this.lookupHandle(identity.handle);
+          
+          if (claim) {
+            const ourPubKey = arrayBufferToBase64(identity.publicKey);
+            return claim.publicKey === ourPubKey;
+          }
+          
+          // If no claim found but we have no peers yet, we might be first or still bootstrapping
+          if (this.dht.buckets.every(bucket => bucket.length === 0)) {
+            console.log(`[Identity] No peers available yet (attempt ${attempt + 1}/${maxRetries}), retrying...`);
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1))); // Exponential backoff
+            continue;
+          }
+          
+          // If we have peers but no claim, the identity truly doesn't exist
+          return false;
+        } catch (e) {
+          console.warn(`[Identity] Verification attempt ${attempt + 1} failed:`, e);
+          if (attempt < maxRetries - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          }
+        }
+      }
+      
+      // After all retries, check if we're truly alone
+      return this.dht.buckets.every(bucket => bucket.length === 0);
+    }
 }

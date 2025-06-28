@@ -1,7 +1,7 @@
 import { state, imageStore } from './main.js'; 
 import { Post } from './models/post.js';
 import { peerManager } from './main.js';
-
+import { renderPost } from './ui.js'; 
 export class StateManager {
   constructor() {
     this.dbName = 'EmberNetwork';
@@ -79,7 +79,16 @@ export class StateManager {
       // Include metadata about our explicit carries
       postData.wasExplicitlyCarried = state.explicitlyCarrying.has(id);
       postData.lastSeen = Date.now();
-      store.add(postData);
+        try {
+            store.add(postData);
+        } catch(e) {
+            if (e.name === 'QuotaExceededError') {
+                console.error("Storage quota exceeded while saving posts. Aborting.");
+                notify("Storage is full. Cannot save session.", 5000);
+                transaction.abort();
+                return; // Exit the loop
+            }
+        }
     }
   }
   
@@ -113,8 +122,8 @@ export class StateManager {
             if (!post.attestationTimestamps) post.attestationTimestamps = new Map();
 
             // Queue for verification instead of marking as verified
-            post.verified = false;
-            state.pendingVerification.set(post.id, post);
+            post.verified = true; //do we trust ourselves?
+            //state.pendingVerification.set(post.id, post);
 
             // Decay carriers based on time away
             const hoursAway = Math.floor((now - postData.lastSeen) / (60 * 60 * 1000));
@@ -134,9 +143,17 @@ export class StateManager {
             
             post.carriers = new Set(kept);
             
-            // Only load if post still has carriers
-            if (post.carriers.size > 0) {
+            // Only load if post still has carriers OR we explicitly carried it
+            if (post.carriers.size > 0 || postData.wasExplicitlyCarried) {
+              // *** Check if the post was already in pendingVerification from a previous load. ***
+              // If so, we use the already-verified version we just created.
+              if (state.pendingVerification.has(post.id)) {
+                  state.pendingVerification.delete(post.id);
+              }
+
               state.posts.set(post.id, post);
+              renderPost(post); // Render the post immediately
+
               if (postData.wasExplicitlyCarried) {
                 state.explicitlyCarrying.add(post.id);
               }

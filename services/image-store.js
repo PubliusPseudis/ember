@@ -7,6 +7,7 @@ export class ContentAddressedImageStore {
         this.images = new Map();
         this.maxChunkSize = 16 * 1024; // 16KB chunks
         this.maxTotalSize = 10 * 1024 * 1024; // 10MB total
+        this.pendingRequests = new Map(); // Track pending requests
     }
 
     async sha256(data) {
@@ -20,6 +21,35 @@ export class ContentAddressedImageStore {
     async storeImage(base64Data) {
         // Remove data URL prefix if present
         const imageData = base64Data.replace(/^data:image\/\w+;base64,/, '');
+        
+        // ADDED: Validate image size before processing
+        const estimatedSize = (imageData.length * 3) / 4; // Base64 to bytes estimation
+        const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB max per image
+        
+        if (estimatedSize > MAX_IMAGE_SIZE) {
+            throw new Error(`Image too large: ${(estimatedSize / 1024 / 1024).toFixed(2)}MB (max 5MB)`);
+        }
+        
+        // ADDED: Check total storage before adding
+        let currentUsage = 0;
+        for (const chunk of this.chunks.values()) {
+            currentUsage += chunk.length;
+        }
+        
+        if (currentUsage + estimatedSize > this.maxTotalSize) {
+            // Force cleanup before rejecting
+            this.cleanup();
+            
+            // Re-check after cleanup
+            currentUsage = 0;
+            for (const chunk of this.chunks.values()) {
+                currentUsage += chunk.length;
+            }
+            
+            if (currentUsage + estimatedSize > this.maxTotalSize) {
+                throw new Error('Storage full - cannot store new images');
+            }
+        }
 
         // Check if we already have this image
         const imageHash = await this.sha256(imageData);
@@ -28,16 +58,16 @@ export class ContentAddressedImageStore {
             return { hash: imageHash, type: 'cached' };
         }
 
+        // Rest of the method remains the same...
         // Chunk the image
         const chunks = [];
-        const chunkHashes = []; // To build Merkle tree
+        const chunkHashes = [];
         for (let i = 0; i < imageData.length; i += this.maxChunkSize) {
             const chunk = imageData.slice(i, i + this.maxChunkSize);
             const chunkHash = await this.sha256(chunk);
             chunks.push({ hash: chunkHash, data: chunk, index: i / this.maxChunkSize });
-            chunkHashes.push(chunkHash); // Add hash to list for Merkle tree
+            chunkHashes.push(chunkHash);
 
-            // Store chunk if we don't have it
             if (!this.chunks.has(chunkHash)) {
                 this.chunks.set(chunkHash, chunk);
                 console.log(`[ImageStore] Stored new chunk ${chunkHash.substring(0, 8)}...`);
@@ -46,20 +76,16 @@ export class ContentAddressedImageStore {
             }
         }
 
-        // Build merkle tree
         const merkleRoot = await this.buildMerkleTree(chunkHashes);
         console.log(`[ImageStore] Built Merkle Root for image ${imageHash.substring(0, 8)}...: ${merkleRoot?.substring(0, 8)}...`);
 
-        // Store image metadata
         this.images.set(imageHash, {
             merkleRoot,
             chunks: chunks.map(c => ({ hash: c.hash, index: c.index })),
             size: imageData.length,
             created: Date.now()
         });
-        console.log(`[ImageStore] Stored image metadata for ${imageHash.substring(0, 8)}... (chunks: ${chunks.length}, Merkle Root: ${merkleRoot?.substring(0, 8)}...)`);
 
-        // Clean up old data if needed
         this.cleanup();
 
         return {
@@ -88,14 +114,29 @@ export class ContentAddressedImageStore {
     
     async retrieveImage(imageHash) {
         console.log(`[ImageStore] retrieveImage called for ${imageHash.substring(0, 8)}...`);
-        
+
+        if (this.pendingRequests.has(imageHash)) {
+            console.log(`[ImageStore] Request already pending for ${imageHash.substring(0, 8)}...`);
+            return this.pendingRequests.get(imageHash);
+        }
+
+        const requestPromise = this._retrieveImageInternal(imageHash)
+            .finally(() => {
+                this.pendingRequests.delete(imageHash);
+            });
+
+        this.pendingRequests.set(imageHash, requestPromise);
+        return requestPromise;
+    }
+
+    async _retrieveImageInternal(imageHash) {
         const metadata = this.images.get(imageHash);
         if (!metadata) {
             console.warn(`[ImageStore] Cannot retrieve image ${imageHash.substring(0, 8)}...: Metadata not found.`);
             return null;
         }
 
-        // Check what chunks we have locally and what we're missing
+        // Rest of the original retrieveImage logic...
         const missingChunks = [];
         const assembledChunks = new Array(metadata.chunks.length);
         const receivedChunkHashes = new Array(metadata.chunks.length);
@@ -103,16 +144,13 @@ export class ContentAddressedImageStore {
         for (const chunkMeta of metadata.chunks) {
             const chunkData = this.chunks.get(chunkMeta.hash);
             if (chunkData) {
-                // We have this chunk locally
                 assembledChunks[chunkMeta.index] = chunkData;
                 receivedChunkHashes[chunkMeta.index] = chunkMeta.hash;
             } else {
-                // We're missing this chunk
                 missingChunks.push(chunkMeta);
             }
         }
 
-        // If we're missing chunks, request them from peers
         if (missingChunks.length > 0) {
             console.log(`[ImageStore] Missing ${missingChunks.length} chunks for ${imageHash.substring(0, 8)}..., requesting from peers...`);
             
@@ -122,7 +160,6 @@ export class ContentAddressedImageStore {
                 return null;
             }
             
-            // Re-assemble with the newly received chunks
             for (const chunkMeta of metadata.chunks) {
                 const chunkData = this.chunks.get(chunkMeta.hash);
                 if (!chunkData) {
@@ -134,15 +171,12 @@ export class ContentAddressedImageStore {
             }
         }
 
-        // Verify Merkle Root
         const reconstructedMerkleRoot = await this.buildMerkleTree(receivedChunkHashes);
         if (reconstructedMerkleRoot !== metadata.merkleRoot) {
-            console.error(`[ImageStore] Merkle Root mismatch for image ${imageHash.substring(0, 8)}...! Expected ${metadata.merkleRoot?.substring(0, 8)}..., got ${reconstructedMerkleRoot?.substring(0, 8)}...`);
+            console.error(`[ImageStore] Merkle Root mismatch for image ${imageHash.substring(0, 8)}...!`);
             return null;
         }
-        console.log(`[ImageStore] Merkle Root verified for image ${imageHash.substring(0, 8)}...: ${reconstructedMerkleRoot?.substring(0, 8)}...`);
 
-        // Reassemble chunks
         const fullImageData = assembledChunks.join('');
         console.log(`[ImageStore] Successfully retrieved and verified image ${imageHash.substring(0, 8)}...`);
         return 'data:image/jpeg;base64,' + fullImageData;
@@ -151,76 +185,51 @@ export class ContentAddressedImageStore {
     // method to handle peer requests
     async requestChunksFromPeers(imageHash, missingChunks) {
         return new Promise((resolve) => {
-            // Add debug logging here
-            console.log(`[ImageStore] requestChunksFromPeers called`);
-            console.log(`[ImageStore] state exists:`, !!state);
-            console.log(`[ImageStore] state.peers exists:`, !!(state && state.peers));
-            console.log(`[ImageStore] Available peers:`, state && state.peers ? state.peers.size : 0);
-            
-            const timeout = setTimeout(() => {
-                console.log(`[ImageStore] Timeout requesting chunks for ${imageHash.substring(0, 8)}...`);
-                resolve(false);
-            }, 10000); // 10 second timeout
-
-
-            let chunksReceived = 0;
-            const chunksNeeded = missingChunks.length;
-            const receivedChunks = new Set(); // Track which chunks we've received
-
-            // Create request message with proper type
-            const requestMessage = {
-                type: 'request_image_chunks',  // match the handler in network-manager.js
-                imageHash: imageHash,
-                chunkHashes: missingChunks.map(c => c.hash)
-            };
-
-            console.log(`[ImageStore] Requesting ${chunksNeeded} chunks for ${imageHash.substring(0, 8)}...`);
-
-            // Send request to all connected peers
-            if (state && state.peers) {
-                state.peers.forEach((peerData, peerId) => {
-                    try {
-                        const wire = peerData.wire;
-                        if (wire && wire.ephemeral_msg && wire.ephemeral_msg._ready) {
-                            wire.extended(wire.ephemeral_msg.peerId, 
-                                new TextEncoder().encode(JSON.stringify(requestMessage)));
-                        }
-                    } catch (error) {
-                        console.error(`[ImageStore] Failed to send chunk request to peer:`, error);
-                    }
-                });
-            } else {
+            const peers = Array.from(state.peers.values());
+            if (peers.length === 0) {
                 console.error(`[ImageStore] No peers available to request chunks from`);
-                clearTimeout(timeout);
-                resolve(false);
-                return;
+                return resolve(false);
             }
 
-            // Store the original handler
-            const originalHandler = this.onChunkReceived;
-            
-            // Set up response handler
-            this.onChunkReceived = (chunkHash, chunkData, receivedImageHash) => {
-                // Check if this chunk is for our image
-                if (receivedImageHash === imageHash && !receivedChunks.has(chunkHash)) {
-                    receivedChunks.add(chunkHash);
-                    chunksReceived++;
-                    console.log(`[ImageStore] Received chunk ${chunksReceived}/${chunksNeeded} for ${imageHash.substring(0, 8)}...`);
-                    
-                    if (chunksReceived >= chunksNeeded) {
+            const requestId = generateId(); // Unique ID for this request
+            let receivedChunks = new Set();
+            const neededCount = missingChunks.length;
+
+            const timeout = setTimeout(() => {
+                window.removeEventListener(`chunk_received_${requestId}`, listener);
+                console.log(`[ImageStore] Timeout requesting chunks for ${imageHash.substring(0, 8)}...`);
+                resolve(receivedChunks.size === neededCount);
+            }, 10000);
+
+            const listener = (event) => {
+                const { detail } = event;
+                if (detail.imageHash === imageHash && !receivedChunks.has(detail.chunkHash)) {
+                    receivedChunks.add(detail.chunkHash);
+                    if (receivedChunks.size >= neededCount) {
                         clearTimeout(timeout);
-                        this.onChunkReceived = originalHandler; // Restore original handler
+                        window.removeEventListener(`chunk_received_${requestId}`, listener);
                         resolve(true);
                     }
                 }
-                
-                // Call original handler if it exists
-                if (originalHandler) {
-                    originalHandler.call(this, chunkHash, chunkData, receivedImageHash);
-                }
             };
+            window.addEventListener(`chunk_received_${requestId}`, listener);
+
+            const requestMessage = {
+                type: 'request_image_chunks',
+                imageHash: imageHash,
+                chunkHashes: missingChunks.map(c => c.hash),
+                requestId: requestId // Include the unique ID in the request
+            };
+
+            peers.forEach((peerData) => {
+                const { wire } = peerData;
+                if (wire && !wire.destroyed && wire.ephemeral_msg?._ready) {
+                    sendPeer(wire, requestMessage);
+                }
+            });
         });
     }
+    
     async retryChunkRequests(imageHash, maxRetries = 3) {
         const metadata = this.images.get(imageHash);
         if (!metadata) return false;

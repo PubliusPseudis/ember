@@ -65,15 +65,36 @@ function initNetwork() {
     }, torrent => {
       console.log(`Connected to bootstrap network: ${torrent.infoHash}`);
       updateConnectionStatus("Connected to Ember bootstrap network!");
+      
       torrent.on('wire', (wire, addr) => {
         handleBootstrapWire(wire, addr);
       });
-        // Check peer count after a delay
+      
+      torrent.on('error', (err) => {
+        console.error('Bootstrap torrent error:', err);
+        updateConnectionStatus(`Bootstrap error: ${err.message}`, 'error');
+      });
+      
+      // Check peer count after a delay
       setTimeout(() => {
         if (torrent.numPeers === 0) {
           updateConnectionStatus("No peers found - you might be the first node! 🌟", 'info');
         }
       }, 10000);
+    });
+
+    // ADDED: Handle seed errors
+    state.client.on('error', (err) => {
+      if (err.message.includes('seed')) {
+        console.error('Failed to seed bootstrap:', err);
+        updateConnectionStatus('Failed to join bootstrap network', 'error');
+        
+        // Attempt recovery
+        setTimeout(() => {
+          console.log('Attempting to reconnect...');
+          location.reload();
+        }, 5000);
+      }
     });
 
 
@@ -194,6 +215,70 @@ function handleBootstrapWire(wire, addr) {
 }
 
 function handleWire(wire, addr) {
+  // ADDED: Connection rate limiting
+  if (!state.connectionTracker) {
+    state.connectionTracker = new Map();
+  }
+  
+  // Extract IP from address
+    let ip = 'unknown';
+    if (addr) {
+        const lastColon = addr.lastIndexOf(':');
+        if (addr.startsWith('[') && addr.includes(']')) {
+            // IPv6 like [::1]:port
+            ip = addr.substring(0, addr.indexOf(']') + 1);
+        } else if (lastColon > addr.indexOf(':')) {
+            // IPv4 like 127.0.0.1:port
+            ip = addr.substring(0, lastColon);
+        } else {
+            // Address without port
+            ip = addr;
+        }
+    }
+    
+  const now = Date.now();
+  
+  // Track connections per IP
+  let ipData = state.connectionTracker.get(ip);
+  if (!ipData) {
+    ipData = { connections: [], blocked: false };
+    state.connectionTracker.set(ip, ipData);
+  }
+  
+  // Remove old connections (older than 1 minute)
+  ipData.connections = ipData.connections.filter(time => now - time < 60000);
+  
+  // Check if IP is blocked
+  if (ipData.blocked && now - ipData.blockedTime < 300000) { // 5 minute block
+    console.warn(`Rejecting connection from blocked IP: ${ip}`);
+    wire.destroy();
+    return;
+  }
+  
+  // Check rate limit (max 10 connections per minute per IP)
+  if (ipData.connections.length >= 10) {
+    console.warn(`Rate limit exceeded for IP: ${ip}`);
+    ipData.blocked = true;
+    ipData.blockedTime = now;
+    wire.destroy();
+    return;
+  }
+  
+  // Track this connection
+  ipData.connections.push(now);
+  
+  // Clean up tracker periodically
+  if (state.connectionTracker.size > 1000) {
+    const cutoff = now - 600000; // 10 minutes
+    const toDelete = [];
+    state.connectionTracker.forEach((data, ip) => {
+      if (data.connections.length === 0 && (!data.blocked || now - data.blockedTime > 600000)) {
+        toDelete.push(ip);
+      }
+    });
+    toDelete.forEach(ip => state.connectionTracker.delete(ip));
+  }
+  
   const originalId = wire.peerId;
   const idKey = normalizePeerId(originalId);
 
@@ -311,9 +396,22 @@ const sendPeer = (wire, msg) => {
         console.log('[SendPeer] Sent via extendedMapping');
       }
     } else {
-      if (!wire._pendingMessages) wire._pendingMessages = [];
+      if (!wire._pendingMessages) {
+        wire._pendingMessages = [];
+        // Start a timeout only for the *first* queued message
+        wire._pendingTimeout = setTimeout(() => {
+            if (wire._pendingMessages && wire._pendingMessages.length > 0) {
+                console.warn(`[Extension] Clearing ${wire._pendingMessages.length} queued messages for unresponsive peer: ${wire.peerId}`);
+                wire._pendingMessages = []; // Clear the queue
+            }
+        }, 15000); // 15 second timeout
+      }
+
       wire._pendingMessages.push(msg);
-      console.log('[Extension] Queued message for later delivery');
+      if (wire._pendingMessages.length > CONFIG.MAX_PENDING_MESSAGES) {
+          wire._pendingMessages.shift(); // Remove oldest message
+      }
+      console.log(`[Extension] Queued message. Queue size: ${wire._pendingMessages.length}`);
     }
   } catch (e) {
     console.warn("sendPeer fail", e.message);
@@ -327,15 +425,25 @@ function attachEphemeralExtension(wire) {
   }
   EphemeralExtension.prototype.name = 'ephemeral_msg';
 
-  EphemeralExtension.prototype.onExtendedHandshake = function (handshake) {
+EphemeralExtension.prototype.onExtendedHandshake = function (handshake) {
     if (!handshake.m || typeof handshake.m.ephemeral_msg === 'undefined') {
       console.warn('Peer does not support ephemeral_msg');
+      // If handshake fails, clear any pending timeout and messages
+      if (wire._pendingTimeout) clearTimeout(wire._pendingTimeout);
+      wire._pendingMessages = [];
       return;
     }
     this.peerId = handshake.m.ephemeral_msg;
     this._ready = true;
     wire.ephemeral_msg = this;
     console.log('Extension ready! PeerID:', this.peerId);
+    
+    // Clear the timeout now that the handshake is successful
+    if (wire._pendingTimeout) {
+        clearTimeout(wire._pendingTimeout);
+        wire._pendingTimeout = null;
+    }
+    
     if (wire._pendingMessages && wire._pendingMessages.length > 0) {
       console.log(`[Extension] Sending ${wire._pendingMessages.length} queued messages`);
       wire._pendingMessages.forEach(msg => sendPeer(wire, msg));
@@ -360,6 +468,37 @@ function attachEphemeralExtension(wire) {
   };
   wire.use(EphemeralExtension);
 }
+
+async function authenticatePeer(wire, peerId) {
+  // Generate challenge
+  const challenge = new Uint8Array(32);
+  crypto.getRandomValues(challenge);
+  const challengeB64 = arrayBufferToBase64(challenge);
+  
+  // Store challenge for verification
+  if (!state.peerChallenges) state.peerChallenges = new Map();
+  state.peerChallenges.set(peerId, { challenge: challengeB64, timestamp: Date.now() });
+  
+  // Send authentication request
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      state.peerChallenges.delete(peerId);
+      resolve(false);
+    }, 10000); // 10 second timeout
+    
+    sendPeer(wire, {
+      type: 'auth_challenge',
+      challenge: challengeB64
+    });
+    
+    // Store resolver for when we get response
+    state.peerChallenges.get(peerId).resolver = (success) => {
+      clearTimeout(timeout);
+      resolve(success);
+    };
+  });
+}
+
 
 function broadcast(msg, excludeWire = null) {
   if (!msg.msgId) {
@@ -509,6 +648,44 @@ async function handlePeerMessage(msg, fromWire) {
       break;
     case "carrier_update":
       handleCarrierUpdate(msg);
+      break;
+    case "auth_challenge":
+      if (state.myIdentity && state.myIdentity.secretKey) {
+        const signature = nacl.sign(
+          base64ToArrayBuffer(msg.challenge),
+          state.myIdentity.secretKey
+        );
+        sendPeer(fromWire, {
+          type: 'auth_response',
+          signature: arrayBufferToBase64(signature),
+          handle: state.myIdentity.handle,
+          publicKey: state.myIdentity.publicKey
+        });
+      }
+      break;
+
+    case "auth_response":
+      const peerId = fromWire.peerId;
+      const challenge = state.peerChallenges?.get(peerId);
+      if (challenge && msg.signature && msg.publicKey) {
+        const verified = nacl.sign.open(
+          base64ToArrayBuffer(msg.signature),
+          base64ToArrayBuffer(msg.publicKey)
+        );
+        if (verified && arrayBufferToBase64(verified) === challenge.challenge) {
+          // Authentication successful
+          const peerData = state.peers.get(peerId);
+          if (peerData) {
+            peerData.authenticated = true;
+            peerData.handle = msg.handle;
+            peerData.publicKey = msg.publicKey;
+          }
+          challenge.resolver(true);
+        } else {
+          challenge.resolver(false);
+        }
+        state.peerChallenges.delete(peerId);
+      }
       break;
   }
 }
@@ -692,7 +869,8 @@ function handleChunkRequest(imageHash, requestedHashes, fromWire) {
         sendPeer(fromWire, {
             type: "chunk_response",
             imageHash: imageHash,
-            chunks: chunks
+            chunks: chunks,
+            requestId: requestedHashes.requestId
         });
     } else {
         console.log(`[ChunkRequest] No chunks found for image ${imageHash.substring(0, 8)}...`);
@@ -716,9 +894,14 @@ async function handleChunkResponse(msg) {
                 imageStore.chunks.set(hash, data);
                 newChunksCount++;
                 
-                // Notify the image store about the received chunk
-                if (imageStore.onChunkReceived) {
-                    imageStore.onChunkReceived(hash, data, msg.imageHash);
+                // Notify any pending requests via a custom event
+                if (msg.requestId) {
+                    window.dispatchEvent(new CustomEvent(`chunk_received_${msg.requestId}`, {
+                        detail: {
+                            chunkHash: hash,
+                            imageHash: msg.imageHash
+                        }
+                    }));
                 }
             } else {
                 console.warn(`[ChunkResponse] Chunk hash mismatch! Expected ${hash.substring(0, 8)}..., got ${actualHash.substring(0, 8)}...`);

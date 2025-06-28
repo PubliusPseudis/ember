@@ -13,4 +13,5 @@ export const CONFIG = {
   NSFWJS_MODEL_PATH: 'nsfwjs-model/',
   TRUST_THRESHOLD: 30, // Minimum trust score to skip verification
   ATTESTATION_TIMEOUT: 1000, // Max time to wait for attestations (1 second)
+  MAX_PENDING_MESSAGES: 100, // Max messages to queue per peer before handshake
 };

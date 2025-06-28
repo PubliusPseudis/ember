@@ -182,12 +182,12 @@ async function updateInner(el, p) {
     if (topics.length > 0) {
       topicsHtml = `
           <div class="post-topics">
-              ${topics.map(topic => `<span class="post-topic-tag" onclick="discoverAndFilterTopic('${topic}')">${topic}</span>`).join('')}
+              ${topics.map(topic => `<span class="post-topic-tag" data-topic="${sanitize(topic)}">${sanitize(topic)}</span>`).join('')}
           </div>`;
     }
   }
 
-  // *** FIX: Preserve existing replies container ***
+  // Preserve existing replies container
   const existingRepliesContainer = el.querySelector('.replies-container');
 
 el.innerHTML = `
@@ -225,6 +225,19 @@ el.innerHTML = `
             <button onclick="createReply('${p.id}')" class="primary-button">🔥 Add Gas!</button>
         </div>
     </div>`;
+
+
+  // Add safe event listeners to the new topic tags
+  const topicTags = el.querySelectorAll('.post-topic-tag');
+  topicTags.forEach(tag => {
+    tag.addEventListener('click', (event) => {
+      event.stopPropagation(); // Prevent post click events
+      const topic = event.target.dataset.topic;
+      if (topic) {
+        discoverAndFilterTopic(topic);
+      }
+    });
+  });
 
   // *** FIX: Re-attach the existing replies container if it existed ***
   if (existingRepliesContainer) {
@@ -879,17 +892,32 @@ function removeReplyImage(postId) {
 window.currentDMConversation = null;
 
 function openDMPanel(handle) {
-  currentDMRecipient = handle; // FIX: Was window.currentDMConversation
+  currentDMRecipient = handle;
   
-  // Show DM panel
+  // Mark messages as read
+  const key = `ember-dms-${handle}`;
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      const messages = JSON.parse(stored);
+      messages.forEach(msg => {
+        if (msg.direction === 'received') {
+          msg.read = true;
+        }
+      });
+      localStorage.setItem(key, JSON.stringify(messages));
+    }
+  } catch (e) {
+    console.error('Failed to mark messages as read:', e);
+  }
+  
   document.getElementById('dm-panel').style.display = 'block';
   document.getElementById('dm-recipient').textContent = handle;
-  
-  // Load conversation history
   loadDMConversation(handle);
-  
-  // Focus input
   document.getElementById('dm-input').focus();
+  
+  // Update inbox to reflect read status
+  updateDMInbox();
 }
 
 function closeDMPanel() {
@@ -940,20 +968,335 @@ export function addMessageToConversation(handle, messageText, direction, timesta
 async function sendDM() {
   const input = document.getElementById('dm-input');
   const message = input.value.trim();
-  
   const recipient = currentDMRecipient;
   if (!message || !recipient) return;
 
-   const success = await sendDirectMessage(recipient, message);
-  
+  // The sendDirectMessage function now handles UI updates on its own.
+  const success = await sendDirectMessage(recipient, message);
+
   if (success) {
-    // Clear input
+    // Just clear the input field.
     input.value = '';
-    
-    // Add to conversation display
-    addMessageToConversation(recipient, message, 'sent');
   }
 }
+
+// Add to ui.js
+export function updateDMInbox() {
+  const conversationsEl = document.getElementById('dm-conversations');
+  if (!conversationsEl) return;
+  
+  // Get all conversations from localStorage
+  const conversations = [];
+  const keys = Object.keys(localStorage).filter(k => k.startsWith('ember-dms-'));
+  
+  keys.forEach(key => {
+    const handle = key.replace('ember-dms-', '');
+    try {
+      const messages = JSON.parse(localStorage.getItem(key));
+      if (messages && messages.length > 0) {
+        const lastMessage = messages[messages.length - 1];
+        conversations.push({
+          handle,
+          lastMessage,
+          messages
+        });
+      }
+    } catch (e) {
+      console.error('Failed to parse DM conversation:', e);
+    }
+  });
+  
+  if (conversations.length === 0) {
+    conversationsEl.innerHTML = `
+      <div class="dm-empty-state">
+        No messages yet. Send a DM to start a conversation!
+      </div>
+    `;
+    return;
+  }
+  
+  // Sort by most recent
+  conversations.sort((a, b) => b.lastMessage.timestamp - a.lastMessage.timestamp);
+  
+  // Render conversations
+  conversationsEl.innerHTML = conversations.map(conv => {
+    const timeAgo = getTimeAgo(conv.lastMessage.timestamp);
+    const preview = conv.lastMessage.message.substring(0, 50) + 
+                   (conv.lastMessage.message.length > 50 ? '...' : '');
+    const isUnread = conv.lastMessage.direction === 'received' && 
+                     !conv.lastMessage.read;
+    
+    return `
+      <div class="dm-conversation-item ${isUnread ? 'unread' : ''}" 
+           onclick="openDMPanel('${conv.handle}')">
+        <div class="dm-sender">
+          <span class="ember-indicator">🔥</span>
+          ${conv.handle}
+        </div>
+        <div class="dm-preview">${sanitize(preview)}</div>
+        <div class="dm-time">${timeAgo}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function getTimeAgo(timestamp) {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+// Update the existing storeDMLocally function to trigger inbox update
+export function storeDMLocallyAndUpdateUI(otherHandle, messageText, direction) {
+  const key = `ember-dms-${otherHandle}`;
+  let conversation = [];
+  
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      conversation = JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error('Failed to load DM history:', e);
+  }
+  
+  conversation.push({
+    message: messageText,
+    direction: direction,
+    timestamp: Date.now(),
+    read: direction === 'sent' // Mark sent messages as read
+  });
+  if (conversation.length > 100) {
+    conversation = conversation.slice(-100);
+  }
+  
+  localStorage.setItem(key, JSON.stringify(conversation));
+  // Update the inbox display
+  updateDMInbox();
+}
+
+
+// Add drawer state
+let currentDrawer = 'bonfire';
+
+// Drawer switching function
+window.switchDrawer = function(drawerId) {
+  // Don't switch if already active
+  if (currentDrawer === drawerId) return;
+  
+  // Update tab states
+  document.querySelectorAll('.drawer-tab').forEach(tab => {
+    tab.classList.remove('active');
+  });
+  document.querySelector(`[data-drawer="${drawerId}"]`).classList.add('active');
+  
+  // Animate drawer transition
+  const currentDrawerEl = document.getElementById(`${currentDrawer}-drawer`);
+  const newDrawerEl = document.getElementById(`${drawerId}-drawer`);
+  
+  currentDrawerEl.classList.remove('active');
+  currentDrawerEl.classList.add('slide-out-left');
+  
+  setTimeout(() => {
+    currentDrawerEl.classList.remove('slide-out-left');
+    newDrawerEl.classList.add('active', 'slide-in-right');
+    
+    setTimeout(() => {
+      newDrawerEl.classList.remove('slide-in-right');
+    }, 300);
+  }, 150);
+  
+  // Update title
+  const titles = {
+    'bonfire': 'The Bonfire',
+    'inbox': 'Message Embers',
+    'network': 'Network Status'
+  };
+  document.getElementById('drawer-title').textContent = titles[drawerId];
+  
+  // Update current drawer
+  currentDrawer = drawerId;
+  
+  // Trigger drawer-specific updates
+  if (drawerId === 'network') {
+    updateNetworkVisualization();
+  } else if (drawerId === 'inbox') {
+    updateDMInbox();
+    markAllMessagesAsRead();
+  }
+};
+
+
+
+// Update unread badge
+export function updateUnreadBadge() {
+  let unreadCount = 0;
+  
+  const keys = Object.keys(localStorage).filter(k => k.startsWith('ember-dms-'));
+  keys.forEach(key => {
+    try {
+      const messages = JSON.parse(localStorage.getItem(key));
+      unreadCount += messages.filter(m => m.direction === 'received' && !m.read).length;
+    } catch (e) {
+      console.error('Failed to count unread messages:', e);
+    }
+  });
+  
+  const badge = document.getElementById('inbox-unread-badge');
+  if (badge) {
+    if (unreadCount > 0) {
+      badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+      badge.style.display = 'block';
+      
+      // Animate the tab if not active
+      if (currentDrawer !== 'inbox') {
+        const inboxTab = document.querySelector('[data-drawer="inbox"]');
+        inboxTab.classList.add('has-unread');
+      }
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+}
+
+function markAllMessagesAsRead() {
+  const keys = Object.keys(localStorage).filter(k => k.startsWith('ember-dms-'));
+  keys.forEach(key => {
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const messages = JSON.parse(stored);
+        let changed = false;
+        messages.forEach(msg => {
+          if (msg.direction === 'received' && !msg.read) {
+            msg.read = true;
+            changed = true;
+          }
+        });
+
+        // Only write back to localStorage if a message was actually marked as read
+        if (changed) {
+            localStorage.setItem(key, JSON.stringify(messages));
+        }
+      }
+    } catch (e) {
+      console.error('Failed to mark messages as read:', e);
+    }
+  });
+
+  // After marking all as read, update the badge to show 0
+  updateUnreadBadge();
+  
+  // Also remove the pulsing animation from the inbox tab
+  const inboxTab = document.querySelector('[data-drawer="inbox"]');
+  if (inboxTab) {
+      inboxTab.classList.remove('has-unread');
+  }
+}
+// Network visualization
+function updateNetworkVisualization() {
+  const canvas = document.getElementById('network-canvas');
+  if (!canvas) return;
+  
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width;
+  canvas.height = 200;
+  
+  // Clear canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  // Draw network graph (simplified visualization)
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  
+  // Draw self node
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 10, 0, Math.PI * 2);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-accent');
+  ctx.fill();
+  
+  // Draw peer nodes
+  const peers = Array.from(state.peers.values());
+  const angleStep = (Math.PI * 2) / Math.max(peers.length, 1);
+  
+  peers.forEach((peer, index) => {
+    const angle = angleStep * index;
+    const x = centerX + Math.cos(angle) * 80;
+    const y = centerY + Math.sin(angle) * 80;
+    
+    // Draw connection line
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border-color-accent');
+    ctx.globalAlpha = 0.3;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    
+    // Draw peer node
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary');
+    ctx.fill();
+  });
+  
+  // Update metrics
+  updateNetworkMetrics();
+}
+
+function updateNetworkMetrics() {
+  const metrics = document.getElementById('network-metrics');
+  if (!metrics) return;
+  
+  const dhtStats = state.dht ? state.dht.getStats() : null;
+  const hvStats = state.hyparview ? state.hyparview.getStats() : null;
+  
+  metrics.innerHTML = `
+    <div class="metric-item">
+      <span class="metric-label">Total Peers</span>
+      <span class="metric-value">${state.peers.size}</span>
+    </div>
+    <div class="metric-item">
+      <span class="metric-label">DHT Nodes</span>
+      <span class="metric-value">${dhtStats?.totalPeers || 0}</span>
+    </div>
+    <div class="metric-item">
+      <span class="metric-label">Active View</span>
+      <span class="metric-value">${hvStats?.activeView || 0}/${hvStats?.activeCapacity?.split('/')[1] || 0}</span>
+    </div>
+    <div class="metric-item">
+      <span class="metric-label">Messages Seen</span>
+      <span class="metric-value">${state.seenMessages.timestamps?.size || 0}</span>
+    </div>
+    <div class="metric-item">
+      <span class="metric-label">Storage Used</span>
+      <span class="metric-value">${dhtStats?.storageSize || 0} keys</span>
+    </div>
+  `;
+}
+
+// Add CSS class for unread animation
+const style = document.createElement('style');
+style.textContent = `
+  .drawer-tab.has-unread {
+    animation: unread-pulse 2s ease-in-out infinite;
+  }
+  
+  @keyframes unread-pulse {
+    0%, 100% { 
+      border-color: var(--border-color-light);
+    }
+    50% { 
+      border-color: var(--text-accent-hot);
+      box-shadow: 0 0 10px var(--shadow-color-accent);
+    }
+  }
+`;
+document.head.appendChild(style);
+
 
 // Make functions available globally
 window.openDMPanel = openDMPanel;

@@ -1,5 +1,6 @@
-import { state, handleNewPost } from '../main.js';
-import { sendPeer, handlePeerMessage } from './network-manager.js';
+import { state, handleNewPost  } from '../main.js';
+import { sendPeer, handlePeerMessage, broadcast } from './network-manager.js';
+
 
 export class DandelionRouter {
   constructor() {
@@ -169,15 +170,11 @@ routePost(post, fromWire = null) {
         await handleNewPost(msg.post, fromWire);
         
         // Broadcast to all peers except sender
-        for (const { wire } of state.peers.values()) {
-          if (wire !== fromWire && !wire.destroyed && wire.ephemeral_msg?._ready) {
-            sendPeer(wire, {
-              type: "new_post",
-              post: msg.post,
-              phase: "fluff"
-            });
-          }
-        }
+        broadcast({
+            type: "new_post",
+            post: msg.post,
+            // The phase is no longer needed as broadcast handles propagation
+        }, fromWire);
       }
     }
      

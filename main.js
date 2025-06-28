@@ -7,7 +7,7 @@ import { CONFIG } from './config.js';
 import { Post } from './models/post.js';
 import { VerificationQueue } from './verification-queue.js';
 import { KademliaDHT } from './p2p/dht.js';
-import {currentDMRecipient,addMessageToConversation, applyTheme, setupThemeToggle, showConnectScreen, updateLoadingMessage, renderPost, refreshPost, dropPost, updateStatus, notify, loadTopicSubscriptions, updateTopicFilter, addTopicToUI, updateAges, updateTopicStats, handleImageSelect, removeImage, toggleReplyForm, discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, scrollToPost , subscribeToTopic,handleReplyImageSelect,removeReplyImage } from './ui.js';
+import {currentDMRecipient,addMessageToConversation, applyTheme, setupThemeToggle, showConnectScreen, updateLoadingMessage, renderPost, refreshPost, dropPost, updateStatus, notify, loadTopicSubscriptions, updateTopicFilter, addTopicToUI, updateAges, updateTopicStats, handleImageSelect, removeImage, toggleReplyForm, discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, scrollToPost , subscribeToTopic,handleReplyImageSelect,removeReplyImage,storeDMLocallyAndUpdateUI , updateDMInbox, updateUnreadBadge, toggleThread} from './ui.js';
 import { StateManager } from './storage.js';
 import { MemoryManager } from './services/memory-manager.js';
 import { PeerManager } from './services/peer-manager.js';
@@ -327,46 +327,58 @@ export async function generateAndBroadcastAttestation(post) {
 export function evaluatePostTrust(postId) {
   const post = state.pendingVerification.get(postId);
   if (!post) {
-    // Post was already processed
     trustEvaluationTimers.delete(postId);
+    return;
+  }
+  
+  // ALWAYS verify signature first
+  if (!post.signature || !post.verify()) {
+    console.log(`[Trust] Post ${postId} has invalid signature, rejecting`);
+    state.pendingVerification.delete(postId);
+    if (trustEvaluationTimers.has(postId)) {
+      clearInterval(trustEvaluationTimers.get(postId));
+      trustEvaluationTimers.delete(postId);
+    }
     return;
   }
   
   // Check if post has reached trust threshold
   if (post.hasSufficientTrust(CONFIG.TRUST_THRESHOLD)) {
-    console.log(`[Trust] Post ${postId} reached trust threshold (${post.trustScore.toFixed(2)}), accepting without local verification`);
+    console.log(`[Trust] Post ${postId} reached trust threshold (${post.trustScore.toFixed(2)}), accepting with verified signature`);
     
     // Clear timer
-    trustEvaluationTimers.delete(postId);
+    if (trustEvaluationTimers.has(postId)) {
+      clearInterval(trustEvaluationTimers.get(postId));
+      trustEvaluationTimers.delete(postId);
+    }
     
-    // Accept the post directly
+    // Accept the post
     handleVerificationResults([{
       id: postId,
       valid: true,
       errors: []
     }]);
     
-    // Give attesters credit for correct attestations
+    // Give attesters credit
     for (const attesterHandle of post.attesters) {
-      // Find peer by handle (this is a simplification - in production you'd track this better)
       for (const [peerId, peer] of state.peers) {
-        // We'd need to map handles to peerIds properly
-        peerManager.updateScore(peerId, 'correct_attestation', 0.1); // Partial credit
+        peerManager.updateScore(peerId, 'correct_attestation', 0.1);
       }
     }
     
     return;
   }
   
-  // Check if we've waited long enough
+  // Check timeout
   const waitTime = Date.now() - post.timestamp;
   if (waitTime >= CONFIG.ATTESTATION_TIMEOUT) {
-    console.log(`[Trust] Timeout waiting for attestations for post ${postId} (trust: ${post.trustScore.toFixed(2)}), proceeding with local verification`);
+    console.log(`[Trust] Timeout for post ${postId}, proceeding with full verification`);
     
-    // Clear timer
-    trustEvaluationTimers.delete(postId);
+    if (trustEvaluationTimers.has(postId)) {
+      clearInterval(trustEvaluationTimers.get(postId));
+      trustEvaluationTimers.delete(postId);
+    }
     
-    // Send to verification queue
     verificationQueue.addBatch([post], 'normal', (results) => {
       handleVerificationResults(results);
     });
@@ -379,16 +391,40 @@ export function scheduleTrustEvaluation(post) {
   // Clear any existing timer
   if (trustEvaluationTimers.has(postId)) {
     clearInterval(trustEvaluationTimers.get(postId));
+    trustEvaluationTimers.delete(postId);
   }
   
-  // Schedule periodic evaluation
+  // Schedule periodic evaluation with automatic cleanup
   const timer = setInterval(() => {
+    // Check if post still exists in pending
+    if (!state.pendingVerification.has(postId)) {
+      clearInterval(timer);
+      trustEvaluationTimers.delete(postId);
+      return;
+    }
+    
     evaluatePostTrust(postId);
-  }, 100); // Check every 100ms
+  }, 100);
   
   trustEvaluationTimers.set(postId, timer);
   
-  // Also do an immediate check
+  // Set a maximum lifetime for the timer (10 seconds)
+  setTimeout(() => {
+    if (trustEvaluationTimers.has(postId)) {
+      clearInterval(trustEvaluationTimers.get(postId));
+      trustEvaluationTimers.delete(postId);
+      
+      // If still pending after timeout, send to verification
+      if (state.pendingVerification.has(postId)) {
+        const post = state.pendingVerification.get(postId);
+        verificationQueue.addBatch([post], 'normal', (results) => {
+          handleVerificationResults(results);
+        });
+      }
+    }
+  }, 10000);
+  
+  // Do an immediate check
   evaluatePostTrust(postId);
 }
 
@@ -604,108 +640,130 @@ export function toggleCarry(id, isManual = true) {
 export async function createReply(parentId) {
     const input = document.getElementById(`reply-input-${parentId}`);
     if (!input) return;
-    const txt = input.value.trim();
-    if (!txt) return;
-    
+
     const btn = input.parentElement.querySelector('button');
     btn.disabled = true;
-    
-    const parentPost = state.posts.get(parentId);
-    if (!parentPost) {
-        notify("Parent post no longer exists!");
-        return;
-    }
-    
-    // Check for toxic content
-    if (await isToxic(txt)) {
-        notify(`Your reply may be seen as toxic. Please rephrase.`);
-        btn.disabled = false;
-        return;
-    }
-    
-    // Get image data if present
-    const imagePreview = document.getElementById(`reply-image-preview-${parentId}`);
-    const imageData = imagePreview?.dataset?.imageData || null;
-    
-    // Check image toxicity if present
-    if (imageData && await isImageToxic(imageData)) {
-        notify("Image content not allowed");
-        btn.disabled = false;
-        return;
-    }
-    
-    // Create reply with image data
-    const reply = new Post(txt, parentId, imageData);
-    reply.depth = Math.min(parentPost.depth + 1, 5);
-    
-    // Process image if present
-    if (imageData) {
-        await reply.processImage();
-    }
-    reply.sign(state.myIdentity.secretKey);
 
-    // Add VDF proof
-    if (window.progressiveVDF) {
-        const vdfInput = txt + state.myIdentity.uniqueId + Date.now();
-        try {
-            const proof = await progressiveVDF.computeAdaptiveProof(txt, state.myIdentity.uniqueId, vdfInput);
-            reply.vdfProof = proof;
-            reply.vdfInput = vdfInput;
-        } catch (e) {
-            console.warn("VDF failed for reply:", e);
+    try {
+        const txt = input.value.trim();
+        if (!txt) return; // Exit silently if there is no text
+
+        const parentPost = state.posts.get(parentId);
+        if (!parentPost) {
+            notify("Parent post no longer exists!");
+            return;
         }
+
+        // --- All checks now happen inside the robust try block ---
+
+        if (await isToxic(txt)) {
+            notify(`Your reply may be seen as toxic. Please rephrase.`);
+            return; // Abort if toxic
+        }
+
+        const imagePreview = document.getElementById(`reply-image-preview-${parentId}`);
+        const imageData = imagePreview?.dataset?.imageData || null;
+        if (imageData && await isImageToxic(imageData)) {
+            notify("Image content not allowed");
+            return; // Abort if image is toxic
+        }
+        
+        // --- VDF is now mandatory and will throw an error on failure ---
+        
+        const reply = new Post(txt, parentId, imageData);
+        reply.depth = Math.min(parentPost.depth + 1, 5);
+
+        if (imageData) {
+            await reply.processImage();
+        }
+
+        const vdfInput = txt + state.myIdentity.uniqueId + Date.now();
+        const proof = await progressiveVDF.computeAdaptiveProof(txt, state.myIdentity.uniqueId, vdfInput);
+        reply.vdfProof = proof;
+        reply.vdfInput = vdfInput;
+
+        // --- Signing and Broadcasting, identical to parent posts ---
+
+        reply.sign(state.myIdentity.secretKey);
+        
+        parentPost.replies.add(reply.id);
+        if (!parentPost.carriers.has(state.myIdentity.handle)) {
+            parentPost.carriers.add(state.myIdentity.handle);
+            state.explicitlyCarrying.add(parentId);
+            broadcast({ type: "carrier_update", postId: parentId, peer: state.myIdentity.handle, carrying: true });
+        }
+        
+        state.posts.set(reply.id, reply);
+        renderPost(reply);
+        
+        const replyData = reply.toJSON();
+        broadcast({ type: "new_post", post: replyData });
+        broadcast({ type: "parent_update", parentId: parentId, replyId: reply.id });
+
+        // Also broadcast to topics, which was missing before
+        const topics = state.scribe ? state.scribe.extractTopics(txt) : ['#general'];
+        if (state.scribe) {
+            topics.forEach(topic => {
+                state.scribe.multicast(topic, { type: 'new_post', post: replyData });
+            });
+        }
+        
+        reply.carriers.add(state.myIdentity.handle);
+        state.explicitlyCarrying.add(reply.id);
+
+        // --- Final UI Cleanup ---
+
+        input.value = "";
+        document.getElementById(`reply-char-${parentId}`).textContent = 0;
+        removeReplyImage(parentId);
+        toggleReplyForm(parentId);
+        notify("Gas'd the thread!");
+
+    } catch (error) {
+        // If anything fails (especially VDF), notify the user and log it.
+        console.error("Failed to create reply:", error);
+        notify(`Could not create reply: ${error.message}`);
+
+    } finally {
+        // IMPORTANT: Always re-enable the button, whether it succeeded or failed.
+        btn.disabled = false;
     }
-    
-    // Update parent post
-    parentPost.replies.add(reply.id);
-    if (!parentPost.carriers.has(state.myIdentity.handle)) {
-        parentPost.carriers.add(state.myIdentity.handle);
-        state.explicitlyCarrying.add(parentId);
-        broadcast({ type: "carrier_update", postId: parentId, peer: state.myIdentity.handle, carrying: true });
-    }
-    
-    // Add reply to state and render
-    state.posts.set(reply.id, reply);
-    renderPost(reply);
-    
-    // Broadcast the reply
-    const replyData = reply.toJSON();
-    broadcast({ type: "new_post", post: replyData });
-    broadcast({ type: "parent_update", parentId: parentId, replyId: reply.id });
-    
-    // Set carriers
-    reply.carriers.add(state.myIdentity.handle);
-    state.explicitlyCarrying.add(reply.id);
-    
-    // Clear the form
-    input.value = "";
-    document.getElementById(`reply-char-${parentId}`).textContent = 0;
-    
-    // Clear image if present
-    removeReplyImage(parentId);
-    
-    // Hide the reply form
-    toggleReplyForm(parentId);
-    
-    btn.disabled = false;
-    notify("Gas'd the thread!");
 }
 
 
 // Direct Message Functions
 export async function sendDirectMessage(recipientHandle, messageText) {
   try {
-    const recipientClaim = await state.identityRegistry.lookupHandle(recipientHandle);
+    let recipientClaim = null;
+    const maxAttempts = 5; // FIX: Increased attempts for more resilience.
+    const initialDelay = 1000;
+
+    // This will now wait and retry even if the network is not in the initial bootstrap phase,
+    // accounting for general network latency.
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      notify(`Searching for ${recipientHandle} on the network... (Attempt ${attempt + 1})`);
+      recipientClaim = await state.identityRegistry.lookupHandle(recipientHandle);
+      if (recipientClaim) {
+        break; // Found the user, exit the loop.
+      }
+
+      if (attempt < maxAttempts - 1) {
+        const delay = initialDelay * Math.pow(2, attempt); // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    // FIX: Provide clearer, more specific feedback if the user is not found.
     if (!recipientClaim) {
-      notify(`User ${recipientHandle} not found`);
+      notify(`Could not find user "${recipientHandle}". They may be offline or do not exist.`);
       return false;
     }
-    
+
     if (!recipientClaim.encryptionPublicKey) {
-      notify(`User ${recipientHandle} doesn't support encrypted messages`);
+      notify(`User ${recipientHandle} does not support encrypted messages.`);
       return false;
     }
-    
+
     const nonce = nacl.randomBytes(24);
     const messageBytes = new TextEncoder().encode(messageText);
     const recipientPublicKey = base64ToArrayBuffer(recipientClaim.encryptionPublicKey);
@@ -715,7 +773,6 @@ export async function sendDirectMessage(recipientHandle, messageText) {
       recipientPublicKey,
       state.myIdentity.encryptionSecretKey
     );
-    
     const dmPacket = {
       type: 'e2e_dm',
       recipient: recipientHandle,
@@ -724,30 +781,30 @@ export async function sendDirectMessage(recipientHandle, messageText) {
       nonce: arrayBufferToBase64(nonce),
       timestamp: Date.now()
     };
-
     const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
     const closestPeers = await state.dht.findNode(recipientNodeId);
-    
+
+    // FIX: Provide clearer feedback if a route to the user cannot be found.
     if (closestPeers.length === 0) {
-      notify(`Cannot reach ${recipientHandle} - no route found`);
+      notify(`Found "${recipientHandle}", but could not find a route to them on the network. They may be offline.`);
       return false;
     }
-    
-    // *** The logic for determining success is changed here ***
+
     let sent = false;
     for (const peer of closestPeers) {
+      // The sendPeer function is already robust.
       sendPeer(peer.wire, dmPacket);
-      sent = true; // Assume success if we have at least one peer to send to.
+      sent = true;
     }
-    
+
     if (sent) {
-      storeDMLocally(recipientHandle, messageText, 'sent');
-      // This notification will now correctly show "Message sent"
-      notify(`Message sent to ${recipientHandle}`);
+      storeDMLocallyAndUpdateUI(recipientHandle, messageText, 'sent');
+      addMessageToConversation(recipientHandle, messageText, 'sent'); // FIX: Immediately add sent message to UI
+      notify(`Message sent to ${recipientHandle}. Delivery depends on them being online.`);
       return true;
     } else {
-      // This branch is now less likely to be hit, but kept for robustness
-      notify(`Failed to send message to ${recipientHandle}`);
+      // This case is less likely with the above check, but kept for safety.
+      notify(`Failed to send message to ${recipientHandle}.`);
       return false;
     }
   } catch (error) {
@@ -803,7 +860,8 @@ export async function handleDirectMessage(msg, fromWire) {
     
     const messageText = new TextDecoder().decode(decryptedBytes);
     // Store and display the message
-    storeDMLocally(msg.sender, messageText, 'received');
+    storeDMLocallyAndUpdateUI(msg.sender, messageText, 'received');
+    updateUnreadBadge(); 
     // Show notification
      notify(`📬 New message from ${msg.sender}`, 6000,
         () => openDMPanel(msg.sender));
@@ -817,35 +875,6 @@ export async function handleDirectMessage(msg, fromWire) {
     console.error('DM receive error:', error);
   }
 }
-
-// Helper function to store DMs locally
-function storeDMLocally(otherHandle, messageText, direction) {
-  const key = `ember-dms-${otherHandle}`;
-  let conversation = [];
-  
-  try {
-    const stored = localStorage.getItem(key);
-    if (stored) {
-      conversation = JSON.parse(stored);
-    }
-  } catch (e) {
-    console.error('Failed to load DM history:', e);
-  }
-  
-  conversation.push({
-    message: messageText,
-    direction: direction,
-    timestamp: Date.now()
-  });
-  
-  // Keep only last 100 messages
-  if (conversation.length > 100) {
-    conversation = conversation.slice(-100);
-  }
-  
-  localStorage.setItem(key, JSON.stringify(conversation));
-}
-
 
 
 
@@ -1049,6 +1078,10 @@ async function init() {
       if (isValid) {
         // Identity was successfully verified on the network
         state.myIdentity = storedIdentity;
+        
+        // Update the DHT with the final, correct nodeId ---
+        state.dht.nodeId = state.myIdentity.nodeId;
+        
         notify(`Welcome back, ${storedIdentity.handle}!`);
       } else if (state.peers.size === 0) {
         // If verification fails BUT we have no peers, we are the first node.
@@ -1074,6 +1107,7 @@ async function init() {
     
     const loadedPostCount = await stateManager.loadPosts();
     
+    /***if we trust ourselves, pending is none
     if (state.pendingVerification.size > 0) {
       const postsToVerify = Array.from(state.pendingVerification.values());
       postsToVerify.sort((a, b) => a.timestamp - b.timestamp);
@@ -1082,6 +1116,7 @@ async function init() {
         notify(`Restored ${results.filter(r => r.valid).length} posts from your last session.`);
       });
     }
+    ***/
     
     await stateManager.loadPeerScores();
     
@@ -1090,6 +1125,13 @@ async function init() {
     initializeP2PProtocols();
     startMaintenanceLoop();
     initTopics();
+    updateDMInbox();
+    updateUnreadBadge();
+    // Update inbox periodically
+    setInterval(()=>{ 
+                updateDMInbox(),
+                updateUnreadBadge();
+                }, 30000); // Every 30 seconds
     
     window.addEventListener("beforeunload", () => {
       if (maintenanceInterval) clearInterval(maintenanceInterval);
@@ -1211,6 +1253,8 @@ window.removeReplyImage = removeReplyImage;
 window.openDMPanel = openDMPanel;
 window.closeDMPanel = closeDMPanel;
 window.sendDM = sendDM;
+window.toggleThread = toggleThread; 
+
 // Start the application initialization process once the page is loaded.
 window.addEventListener("load", init);
 
