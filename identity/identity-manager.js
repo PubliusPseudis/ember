@@ -2,175 +2,145 @@ import wasmVDF from '../vdf-wrapper.js';
 import { state } from '../main.js';
 import { base64ToArrayBuffer, arrayBufferToBase64 } from '../utils.js';
 
-// Everyone gets a registration
+// --- NEW, ROBUST IDENTITY REGISTRY ---
 export class IdentityRegistry {
   constructor(dht) {
     this.dht = dht;
     this.verifiedIdentities = new Map(); // handle -> identity info
-    this.registrationAttempts = new Map(); // track attempts
   }
   
-  // Create and register a new identity
-    async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
-        console.log(`[Identity] Attempting to register handle: ${handle}`);
-        
-        // Add a registry lock to prevent race conditions
-        const lockKey = `identity:lock:${handle.toLowerCase()}`;
-        const lockBytes = new Uint8Array(16);
-        crypto.getRandomValues(lockBytes);
-        const lockValue = Array.from(lockBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-        
-        // Try to acquire lock
-        const existingLock = await this.dht.get(lockKey);
-        if (existingLock) {
-            throw new Error(`Handle "${handle}" is being registered by another user`);
-        }
-        
-        // Set lock with 30 second expiry
-        await this.dht.store(lockKey, { value: lockValue, expires: Date.now() + 30000 });
-        
-        try {
-            // Double-check handle is still available
-            const existingClaim = await this.lookupHandle(handle);
-            if (existingClaim) {
-                throw new Error(`Handle "${handle}" is already registered`);
-            }
-
-            // Create identity claim WITH VDF proof
-            const claim = {
-                handle: handle,
-                publicKey: typeof keyPair.publicKey === 'string' ? 
-                    keyPair.publicKey : arrayBufferToBase64(keyPair.publicKey),
-                encryptionPublicKey: state.myIdentity.encryptionPublicKey, 
-                vdfProof: {
-                    y: vdfProof.y,
-                    pi: vdfProof.pi,
-                    l: vdfProof.l,
-                    r: vdfProof.r,
-                    iterations: vdfProof.iterations.toString()
-                },
-                vdfInput: vdfInput,
-                claimedAt: Date.now(),
-                nodeId: arrayBufferToBase64(await crypto.subtle.digest('SHA-1', 
-                    typeof keyPair.publicKey === 'string' ? 
-                        base64ToArrayBuffer(keyPair.publicKey) : keyPair.publicKey))
-            };
-
-            // Sign the ENTIRE claim including VDF proof
-            const claimData = JSON.stringify({
-                handle: claim.handle,
-                publicKey: claim.publicKey,
-                vdfProof: claim.vdfProof,
-                vdfInput: claim.vdfInput,
-                claimedAt: claim.claimedAt
-            });
-
-            const signature = nacl.sign(new TextEncoder().encode(claimData), keyPair.secretKey);
-            claim.signature = arrayBufferToBase64(signature);
-
-            // Store in DHT
-            const handleKey = `identity:handle:${handle.toLowerCase()}`;
-            const success = await this.dht.store(handleKey, claim);
-
-            if (!success && state.peers.size === 0) {
-                console.log(`[Identity] No peers available, storing identity locally in DHT`);
-                this.dht.storage.set(handleKey, claim);
-            } else if (!success) {
-                throw new Error("Failed to register identity in DHT");
-            }
-
-            // Store reverse mapping
-            const pubkeyKey = `identity:pubkey:${claim.publicKey}`;
-            await this.dht.store(pubkeyKey, { handle: handle, claimedAt: claim.claimedAt });
-            
-            if (state.peers.size === 0) {
-                this.dht.storage.set(pubkeyKey, { handle: handle, claimedAt: claim.claimedAt });
-            }
-
-            console.log(`[Identity] Successfully registered ${handle} with VDF proof`);
-            return claim;
-            
-        } finally {
-            // Always release lock
-            await this.dht.store(lockKey, null);
-        }
-    }
+  // --- STEP 1: Main registration function ---
+  // Stores the full identity claim using the PUBLIC KEY as the address.
+async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
+  console.log(`[Identity] Starting registration for handle: ${handle}`);
   
-  // Look up who owns a handle
-    async lookupHandle(handle) {
-      const handleKey = `identity:handle:${handle.toLowerCase()}`;
-      console.log(`[DM] Looking up handle: ${handle} with key: ${handleKey}`); // ADDED
-      const claim = await this.dht.getWithTimeout(handleKey, 3000);
+  const publicKeyB64 = arrayBufferToBase64(keyPair.publicKey);
+
+  // First, check if the desired handle is already taken
+  const existingPubkey = await this.dht.get(`handle-to-pubkey:${handle.toLowerCase()}`);
+  if (existingPubkey) {
+    throw new Error(`Handle "${handle}" is already registered.`);
+  }
+
+  // Create the primary identity claim
+  const claim = {
+    handle: handle,
+    publicKey: publicKeyB64,
+    encryptionPublicKey: state.myIdentity.encryptionPublicKey,
+    vdfProof: {
+      y: vdfProof.y,
+      pi: vdfProof.pi,
+      l: vdfProof.l,
+      r: vdfProof.r,
+      iterations: vdfProof.iterations.toString()
+    },
+    vdfInput: vdfInput,
+    claimedAt: Date.now(),
+    nodeId: arrayBufferToBase64(await crypto.subtle.digest('SHA-1', keyPair.publicKey))
+  };
+  
+  // Sign the ENTIRE claim
+  const claimData = JSON.stringify(claim);
+  const signature = nacl.sign(new TextEncoder().encode(claimData), keyPair.secretKey);
+  claim.signature = arrayBufferToBase64(signature);
+
+  // Store with high replication factor for identity data
+  const identityOptions = {
+    propagate: true,
+    refresh: true,
+    replicationFactor: 30 // Higher replication for critical identity data
+  };
+
+  // Store the FULL claim at the pubkey address
+  const pubkeyAddress = `pubkey:${publicKeyB64}`;
+  const pubkeyResult = await this.dht.store(pubkeyAddress, claim, identityOptions);
+  
+  if (pubkeyResult.replicas < 3) {
+    console.warn(`[Identity] Low replication for identity claim: ${pubkeyResult.replicas} replicas`);
+  }
+
+  // Store the secondary mapping from handle -> pubkey
+  const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
+  const handleResult = await this.dht.store(handleAddress, { publicKey: publicKeyB64 }, identityOptions);
+  
+  if (handleResult.replicas < 3) {
+    console.warn(`[Identity] Low replication for handle mapping: ${handleResult.replicas} replicas`);
+  }
+
+  console.log(`[Identity] Successfully registered ${handle} with ${pubkeyResult.replicas} replicas`);
+  return claim;
+}
+  
+  // --- STEP 2: Main lookup function ---
+  // Now, to look up a user, we first find their pubkey, then get their full data.
+  async lookupHandle(handle) {
+      const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
+      console.log(`[DM] Looking up handle: ${handle} at DHT address: ${handleAddress}`);
       
+      const mapping = await this.dht.get(handleAddress);
+      if (!mapping || !mapping.publicKey) {
+          console.warn(`[DM] No public key found for handle ${handle}.`);
+          return null;
+      }
+      
+      const publicKeyB64 = mapping.publicKey;
+      const pubkeyAddress = `pubkey:${publicKeyB64}`;
+      console.log(`[DM] Found public key. Fetching full claim from: ${pubkeyAddress}`);
+      
+      const claim = await this.dht.get(pubkeyAddress);
       if (!claim) {
-          console.warn(`[DM] DHT lookup for ${handleKey} returned null. The recipient's identity claim was not found on the network.`); // ADDED
+          console.warn(`[DM] Found pubkey for ${handle}, but the full claim is missing from the DHT.`);
           return null;
       }
 
-      console.log(`[DM] DHT lookup found a claim for ${handle}. Verifying...`); // ADDED
+      // Always verify the integrity of the claim.
       if (await this.verifyClaim(claim)) {
-        console.log(`[DM] Claim for ${handle} is verified.`); // ADDED
-        return claim;
+          console.log(`[DM] Claim for ${handle} is verified.`);
+          return claim;
       }
       
-      console.warn(`[DM] Claim verification failed for ${handle}.`); // ADDED
+      console.warn(`[DM] Claim verification failed for ${handle}.`);
       return null;
-    }
+  }
   
-  // Verify an identity claim is valid
-    async verifyClaim(claim) {
-        try {
-            // First verify the signature
-            const claimData = JSON.stringify({
-                handle: claim.handle,
-                publicKey: claim.publicKey,
-                vdfProof: claim.vdfProof,
-                vdfInput: claim.vdfInput,
-                claimedAt: claim.claimedAt
-            });
-            
-            const publicKey = base64ToArrayBuffer(claim.publicKey);
-            const signature = base64ToArrayBuffer(claim.signature);
-            
-            const originalMessage = nacl.sign.open(signature, publicKey);
-            if (!originalMessage) return false;
-            
-            const decodedMessage = new TextDecoder().decode(originalMessage);
-            if (decodedMessage !== claimData) return false;
-            
-            // Now verify the VDF proof
-            if (!claim.vdfProof || !claim.vdfInput) {
-                console.warn(`[Identity] Claim missing VDF proof`);
-                return false;
-            }
-            
-           
-            const vdfProofObj = new wasmVDF.VDFProof(
-                claim.vdfProof.y,
-                claim.vdfProof.pi,
-                claim.vdfProof.l,
-                claim.vdfProof.r,
-                BigInt(claim.vdfProof.iterations)
-            );
-            
-            const vdfValid = await wasmVDF.computer.verify_proof(
-                claim.vdfInput,
-                vdfProofObj
-            );
-            
-            if (!vdfValid) {
-                console.warn(`[Identity] VDF proof invalid for handle: ${claim.handle}`);
-                return false;
-            }
-            
-            return true;
-        } catch (e) {
-            console.error("Identity claim verification failed:", e);
-            return false;
-        }
-    }
+  // --- STEP 3: Verification Logic (mostly unchanged, but still important) ---
+  async verifyClaim(claim) {
+      try {
+          const claimData = JSON.stringify(claim);
+          const publicKey = base64ToArrayBuffer(claim.publicKey);
+          
+          // Remove the signature from the data before verifying
+          const dataToVerify = { ...claim };
+          delete dataToVerify.signature;
+          const signedString = JSON.stringify(dataToVerify);
+          
+          const signature = base64ToArrayBuffer(claim.signature);
+          
+          const verifiedMessage = nacl.sign.open(signature, publicKey);
+          if (!verifiedMessage) {
+               console.warn("[Identity] nacl.sign.open returned null. Invalid signature.");
+               return false;
+          }
+
+          const decodedMessage = new TextDecoder().decode(verifiedMessage);
+          if (decodedMessage !== signedString) {
+              console.warn("[Identity] Signature is valid, but message content does not match.");
+              return false;
+          }
+          
+          // VDF verification logic remains the same...
+          if (!claim.vdfProof || !claim.vdfInput) return false;
+          const vdfProofObj = new wasmVDF.VDFProof(claim.vdfProof.y, claim.vdfProof.pi, claim.vdfProof.l, claim.vdfProof.r, BigInt(claim.vdfProof.iterations));
+          return await wasmVDF.computer.verify_proof(claim.vdfInput, vdfProofObj);
+
+      } catch (e) {
+          console.error("Identity claim verification failed:", e);
+          return false;
+      }
+  }
+
+  // --- STEP 4: Other functions remain largely the same ---
   
-  // Verify a post author's identity
   async verifyAuthorIdentity(post) {
     const claim = await this.lookupHandle(post.author);
     if (!claim) {
@@ -178,7 +148,6 @@ export class IdentityRegistry {
       return false;
     }
     
-    // Check if post's public key matches registered public key
     const registeredPubKey = claim.publicKey;
     const postPubKey = arrayBufferToBase64(post.authorPublicKey);
     
@@ -187,31 +156,26 @@ export class IdentityRegistry {
       return false;
     }
     
-    // Cache verified identity
     this.verifiedIdentities.set(post.author, claim);
     return true;
   }
   
-  // Check if we own a handle (for reconnection)
-    async verifyOwnIdentity(identity, maxRetries = 5) {
-      // Add retry logic for DHT bootstrap period
+  
+  
+  
+  async verifyOwnIdentity(identity, maxRetries = 5) {
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
           const claim = await this.lookupHandle(identity.handle);
-          
           if (claim) {
             const ourPubKey = arrayBufferToBase64(identity.publicKey);
             return claim.publicKey === ourPubKey;
           }
-          
-          // If no claim found but we have no peers yet, we might be first or still bootstrapping
           if (this.dht.buckets.every(bucket => bucket.length === 0)) {
             console.log(`[Identity] No peers available yet (attempt ${attempt + 1}/${maxRetries}), retrying...`);
-            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1))); // Exponential backoff
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
             continue;
           }
-          
-          // If we have peers but no claim, the identity truly doesn't exist
           return false;
         } catch (e) {
           console.warn(`[Identity] Verification attempt ${attempt + 1} failed:`, e);
@@ -220,8 +184,67 @@ export class IdentityRegistry {
           }
         }
       }
-      
-      // After all retries, check if we're truly alone
       return this.dht.buckets.every(bucket => bucket.length === 0);
+  }
+  
+  async updatePeerLocation(handle, nodeId, wirePeerId) {
+  const routingKey = `routing:${handle.toLowerCase()}`;
+  console.log(`[Identity] Updating routing info for ${handle} with wire peer ID: ${wirePeerId}`);
+  
+  const routingInfo = {
+    handle: handle,
+    nodeId: arrayBufferToBase64(nodeId), // Store as base64 for consistency
+    wirePeerId: wirePeerId, // The actual WebRTC peer ID for current connection
+    timestamp: Date.now(),
+    ttl: 300000 // 5 minutes
+  };
+  
+  // Store locally first
+  await this.dht.store(routingKey, routingInfo, { propagate: true });
+  
+  // Also store reverse mapping for quick lookups
+  const reverseKey = `wire-to-handle:${wirePeerId}`;
+  await this.dht.store(reverseKey, { handle: handle }, { propagate: true });
+  
+  console.log(`[Identity] Routing info stored for ${handle} at key ${routingKey}`);
+  return true;
+}
+
+async lookupPeerLocation(handle) {
+  const routingKey = `routing:${handle.toLowerCase()}`;
+  console.log(`[Identity] Looking up current peer location for ${handle}`);
+  
+  const routingInfo = await this.dht.get(routingKey);
+  
+  if (!routingInfo) {
+    console.log(`[Identity] No routing info found for ${handle}`);
+    return null;
+  }
+  
+  // Check if routing info is still valid
+  const age = Date.now() - routingInfo.timestamp;
+  if (age > routingInfo.ttl) {
+    console.log(`[Identity] Routing info for ${handle} has expired (age: ${age}ms)`);
+    return null;
+  }
+  
+  console.log(`[Identity] Found routing info for ${handle}, wire peer ID: ${routingInfo.wirePeerId}`);
+  return routingInfo;
+}
+
+async removeExpiredRouting() {
+  // This should be called periodically to clean up stale routing entries
+  const routingPrefix = 'routing:';
+  const wirePrefix = 'wire-to-handle:';
+  
+  for (const [key, value] of this.dht.storage) {
+    if (key.startsWith(routingPrefix) || key.startsWith(wirePrefix)) {
+      if (value.timestamp && Date.now() - value.timestamp > (value.ttl || 300000)) {
+        console.log(`[Identity] Removing expired routing entry: ${key}`);
+        this.dht.storage.delete(key);
+      }
     }
+  }
+}
+  
 }

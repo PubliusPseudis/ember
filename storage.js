@@ -5,7 +5,7 @@ import { renderPost } from './ui.js';
 export class StateManager {
   constructor() {
     this.dbName = 'EmberNetwork';
-    this.version = 1;
+    this.version = 2;
     this.db = null;
   }
   
@@ -57,7 +57,30 @@ export class StateManager {
         if (!db.objectStoreNames.contains('peerScores')) {
           db.createObjectStore('peerScores', { keyPath: 'peerId' });
         }
-      };
+        
+        if (!db.objectStoreNames.contains('dhtRoutingTable')) {
+            db.createObjectStore('dhtRoutingTable', { keyPath: 'bucketIndex' });
+        }
+        if (!db.objectStoreNames.contains('dhtStorage')) {
+            db.createObjectStore('dhtStorage', { keyPath: 'key' });
+        }
+        
+      // pending messages store
+      if (!db.objectStoreNames.contains('pendingMessages')) {
+        const pendingStore = db.createObjectStore('pendingMessages', { keyPath: 'id' });
+        pendingStore.createIndex('recipient', 'recipient', { unique: false });
+        pendingStore.createIndex('sender', 'sender', { unique: false });
+        pendingStore.createIndex('timestamp', 'timestamp', { unique: false });
+        pendingStore.createIndex('status', 'status', { unique: false });
+      }
+      
+      //  delivery receipts store
+      if (!db.objectStoreNames.contains('messageReceipts')) {
+        const receiptsStore = db.createObjectStore('messageReceipts', { keyPath: 'messageId' });
+        receiptsStore.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+      
+    };
     });
   }
     
@@ -339,4 +362,233 @@ export class StateManager {
       }
     };
   }
+  
+  async storePendingMessage(recipientHandle, messageText, senderHandle, encrypted = null) {
+      if (!this.db) return null;
+      
+      try {
+        const messageId = generateId();
+        const pendingMessage = {
+          id: messageId,
+          recipient: recipientHandle,
+          sender: senderHandle,
+          message: messageText,
+          encrypted: encrypted, // Store encrypted version if available
+          timestamp: Date.now(),
+          attempts: 0,
+          lastAttempt: null,
+          status: 'pending', // pending, delivered, failed
+          expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 days
+        };
+        
+        const transaction = this.db.transaction(['pendingMessages'], 'readwrite');
+        const store = transaction.objectStore('pendingMessages');
+        await store.add(pendingMessage);
+        
+        console.log(`[Storage] Stored pending message ${messageId} for ${recipientHandle}`);
+        return messageId;
+      } catch (error) {
+        console.error('[Storage] Failed to store pending message:', error);
+        return null;
+      }
+    }
+
+    async getPendingMessagesFor(recipientHandle) {
+      if (!this.db) return [];
+      
+      try {
+        const transaction = this.db.transaction(['pendingMessages'], 'readonly');
+        const store = transaction.objectStore('pendingMessages');
+        const index = store.index('recipient');
+        
+        const messages = await index.getAll(recipientHandle);
+        
+        // Filter out expired messages
+        const now = Date.now();
+        return messages.filter(msg => 
+          msg.status === 'pending' && 
+          msg.expiresAt > now
+        );
+      } catch (error) {
+        console.error('[Storage] Failed to get pending messages:', error);
+        return [];
+      }
+    }
+
+    async getPendingMessagesFrom(senderHandle) {
+      if (!this.db) return [];
+      
+      try {
+        const transaction = this.db.transaction(['pendingMessages'], 'readonly');
+        const store = transaction.objectStore('pendingMessages');
+        const index = store.index('sender');
+        
+        const messages = await index.getAll(senderHandle);
+        return messages.filter(msg => msg.status === 'pending');
+      } catch (error) {
+        console.error('[Storage] Failed to get pending messages from sender:', error);
+        return [];
+      }
+    }
+
+    async markMessageDelivered(messageId) {
+      if (!this.db) return;
+      
+      try {
+        const transaction = this.db.transaction(['pendingMessages', 'messageReceipts'], 'readwrite');
+        const messagesStore = transaction.objectStore('pendingMessages');
+        const receiptsStore = transaction.objectStore('messageReceipts');
+        
+        // Update message status
+        const message = await messagesStore.get(messageId);
+        if (message) {
+          message.status = 'delivered';
+          message.deliveredAt = Date.now();
+          await messagesStore.put(message);
+          
+          // Store delivery receipt
+          await receiptsStore.add({
+            messageId: messageId,
+            timestamp: Date.now(),
+            recipient: message.recipient
+          });
+          
+          console.log(`[Storage] Marked message ${messageId} as delivered`);
+        }
+      } catch (error) {
+        console.error('[Storage] Failed to mark message as delivered:', error);
+      }
+    }
+
+    async updateMessageAttempt(messageId) {
+      if (!this.db) return;
+      
+      try {
+        const transaction = this.db.transaction(['pendingMessages'], 'readwrite');
+        const store = transaction.objectStore('pendingMessages');
+        
+        const message = await store.get(messageId);
+        if (message) {
+          message.attempts++;
+          message.lastAttempt = Date.now();
+          
+          // Mark as failed after 10 attempts
+          if (message.attempts >= 10) {
+            message.status = 'failed';
+          }
+          
+          await store.put(message);
+        }
+      } catch (error) {
+        console.error('[Storage] Failed to update message attempt:', error);
+      }
+    }
+
+    async cleanupOldMessages() {
+      if (!this.db) return;
+      
+      try {
+        const transaction = this.db.transaction(['pendingMessages'], 'readwrite');
+        const store = transaction.objectStore('pendingMessages');
+        const messages = await store.getAll();
+        
+        const now = Date.now();
+        let deletedCount = 0;
+        
+        for (const message of messages) {
+          // Delete if: expired, delivered over 24h ago, or failed
+          if (message.expiresAt < now ||
+              (message.status === 'delivered' && now - message.deliveredAt > 86400000) ||
+              message.status === 'failed') {
+            await store.delete(message.id);
+            deletedCount++;
+          }
+        }
+        
+        if (deletedCount > 0) {
+          console.log(`[Storage] Cleaned up ${deletedCount} old messages`);
+        }
+      } catch (error) {
+        console.error('[Storage] Failed to cleanup old messages:', error);
+      }
+    }
+  async saveDHTState() {
+  if (!this.db || !state.dht) return;
+  
+  try {
+    const dhtState = state.dht.serialize();
+    const transaction = this.db.transaction(['dhtRoutingTable', 'dhtStorage'], 'readwrite');
+    const routingStore = transaction.objectStore('dhtRoutingTable');
+    const storageStore = transaction.objectStore('dhtStorage');
+    
+    // Clear existing data
+    await new Promise((resolve) => {
+      const clearReq1 = routingStore.clear();
+      clearReq1.onsuccess = resolve;
+    });
+    
+    await new Promise((resolve) => {
+      const clearReq2 = storageStore.clear();
+      clearReq2.onsuccess = resolve;
+    });
+    
+    // Save routing table (buckets)
+    if (dhtState.buckets) {
+      dhtState.buckets.forEach((bucket, index) => {
+        if (bucket.length > 0) {
+          routingStore.add({ bucketIndex: index, peers: bucket });
+        }
+      });
+    }
+    
+    // Save DHT storage
+    if (dhtState.storage) {
+      dhtState.storage.forEach(([key, value]) => {
+        storageStore.add({ key, value });
+      });
+    }
+    
+    console.log('[StateManager] Saved DHT state');
+  } catch (error) {
+    console.error('[StateManager] Failed to save DHT state:', error);
+  }
+}
+
+async loadDHTState() {
+  if (!this.db) return;
+  
+  try {
+    const transaction = this.db.transaction(['dhtRoutingTable', 'dhtStorage'], 'readonly');
+    const routingStore = transaction.objectStore('dhtRoutingTable');
+    const storageStore = transaction.objectStore('dhtStorage');
+    
+    // Load routing table
+    const bucketsData = await new Promise((resolve) => {
+      const request = routingStore.getAll();
+      request.onsuccess = () => resolve(request.result);
+    });
+    
+    // Load storage
+    const storageData = await new Promise((resolve) => {
+      const request = storageStore.getAll();
+      request.onsuccess = () => resolve(request.result);
+    });
+    
+    // Wait for DHT to be initialized
+    if (state.dht && bucketsData.length > 0) {
+      const buckets = [];
+      bucketsData.forEach(item => {
+        buckets[item.bucketIndex] = item.peers;
+      });
+      
+      const storage = storageData.map(item => [item.key, item.value]);
+      
+      state.dht.deserialize({ buckets, storage });
+      console.log('[StateManager] Loaded DHT state with', bucketsData.length, 'buckets and', storageData.length, 'keys');
+    }
+  } catch (error) {
+    console.error('[StateManager] Failed to load DHT state:', error);
+  }
+}
+  
 }

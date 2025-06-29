@@ -51,7 +51,8 @@ self.addEventListener('message', async (e) => {
         self.postMessage({
             type: 'error',
             jobId: jobId,
-            error: error.message
+            // This is the corrected line for this file
+            error: String(error)
         });
     }
 });

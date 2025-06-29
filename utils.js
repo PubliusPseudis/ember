@@ -196,6 +196,14 @@ export function sanitize(content) {
   return d.innerHTML;
 }
 
+export function sanitizeDM(content) {
+  // Force text-only for DMs
+  const d = document.createElement('div');
+  d.textContent = content;
+  return d.innerHTML;
+}
+
+
 export function timeAgo(ts) {
       const s = ~~((Date.now() - ts) / 1000);
       if (s < 5) return "just now";

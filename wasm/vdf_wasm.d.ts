@@ -1,15 +1,53 @@
 /* tslint:disable */
 /* eslint-disable */
-export function estimate_iterations_for_seconds(seconds: number): bigint;
+/**
+ * Benchmark function to calibrate iterations per second
+ */
+export function benchmark_vdf(duration_ms: number): number;
+/**
+ * Export version information
+ */
+export function get_version(): string;
+/**
+ * Main VDF computer with optimized algorithms
+ */
 export class VDFComputer {
   free(): void;
+  /**
+   * Create a new VDF computer with the RSA-2048 modulus
+   */
   constructor();
-  compute_proof(input: string, iterations: bigint, on_progress: Function): VDFProof;
+  /**
+   * Create a VDF computer with a custom modulus (hex string)
+   */
+  static with_modulus(modulus_hex: string): VDFComputer;
+  /**
+   * Compute a VDF proof with progress callback
+   */
+  compute_proof(input: string, iterations: bigint, on_progress?: Function | null): VDFProof;
+  /**
+   * Verify a VDF proof
+   */
   verify_proof(input: string, proof: VDFProof): boolean;
+  /**
+   * Estimate iterations needed for a given time in seconds
+   */
+  estimate_iterations_for_seconds(seconds: number): bigint;
 }
+/**
+ * VDF Proof structure containing all verification parameters
+ */
 export class VDFProof {
   free(): void;
   constructor(y: string, pi: string, l: string, r: string, iterations: bigint);
+  /**
+   * Serialize proof to JSON
+   */
+  to_json(): string;
+  /**
+   * Deserialize proof from JSON
+   */
+  static from_json(json: string): VDFProof;
   readonly y: string;
   readonly pi: string;
   readonly l: string;
@@ -28,11 +66,16 @@ export interface InitOutput {
   readonly vdfproof_l: (a: number) => [number, number];
   readonly vdfproof_r: (a: number) => [number, number];
   readonly vdfproof_iterations: (a: number) => bigint;
+  readonly vdfproof_to_json: (a: number) => [number, number, number, number];
+  readonly vdfproof_from_json: (a: number, b: number) => [number, number, number];
   readonly __wbg_vdfcomputer_free: (a: number, b: number) => void;
   readonly vdfcomputer_new: () => number;
-  readonly vdfcomputer_compute_proof: (a: number, b: number, c: number, d: bigint, e: any) => [number, number, number];
+  readonly vdfcomputer_with_modulus: (a: number, b: number) => [number, number, number];
+  readonly vdfcomputer_compute_proof: (a: number, b: number, c: number, d: bigint, e: number) => [number, number, number];
   readonly vdfcomputer_verify_proof: (a: number, b: number, c: number, d: number) => [number, number, number];
-  readonly estimate_iterations_for_seconds: (a: number) => bigint;
+  readonly vdfcomputer_estimate_iterations_for_seconds: (a: number, b: number) => bigint;
+  readonly benchmark_vdf: (a: number) => [number, number, number];
+  readonly get_version: () => [number, number];
   readonly __wbindgen_exn_store: (a: number) => void;
   readonly __externref_table_alloc: () => number;
   readonly __wbindgen_export_2: WebAssembly.Table;

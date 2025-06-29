@@ -25,11 +25,13 @@ import { EpidemicGossip } from './p2p/epidemic-gossip.js';
 import { HyParView } from './p2p/hyparview.js';
 import { Scribe } from './p2p/scribe.js';
 import { Plumtree } from './p2p/plumtree.js';
+import { routingManager } from './services/routing-manager.js';
 
 // --- 2. GLOBAL STATE ---
 export const state = {
   posts: new Map(),
   peers: new Map(),
+  peerIdentities: new Map(),
   myIdentity: null,
   client: null,
   provisionalIdentities: new Map(),
@@ -327,7 +329,12 @@ export async function generateAndBroadcastAttestation(post) {
 export function evaluatePostTrust(postId) {
   const post = state.pendingVerification.get(postId);
   if (!post) {
-    trustEvaluationTimers.delete(postId);
+    // Clean up timer if post is gone
+    const timer = trustEvaluationTimers.get(postId);
+    if (timer) {
+      clearInterval(timer);
+      trustEvaluationTimers.delete(postId);
+    }
     return;
   }
   
@@ -388,18 +395,23 @@ export function evaluatePostTrust(postId) {
 export function scheduleTrustEvaluation(post) {
   const postId = post.id;
   
-  // Clear any existing timer
-  if (trustEvaluationTimers.has(postId)) {
-    clearInterval(trustEvaluationTimers.get(postId));
-    trustEvaluationTimers.delete(postId);
-  }
+  // Helper function to clean up timer
+  const cleanupTimer = () => {
+    const timer = trustEvaluationTimers.get(postId);
+    if (timer) {
+      clearInterval(timer);
+      trustEvaluationTimers.delete(postId);
+    }
+  };
   
-  // Schedule periodic evaluation with automatic cleanup
+  // Clear any existing timer
+  cleanupTimer();
+  
+  // Schedule periodic evaluation
   const timer = setInterval(() => {
     // Check if post still exists in pending
     if (!state.pendingVerification.has(postId)) {
-      clearInterval(timer);
-      trustEvaluationTimers.delete(postId);
+      cleanupTimer();
       return;
     }
     
@@ -410,17 +422,14 @@ export function scheduleTrustEvaluation(post) {
   
   // Set a maximum lifetime for the timer (10 seconds)
   setTimeout(() => {
-    if (trustEvaluationTimers.has(postId)) {
-      clearInterval(trustEvaluationTimers.get(postId));
-      trustEvaluationTimers.delete(postId);
-      
-      // If still pending after timeout, send to verification
-      if (state.pendingVerification.has(postId)) {
-        const post = state.pendingVerification.get(postId);
-        verificationQueue.addBatch([post], 'normal', (results) => {
-          handleVerificationResults(results);
-        });
-      }
+    cleanupTimer();
+    
+    // If still pending after timeout, send to verification
+    if (state.pendingVerification.has(postId)) {
+      const post = state.pendingVerification.get(postId);
+      verificationQueue.addBatch([post], 'normal', (results) => {
+        handleVerificationResults(results);
+      });
     }
   }, 10000);
   
@@ -729,31 +738,144 @@ export async function createReply(parentId) {
         btn.disabled = false;
     }
 }
+async function checkAndDeliverPendingMessages(recipientHandle = null) {
+  try {
+    console.log('[DM] Checking for pending messages to deliver');
+    
+    // Get all our pending outgoing messages
+    const pendingMessages = await stateManager.getPendingMessagesFrom(state.myIdentity.handle);
+    
+    if (pendingMessages.length === 0) {
+      return;
+    }
+    
+    console.log(`[DM] Found ${pendingMessages.length} pending messages`);
+    
+    for (const pending of pendingMessages) {
+      // Skip if not for the specified recipient (if specified)
+      if (recipientHandle && pending.recipient !== recipientHandle) {
+        continue;
+      }
+      
+      // Check if recipient is now online
+      const routingInfo = await state.identityRegistry.lookupPeerLocation(pending.recipient);
+      if (!routingInfo) {
+        console.log(`[DM] ${pending.recipient} still offline, skipping`);
+        continue;
+      }
+      
+      // Try to deliver
+      console.log(`[DM] Attempting to deliver pending message to ${pending.recipient}`);
+      
+      // Update attempt count
+      await stateManager.updateMessageAttempt(pending.id);
+      
+      // Reconstruct the DM packet
+      const dmPacket = {
+        type: 'e2e_dm',
+        recipient: pending.recipient,
+        sender: state.myIdentity.handle,
+        ciphertext: pending.encrypted.ciphertext,
+        nonce: pending.encrypted.nonce,
+        timestamp: pending.timestamp,
+        messageId: pending.id, // Include ID for delivery confirmation
+        isRetry: true
+      };
+      
+      // Try direct delivery
+      const directPeer = await findPeerByHandle(pending.recipient);
+      if (directPeer) {
+        sendPeer(directPeer.wire, dmPacket);
+        console.log(`[DM] Sent pending message directly to ${pending.recipient}`);
+        continue;
+      }
+      
+      // Try DHT routing
+      const recipientClaim = await state.identityRegistry.lookupHandle(pending.recipient);
+      if (recipientClaim && recipientClaim.nodeId) {
+        const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
+        const closestPeers = await state.dht.findNode(recipientNodeId);
+        
+        if (closestPeers.length > 0) {
+          const peer = closestPeers[0];
+          if (peer.wire && !peer.wire.destroyed) {
+            sendPeer(peer.wire, dmPacket);
+            console.log(`[DM] Sent pending message to ${pending.recipient} via DHT`);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[DM] Error delivering pending messages:', error);
+  }
+}
+
+async function storePendingMessage(recipientHandle, messageText, status = 'queued') {
+  try {
+    // First encrypt the message for storage
+    const recipientClaim = await state.identityRegistry.lookupHandle(recipientHandle);
+    if (!recipientClaim || !recipientClaim.encryptionPublicKey) {
+      console.error('[DM] Cannot store message - no encryption key for recipient');
+      return null;
+    }
+    
+    // Encrypt the message
+    const nonce = nacl.randomBytes(24);
+    const messageBytes = new TextEncoder().encode(messageText);
+    const recipientPublicKey = base64ToArrayBuffer(recipientClaim.encryptionPublicKey);
+    const ciphertext = nacl.box(
+      messageBytes,
+      nonce,
+      recipientPublicKey,
+      state.myIdentity.encryptionSecretKey
+    );
+    
+    const encryptedData = {
+      ciphertext: arrayBufferToBase64(ciphertext),
+      nonce: arrayBufferToBase64(nonce)
+    };
+    
+    // Store in IndexedDB
+    const messageId = await stateManager.storePendingMessage(
+      recipientHandle,
+      messageText,
+      state.myIdentity.handle,
+      encryptedData
+    );
+    
+    // Also update UI to show pending status
+    storeDMLocallyAndUpdateUI(recipientHandle, messageText, status);
+    
+    console.log(`[DM] Stored pending message ${messageId} for ${recipientHandle}`);
+    return messageId;
+    
+  } catch (error) {
+    console.error('[DM] Failed to store pending message:', error);
+    return null;
+  }
+}
 
 
 // Direct Message Functions
 export async function sendDirectMessage(recipientHandle, messageText) {
   try {
+    // Step 1: Get static identity (public keys, etc.)
     let recipientClaim = null;
-    const maxAttempts = 5; // FIX: Increased attempts for more resilience.
+    const maxAttempts = 5;
     const initialDelay = 1000;
 
-    // This will now wait and retry even if the network is not in the initial bootstrap phase,
-    // accounting for general network latency.
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       notify(`Searching for ${recipientHandle} on the network... (Attempt ${attempt + 1})`);
       recipientClaim = await state.identityRegistry.lookupHandle(recipientHandle);
       if (recipientClaim) {
-        break; // Found the user, exit the loop.
+        break;
       }
-
       if (attempt < maxAttempts - 1) {
-        const delay = initialDelay * Math.pow(2, attempt); // Exponential backoff
+        const delay = initialDelay * Math.pow(2, attempt);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
 
-    // FIX: Provide clearer, more specific feedback if the user is not found.
     if (!recipientClaim) {
       notify(`Could not find user "${recipientHandle}". They may be offline or do not exist.`);
       return false;
@@ -764,6 +886,66 @@ export async function sendDirectMessage(recipientHandle, messageText) {
       return false;
     }
 
+    // Step 2: Check if user is currently online via routing info
+    const routingInfo = await state.identityRegistry.lookupPeerLocation(recipientHandle);
+    
+    if (!routingInfo) {
+      console.log(`[DM] No current routing info for ${recipientHandle}, attempting offline delivery`);
+      
+      // Store message for offline delivery
+      await storePendingMessage(recipientHandle, messageText, 'queued');
+      notify(`${recipientHandle} appears offline. Message saved for later delivery.`);
+      return true;
+    }
+
+    // Step 3: Try direct delivery if peer is connected
+    const directPeer = await findPeerByHandle(recipientHandle);
+    
+    if (directPeer) {
+      console.log(`[DM] Found direct connection to ${recipientHandle}`);
+      
+      // Encrypt and send directly
+      const nonce = nacl.randomBytes(24);
+      const messageBytes = new TextEncoder().encode(messageText);
+      const recipientPublicKey = base64ToArrayBuffer(recipientClaim.encryptionPublicKey);
+      const ciphertext = nacl.box(
+        messageBytes,
+        nonce,
+        recipientPublicKey,
+        state.myIdentity.encryptionSecretKey
+      );
+      
+      const dmPacket = {
+        type: 'e2e_dm',
+        recipient: recipientHandle,
+        sender: state.myIdentity.handle,
+        ciphertext: arrayBufferToBase64(ciphertext),
+        nonce: arrayBufferToBase64(nonce),
+        timestamp: Date.now()
+      };
+      
+      sendPeer(directPeer.wire, dmPacket);
+      storeDMLocallyAndUpdateUI(recipientHandle, messageText, 'sent');
+      addMessageToConversation(recipientHandle, messageText, 'sent');
+      notify(`Message sent directly to ${recipientHandle}`);
+      return true;
+    }
+
+    // Step 4: Try routing through DHT if no direct connection
+    console.log(`[DM] No direct connection, routing through DHT`);
+    
+    // Use the nodeId from routing info (which is current) instead of from the claim
+    const recipientNodeId = base64ToArrayBuffer(routingInfo.nodeId);
+    const closestPeers = await state.dht.findNode(recipientNodeId);
+    
+    if (closestPeers.length === 0) {
+      // Store for offline delivery
+      await storePendingMessage(recipientHandle, messageText, 'queued');
+      notify(`Cannot reach ${recipientHandle} right now. Message saved for later.`);
+      return true;
+    }
+
+    // Encrypt the message
     const nonce = nacl.randomBytes(24);
     const messageBytes = new TextEncoder().encode(messageText);
     const recipientPublicKey = base64ToArrayBuffer(recipientClaim.encryptionPublicKey);
@@ -773,40 +955,42 @@ export async function sendDirectMessage(recipientHandle, messageText) {
       recipientPublicKey,
       state.myIdentity.encryptionSecretKey
     );
+
     const dmPacket = {
       type: 'e2e_dm',
       recipient: recipientHandle,
       sender: state.myIdentity.handle,
       ciphertext: arrayBufferToBase64(ciphertext),
       nonce: arrayBufferToBase64(nonce),
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      routingHint: routingInfo.wirePeerId // Include routing hint for intermediate nodes
     };
-    const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
-    const closestPeers = await state.dht.findNode(recipientNodeId);
 
-    // FIX: Provide clearer feedback if a route to the user cannot be found.
-    if (closestPeers.length === 0) {
-      notify(`Found "${recipientHandle}", but could not find a route to them on the network. They may be offline.`);
-      return false;
-    }
-
+    // Send to multiple peers for redundancy
     let sent = false;
-    for (const peer of closestPeers) {
-      // The sendPeer function is already robust.
-      sendPeer(peer.wire, dmPacket);
-      sent = true;
+    const maxPeersToTry = Math.min(3, closestPeers.length);
+    
+    for (let i = 0; i < maxPeersToTry; i++) {
+      const peer = closestPeers[i];
+      if (peer.wire && !peer.wire.destroyed) {
+        sendPeer(peer.wire, dmPacket);
+        sent = true;
+        console.log(`[DM] Sent to peer ${i + 1}/${maxPeersToTry} for routing`);
+      }
     }
 
     if (sent) {
       storeDMLocallyAndUpdateUI(recipientHandle, messageText, 'sent');
-      addMessageToConversation(recipientHandle, messageText, 'sent'); // FIX: Immediately add sent message to UI
-      notify(`Message sent to ${recipientHandle}. Delivery depends on them being online.`);
+      addMessageToConversation(recipientHandle, messageText, 'sent');
+      notify(`Message sent to ${recipientHandle} via DHT routing`);
       return true;
     } else {
-      // This case is less likely with the above check, but kept for safety.
-      notify(`Failed to send message to ${recipientHandle}.`);
-      return false;
+      // All routing failed, store for offline
+      await storePendingMessage(recipientHandle, messageText, 'queued');
+      notify(`Failed to send message. Saved for when ${recipientHandle} comes online.`);
+      return true;
     }
+    
   } catch (error) {
     console.error('DM send error:', error);
     notify(`Error sending message: ${error.message}`);
@@ -816,29 +1000,55 @@ export async function sendDirectMessage(recipientHandle, messageText) {
 
 export async function handleDirectMessage(msg, fromWire) {
   try {
-    // Verify this message is for us
+    // Check if this message is for us
     if (msg.recipient !== state.myIdentity.handle) {
-      // Not for us - try to forward it
+      console.log(`[DM] Message for ${msg.recipient}, attempting to forward`);
+      
+      // Try to forward using routing hint first
+      if (msg.routingHint) {
+        for (const [peerId, peer] of state.peers) {
+          if (peerId === msg.routingHint && peer.wire && !peer.wire.destroyed) {
+            console.log(`[DM] Forwarding to peer via routing hint`);
+            sendPeer(peer.wire, msg);
+            return;
+          }
+        }
+      }
+      
+      // Fall back to looking up current routing
+      const routingInfo = await state.identityRegistry.lookupPeerLocation(msg.recipient);
+      if (routingInfo) {
+        // Check if recipient is directly connected to us
+        const directPeer = await findPeerByHandle(msg.recipient);
+        if (directPeer) {
+          console.log(`[DM] Forwarding directly to ${msg.recipient}`);
+          sendPeer(directPeer.wire, msg);
+          return;
+        }
+      }
+      
+      // Fall back to DHT routing
       const recipientClaim = await state.identityRegistry.lookupHandle(msg.recipient);
       if (recipientClaim && recipientClaim.nodeId) {
         const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
         const closestPeers = state.dht.findClosestPeers(recipientNodeId, 3);
         
-        // Forward to peers closer to recipient
         for (const peer of closestPeers) {
-          if (peer.wire !== fromWire) {
-            // *** FIX: Pass peer.wire to sendPeer, not the whole peer object ***
+          if (peer.wire !== fromWire && peer.wire && !peer.wire.destroyed) {
             sendPeer(peer.wire, msg);
           }
         }
+        console.log(`[DM] Forwarded to ${closestPeers.length} peers via DHT`);
       }
       return;
     }
     
-    // Look up sender's identity
+    // Message is for us - verify and decrypt
+    console.log(`[DM] Received message from ${msg.sender}`);
+    
     const senderClaim = await state.identityRegistry.lookupHandle(msg.sender);
     if (!senderClaim || !senderClaim.encryptionPublicKey) {
-      console.warn(`DM from unknown or invalid sender: ${msg.sender}`);
+      console.warn(`[DM] Unknown or invalid sender: ${msg.sender}`);
       return;
     }
     
@@ -853,26 +1063,58 @@ export async function handleDirectMessage(msg, fromWire) {
       senderPublicKey,
       state.myIdentity.encryptionSecretKey
     );
+    
     if (!decryptedBytes) {
-      console.error('Failed to decrypt DM - invalid ciphertext or keys');
+      console.error('[DM] Failed to decrypt - invalid ciphertext or keys');
       return;
     }
     
     const messageText = new TextDecoder().decode(decryptedBytes);
+    
     // Store and display the message
     storeDMLocallyAndUpdateUI(msg.sender, messageText, 'received');
-    updateUnreadBadge(); 
-    // Show notification
-     notify(`📬 New message from ${msg.sender}`, 6000,
-        () => openDMPanel(msg.sender));
+    updateUnreadBadge();
+    notify(`📬 New message from ${msg.sender}`, 6000,
+      () => openDMPanel(msg.sender));
+    
+    
+    // Send delivery confirmation if this was a retry
+    if (msg.messageId && msg.isRetry) {
+      const confirmation = {
+        type: 'dm_delivered',
+        messageId: msg.messageId,
+        recipient: msg.recipient,
+        deliveredAt: Date.now()
+      };
+      
+      // Send confirmation back
+      const senderPeer = await findPeerByHandle(msg.sender);
+      if (senderPeer) {
+        sendPeer(senderPeer.wire, confirmation);
+      } else {
+        // Route through DHT
+        const senderClaim = await state.identityRegistry.lookupHandle(msg.sender);
+        if (senderClaim && senderClaim.nodeId) {
+          const senderNodeId = base64ToArrayBuffer(senderClaim.nodeId);
+          const closestPeers = await state.dht.findNode(senderNodeId);
+          if (closestPeers.length > 0) {
+            sendPeer(closestPeers[0].wire, confirmation);
+          }
+        }
+      }
+    }   
+      
+    
     // Update UI if DM panel is open
     if (currentDMRecipient === msg.sender) {
       addMessageToConversation(msg.sender, messageText, 'received');
-      
     }
     
+    // Check if we have pending messages to send back
+    await checkAndDeliverPendingMessages(msg.sender);
+    
   } catch (error) {
-    console.error('DM receive error:', error);
+    console.error('[DM] Receive error:', error);
   }
 }
 
@@ -915,6 +1157,7 @@ function startMaintenanceLoop() {
       stateManager.saveUserState();
       stateManager.savePeerScores();
       stateManager.saveImageChunks(); // Periodically save image data
+      stateManager.saveDHTState(); 
     }
     if (tick % 60 === 0 && state.hyparview) {
         const activePeers = state.hyparview.getActivePeers();
@@ -931,14 +1174,97 @@ function startMaintenanceLoop() {
                 });
             }
         }
+          // Try to deliver pending messages
+          checkAndDeliverPendingMessages().catch(e => 
+            console.error('[Maintenance] Failed to check pending messages:', e)
+          );
     }
+
+    if (tick % 120 === 0) { // Every 2 minutes
+      // Update our routing info in DHT
+      if (state.identityRegistry && state.myIdentity && state.peers.size > 0) {
+        // Find our current wire peer ID from any active connection
+        let ourWirePeerId = null;
+        for (const [peerId, peerData] of state.peers) {
+          if (peerData.wire && !peerData.wire.destroyed) {
+            // Get our peer ID as seen by this peer
+            ourWirePeerId = peerData.wire._client?.peerId;
+            if (ourWirePeerId) break;
+          }
+        }
+        
+        if (ourWirePeerId) {
+          state.identityRegistry.updatePeerLocation(
+            state.myIdentity.handle,
+            state.myIdentity.nodeId,
+            ourWirePeerId
+          ).then(() => {
+            console.log('[Maintenance] Routing info refreshed');
+          }).catch(e => {
+            console.error('[Maintenance] Failed to refresh routing:', e);
+          });
+        }
+      }
+      
+      // Clean up expired routing entries
+      if (state.identityRegistry) {
+        state.identityRegistry.removeExpiredRouting();
+      }
+    }
+    
     if (tick % 300 === 0) {
         const stats = state.seenMessages.getStats();
+      // Clean up stale routing cache entries
+      if (state.peerRoutingCache) {
+        const now = Date.now();
+        const staleTimeout = 600000; // 10 minutes
+        
+        for (const [handle, info] of state.peerRoutingCache) {
+          const age = now - info.timestamp;
+          const heartbeatAge = info.lastHeartbeat ? now - info.lastHeartbeat : Infinity;
+          
+          if (age > staleTimeout && heartbeatAge > staleTimeout) {
+            console.log(`[Maintenance] Removing stale routing for ${handle}`);
+            state.peerRoutingCache.delete(handle);
+          }
+        }
+      }
+      
+      // Clean up expired DHT routing entries
+      if (state.identityRegistry) {
+        state.identityRegistry.removeExpiredRouting();
+      }        
     }
+    
+    if (tick % 600 === 0) { // Every 10 minutes
+      // Log DHT health
+      if (state.dht) {
+        const stats = state.dht.getStats();
+        console.log('[DHT Health]', {
+          peers: stats.totalPeers,
+          keys: stats.localKeys,
+          refreshQueue: stats.refreshQueueSize,
+          replication: stats.replicationHealth
+        });
+        
+        // Force refresh if too many under-replicated keys
+        if (stats.replicationHealth.underReplicated > stats.replicationHealth.wellReplicated) {
+          console.warn('[DHT] Many under-replicated keys, forcing refresh');
+          state.dht.refreshStoredValues();
+        }
+      }
+    }
+    
+    
     if (tick % 3600 === 0) {
         stateManager.cleanup();
         tick = 0;
+      // Clean up old messages
+      stateManager.cleanupOldMessages().catch(e =>
+        console.error('[Maintenance] Failed to cleanup old messages:', e)
+      );
     }
+    
   }, 1000);
 }
 
@@ -1040,6 +1366,7 @@ async function init() {
                         : crypto.getRandomValues(new Uint8Array(20));
     
     await initNetworkWithTempId(tempNodeId);
+    await stateManager.loadDHTState();
     
     // Wait for DHT to be ready
     await new Promise(resolve => {
@@ -1082,7 +1409,40 @@ async function init() {
         // Update the DHT with the final, correct nodeId ---
         state.dht.nodeId = state.myIdentity.nodeId;
         
+         // Re-publish identity records to the DHT to ensure discoverability ---
+        console.log("[Identity] Re-publishing identity records for returning user...");
+        const handleAddress = `handle-to-pubkey:${state.myIdentity.handle.toLowerCase()}`;
+        const pubkeyAddress = `pubkey:${state.myIdentity.publicKey}`;
+
+        // Use Promise.all to re-publish both records concurrently.
+        Promise.all([
+          state.dht.store(handleAddress, { publicKey: state.myIdentity.publicKey }),
+          state.dht.store(pubkeyAddress, state.myIdentity.identityClaim)
+        ]).then(() => {
+            console.log("[Identity] Successfully re-published identity to the DHT.");
+        }).catch(err => {
+            console.error("[Identity] Failed to re-publish identity:", err);
+        });       
+        
         notify(`Welcome back, ${storedIdentity.handle}!`);
+        // Announce our routing info after a short delay
+        setTimeout(async () => {
+          if (state.client && state.identityRegistry) {
+            // Get our current WebRTC peer ID from any active connection
+            const activePeer = Array.from(state.peers.values())[0];
+            if (activePeer && activePeer.wire) {
+              const ourWirePeerId = activePeer.wire._client?.peerId;
+              if (ourWirePeerId) {
+                await state.identityRegistry.updatePeerLocation(
+                  state.myIdentity.handle,
+                  state.myIdentity.nodeId,
+                  ourWirePeerId
+                );
+                console.log('[Init] Initial routing info announced');
+              }
+            }
+          }
+        }, 5000); // Wait 5 seconds for connections to establish
       } else if (state.peers.size === 0) {
         // If verification fails BUT we have no peers, we are the first node.
         // We should trust the local identity and assume it's valid.
@@ -1138,7 +1498,12 @@ async function init() {
       stateManager.savePosts();
       stateManager.saveUserState();
       stateManager.savePeerScores();
+      stateManager.saveDHTState();
+        routingManager.stop();
       if (state.client) state.client.destroy();
+      if (state.dht) {
+        state.dht.shutdown();
+      }
     });
     
     if (!localStorage.getItem("ephemeral-tips")) {
@@ -1188,6 +1553,9 @@ function initializeP2PProtocols() {
   };
   
   console.log("Dependent P2P protocols (Scribe, Plumtree) initialized.");
+  // Start routing manager
+    routingManager.start();
+    console.log("Routing manager initialized");
 }
 
 // helper function for init
@@ -1213,7 +1581,59 @@ export function sendToPeer(peer, message) {
     }
 }
 
-
+export async function findPeerByHandle(handle) {
+  // First check our local peer identity map
+  if (state.peerIdentities) {
+    for (const [peerId, identity] of state.peerIdentities) {
+      if (identity.handle === handle) {
+        const peer = state.peers.get(peerId);
+        if (peer && peer.wire && !peer.wire.destroyed) {
+          console.log(`[FindPeer] Found ${handle} in local peer map`);
+          return peer;
+        }
+      }
+    }
+  }
+  
+  // Check routing cache
+  if (state.peerRoutingCache && state.peerRoutingCache.has(handle)) {
+    const cached = state.peerRoutingCache.get(handle);
+    
+    // Check if routing info is fresh
+    const age = Date.now() - cached.timestamp;
+    if (age < 300000) { // 5 minutes
+      // Try to find peer by the cached peer ID
+      for (const [peerId, peer] of state.peers) {
+        if (peerId === cached.peerId || peerId === cached.fromWire) {
+          if (peer.wire && !peer.wire.destroyed) {
+            console.log(`[FindPeer] Found ${handle} via routing cache`);
+            return peer;
+          }
+        }
+      }
+    }
+  }
+  
+  // If not found locally, check DHT routing info
+  const routingInfo = await state.identityRegistry.lookupPeerLocation(handle);
+  if (!routingInfo) {
+    console.log(`[FindPeer] No routing info found for ${handle}`);
+    return null;
+  }
+  
+  // Find peer by wire peer ID
+  for (const [peerId, peer] of state.peers) {
+    if (peerId === routingInfo.wirePeerId) {
+      if (peer.wire && !peer.wire.destroyed) {
+        console.log(`[FindPeer] Found ${handle} via DHT routing`);
+        return peer;
+      }
+    }
+  }
+  
+  console.log(`[FindPeer] Routing info found but peer not connected`);
+  return null;
+}
 
 export function debugPostRemoval(postId, reason) {
   // This allows for live debugging via the browser console, e.g.:
@@ -1271,5 +1691,87 @@ window.ephemeralDebug = {
     const stats = peerManager.getReputationStats();
     console.log('Reputation distribution:', stats);
     return stats;
+  },
+
+  routing: () => {
+    console.log('=== Routing Status ===');
+    console.log('Routing Manager:', routingManager.getStats());
+    
+    if (state.peerRoutingCache) {
+      console.log('\nRouting Cache:');
+      const now = Date.now();
+      for (const [handle, info] of state.peerRoutingCache) {
+        console.log(`  ${handle}: age=${Math.floor((now - info.timestamp)/1000)}s, peerId=${info.peerId.substring(0,8)}...`);
+      }
+    }
+    
+    console.log('\nPeer Identities:');
+    if (state.peerIdentities) {
+      for (const [peerId, identity] of state.peerIdentities) {
+        console.log(`  ${peerId.substring(0,8)}... => ${identity.handle}`);
+      }
+    }
+    
+    return 'See console for routing details';
+  },
+  
+  forceRoutingUpdate: () => {
+    routingManager.updateRouting(true).then(() => 
+      console.log('Routing update forced')
+    );
+  },
+  
+  
+  dhtHealth: () => {
+    if (!state.dht) {
+      return 'DHT not initialized';
+    }
+    
+    const stats = state.dht.getStats();
+    console.log('=== DHT Health Report ===');
+    console.log('Network:', {
+      totalPeers: stats.totalPeers,
+      activeBuckets: stats.activeBuckets,
+      avgBucketSize: stats.avgBucketSize
+    });
+    console.log('Storage:', {
+      localKeys: stats.localKeys,
+      refreshQueue: stats.refreshQueueSize
+    });
+    console.log('Replication:', stats.replicationHealth);
+    
+    // Show sample of replication status
+    console.log('\nReplication Details (sample):');
+    let count = 0;
+    for (const [key, status] of state.dht.replicationStatus) {
+      if (count++ >= 10) break;
+      console.log(`  ${key}: ${status.replicas} replicas, last checked ${Math.floor((Date.now() - status.lastCheck) / 1000)}s ago`);
+    }
+    
+    return 'See console for DHT health details';
+  },
+  
+  forceRefresh: async (key) => {
+    if (!state.dht) return 'DHT not initialized';
+    
+    if (key) {
+      // Refresh specific key
+      const value = state.dht.storage.get(key);
+      if (value) {
+        const result = await state.dht.store(key, value.value || value, { propagate: true });
+        return `Refreshed ${key}: ${result.replicas} replicas`;
+      }
+      return `Key ${key} not found locally`;
+    } else {
+      // Refresh all
+      await state.dht.refreshStoredValues();
+      return 'Triggered refresh of all stored values';
+    }
+  },
+  
+  checkReplication: async (key) => {
+    if (!state.dht) return 'DHT not initialized';
+    const status = await state.dht.getReplicationStatus(key);
+    return `Key ${key}: ${status.replicas} replicas found`;
   }
 };

@@ -37,6 +37,71 @@ function isLikeNone(x) {
     return x === undefined || x === null;
 }
 
+function debugString(val) {
+    // primitive types
+    const type = typeof val;
+    if (type == 'number' || type == 'boolean' || val == null) {
+        return  `${val}`;
+    }
+    if (type == 'string') {
+        return `"${val}"`;
+    }
+    if (type == 'symbol') {
+        const description = val.description;
+        if (description == null) {
+            return 'Symbol';
+        } else {
+            return `Symbol(${description})`;
+        }
+    }
+    if (type == 'function') {
+        const name = val.name;
+        if (typeof name == 'string' && name.length > 0) {
+            return `Function(${name})`;
+        } else {
+            return 'Function';
+        }
+    }
+    // objects
+    if (Array.isArray(val)) {
+        const length = val.length;
+        let debug = '[';
+        if (length > 0) {
+            debug += debugString(val[0]);
+        }
+        for(let i = 1; i < length; i++) {
+            debug += ', ' + debugString(val[i]);
+        }
+        debug += ']';
+        return debug;
+    }
+    // Test for built-in
+    const builtInMatches = /\[object ([^\]]+)\]/.exec(toString.call(val));
+    let className;
+    if (builtInMatches && builtInMatches.length > 1) {
+        className = builtInMatches[1];
+    } else {
+        // Failed to match the standard '[object ClassName]'
+        return toString.call(val);
+    }
+    if (className == 'Object') {
+        // we're a user defined class or Object
+        // JSON.stringify avoids problems with cycles, and is generally much
+        // easier than looping through ownProperties of `val`.
+        try {
+            return 'Object(' + JSON.stringify(val) + ')';
+        } catch (_) {
+            return 'Object';
+        }
+    }
+    // errors
+    if (val instanceof Error) {
+        return `${val.name}: ${val.message}\n${val.stack}`;
+    }
+    // TODO we could test for more things here, like `Set`s and `Map`s.
+    return className;
+}
+
 let WASM_VECTOR_LEN = 0;
 
 const cachedTextEncoder = (typeof TextEncoder !== 'undefined' ? new TextEncoder('utf-8') : { encode: () => { throw Error('TextEncoder not available') } } );
@@ -93,6 +158,15 @@ function passStringToWasm0(arg, malloc, realloc) {
     return ptr;
 }
 
+let cachedDataViewMemory0 = null;
+
+function getDataViewMemory0() {
+    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
+        cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
+    }
+    return cachedDataViewMemory0;
+}
+
 function takeFromExternrefTable0(idx) {
     const value = wasm.__wbindgen_export_2.get(idx);
     wasm.__externref_table_dealloc(idx);
@@ -105,19 +179,50 @@ function _assertClass(instance, klass) {
     }
 }
 /**
- * @param {number} seconds
- * @returns {bigint}
+ * Benchmark function to calibrate iterations per second
+ * @param {number} duration_ms
+ * @returns {number}
  */
-export function estimate_iterations_for_seconds(seconds) {
-    const ret = wasm.estimate_iterations_for_seconds(seconds);
-    return BigInt.asUintN(64, ret);
+export function benchmark_vdf(duration_ms) {
+    const ret = wasm.benchmark_vdf(duration_ms);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
+}
+
+/**
+ * Export version information
+ * @returns {string}
+ */
+export function get_version() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.get_version();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
 }
 
 const VDFComputerFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_vdfcomputer_free(ptr >>> 0, 1));
-
+/**
+ * Main VDF computer with optimized algorithms
+ */
 export class VDFComputer {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(VDFComputer.prototype);
+        obj.__wbg_ptr = ptr;
+        VDFComputerFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
 
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -130,6 +235,9 @@ export class VDFComputer {
         const ptr = this.__destroy_into_raw();
         wasm.__wbg_vdfcomputer_free(ptr, 0);
     }
+    /**
+     * Create a new VDF computer with the RSA-2048 modulus
+     */
     constructor() {
         const ret = wasm.vdfcomputer_new();
         this.__wbg_ptr = ret >>> 0;
@@ -137,21 +245,37 @@ export class VDFComputer {
         return this;
     }
     /**
+     * Create a VDF computer with a custom modulus (hex string)
+     * @param {string} modulus_hex
+     * @returns {VDFComputer}
+     */
+    static with_modulus(modulus_hex) {
+        const ptr0 = passStringToWasm0(modulus_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.vdfcomputer_with_modulus(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return VDFComputer.__wrap(ret[0]);
+    }
+    /**
+     * Compute a VDF proof with progress callback
      * @param {string} input
      * @param {bigint} iterations
-     * @param {Function} on_progress
+     * @param {Function | null} [on_progress]
      * @returns {VDFProof}
      */
     compute_proof(input, iterations, on_progress) {
         const ptr0 = passStringToWasm0(input, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.vdfcomputer_compute_proof(this.__wbg_ptr, ptr0, len0, iterations, on_progress);
+        const ret = wasm.vdfcomputer_compute_proof(this.__wbg_ptr, ptr0, len0, iterations, isLikeNone(on_progress) ? 0 : addToExternrefTable0(on_progress));
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
         return VDFProof.__wrap(ret[0]);
     }
     /**
+     * Verify a VDF proof
      * @param {string} input
      * @param {VDFProof} proof
      * @returns {boolean}
@@ -166,12 +290,23 @@ export class VDFComputer {
         }
         return ret[0] !== 0;
     }
+    /**
+     * Estimate iterations needed for a given time in seconds
+     * @param {number} seconds
+     * @returns {bigint}
+     */
+    estimate_iterations_for_seconds(seconds) {
+        const ret = wasm.vdfcomputer_estimate_iterations_for_seconds(this.__wbg_ptr, seconds);
+        return BigInt.asUintN(64, ret);
+    }
 }
 
 const VDFProofFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_vdfproof_free(ptr >>> 0, 1));
-
+/**
+ * VDF Proof structure containing all verification parameters
+ */
 export class VDFProof {
 
     static __wrap(ptr) {
@@ -281,6 +416,42 @@ export class VDFProof {
         const ret = wasm.vdfproof_iterations(this.__wbg_ptr);
         return BigInt.asUintN(64, ret);
     }
+    /**
+     * Serialize proof to JSON
+     * @returns {string}
+     */
+    to_json() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.vdfproof_to_json(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Deserialize proof from JSON
+     * @param {string} json
+     * @returns {VDFProof}
+     */
+    static from_json(json) {
+        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.vdfproof_from_json(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return VDFProof.__wrap(ret[0]);
+    }
 }
 
 async function __wbg_load(module, imports) {
@@ -336,6 +507,9 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_getRandomValues_b8f5dbd5f3995a9e = function() { return handleError(function (arg0, arg1) {
         arg0.getRandomValues(arg1);
     }, arguments) };
+    imports.wbg.__wbg_log_5b9c4377e97c70b5 = function(arg0, arg1) {
+        console.log(getStringFromWasm0(arg0, arg1));
+    };
     imports.wbg.__wbg_msCrypto_a61aeb35a24c1329 = function(arg0) {
         const ret = arg0.msCrypto;
         return ret;
@@ -358,6 +532,10 @@ function __wbg_get_imports() {
     };
     imports.wbg.__wbg_node_905d3e251edff8a2 = function(arg0) {
         const ret = arg0.node;
+        return ret;
+    };
+    imports.wbg.__wbg_now_807e54c39636c349 = function() {
+        const ret = Date.now();
         return ret;
     };
     imports.wbg.__wbg_process_dc0fbacc7c1c06f7 = function(arg0) {
@@ -397,6 +575,16 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_versions_c01dfd4722a88165 = function(arg0) {
         const ret = arg0.versions;
         return ret;
+    };
+    imports.wbg.__wbg_warn_1e5be50445417c8a = function(arg0, arg1) {
+        console.warn(getStringFromWasm0(arg0, arg1));
+    };
+    imports.wbg.__wbindgen_debug_string = function(arg0, arg1) {
+        const ret = debugString(arg1);
+        const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+        getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
     };
     imports.wbg.__wbindgen_init_externref_table = function() {
         const table = wasm.__wbindgen_export_2;
@@ -451,6 +639,7 @@ function __wbg_init_memory(imports, memory) {
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     __wbg_init.__wbindgen_wasm_module = module;
+    cachedDataViewMemory0 = null;
     cachedUint8ArrayMemory0 = null;
 
 

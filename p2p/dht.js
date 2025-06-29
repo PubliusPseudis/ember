@@ -11,7 +11,13 @@ export class KademliaDHT {
     this.rpcHandlers = new Map();
     this.pendingRPCs = new Map();
     this.rpcTimeout = 5000;
-    
+    this.refreshQueue = new Map(); // key -> { value, lastRefresh, options }
+    this.refreshInterval = 3600000; // 1 hour
+    this.replicationFactor = 20; // k parameter
+    this.republishInterval = 86400000; // 24 hours
+    this.refreshTimer = null;
+    this.replicationStatus = new Map(); // key -> { replicas, lastCheck }
+
     // Initialize RPC handlers
     this.setupRPCHandlers();
   }
@@ -195,14 +201,23 @@ export class KademliaDHT {
     return allPeers.slice(0, count).map(item => item.peer);
   }
   
+    handleCheckValue(params, senderId) {
+      const { key } = params;
+      return {
+        hasValue: this.storage.has(key),
+        timestamp: this.storage.has(key) ? this.storage.get(key).timestamp : null
+      };
+    }
+  
   // Setup RPC handlers
   setupRPCHandlers() {
     this.rpcHandlers.set('PING', this.handlePing.bind(this));
     this.rpcHandlers.set('FIND_NODE', this.handleFindNode.bind(this));
     this.rpcHandlers.set('FIND_VALUE', this.handleFindValue.bind(this));
     this.rpcHandlers.set('STORE', this.handleStore.bind(this));
+    this.rpcHandlers.set('CHECK_VALUE', this.handleCheckValue.bind(this));
   }
-  
+
   // Generate RPC ID
   generateRPCId() {
     return Math.random().toString(36).substr(2, 20);
@@ -298,66 +313,62 @@ export class KademliaDHT {
     };
   }
   
-handleStore(params, senderId) {
-  const { key, value } = params;
-  
-  // ADDED: Validate key and value
-  if (!key || typeof key !== 'string' || key.length > 256) {
-    console.warn('[DHT] Invalid key in STORE request');
-    return { stored: false, error: 'Invalid key' };
-  }
-  
-  // ADDED: Size limit for values
-  const valueStr = JSON.stringify(value);
-  if (valueStr.length > 64 * 1024) { // 64KB max per value
-    console.warn('[DHT] Value too large in STORE request');
-    return { stored: false, error: 'Value too large' };
-  }
-  
-  // ADDED: Rate limiting per sender
-  if (!this.storeRateLimits) {
-    this.storeRateLimits = new Map();
-  }
-  
-  const now = Date.now();
-  let senderLimits = this.storeRateLimits.get(senderId);
-  if (!senderLimits) {
-    senderLimits = { count: 0, resetTime: now + 60000 }; // 1 minute window
-    this.storeRateLimits.set(senderId, senderLimits);
-  }
-  
-  if (now > senderLimits.resetTime) {
-    senderLimits.count = 0;
-    senderLimits.resetTime = now + 60000;
-  }
-  
-  senderLimits.count++;
-  if (senderLimits.count > 100) { // Max 100 stores per minute per peer
-    console.warn(`[DHT] Rate limit exceeded for peer ${senderId}`);
-    return { stored: false, error: 'Rate limit exceeded' };
-  }
-  
-  // Store with size tracking
-  this.storage.set(key, value);
-  
-  // Clean up old entries if storage is too large
-  if (this.storage.size > 10000) {
-    const entries = Array.from(this.storage.entries());
-    entries.slice(0, 5000).forEach(([k]) => this.storage.delete(k));
-  }
-  
-  // Clean up rate limits periodically
-  if (this.storeRateLimits.size > 1000) {
-    const cutoff = now - 300000; // 5 minutes
-    const toDelete = [];
-    this.storeRateLimits.forEach((limits, id) => {
-      if (limits.resetTime < cutoff) toDelete.push(id);
-    });
-    toDelete.forEach(id => this.storeRateLimits.delete(id));
-  }
-  
-  return { stored: true };
-}
+    handleStore(params, senderId) {
+      const { key, value } = params;
+      
+      // ADDED: Validate key and value
+      if (!key || typeof key !== 'string' || key.length > 256) {
+        console.warn('[DHT] Invalid key in STORE request');
+        return { stored: false, error: 'Invalid key' };
+      }
+      
+      // ADDED: Size limit for values
+      const valueStr = JSON.stringify(value);
+      if (valueStr.length > 64 * 1024) { // 64KB max per value
+        console.warn('[DHT] Value too large in STORE request');
+        return { stored: false, error: 'Value too large' };
+      }
+      
+      // Check total storage BEFORE adding
+      const currentSize = Array.from(this.storage.values())
+        .reduce((sum, v) => sum + JSON.stringify(v).length, 0);
+      
+      const MAX_STORAGE_BYTES = 50 * 1024 * 1024; // 50MB total
+      
+      if (currentSize + valueStr.length > MAX_STORAGE_BYTES) {
+        // Implement LRU eviction
+        const entries = Array.from(this.storage.entries())
+          .map(([k, v]) => ({
+            key: k,
+            value: v,
+            size: JSON.stringify(v).length,
+            timestamp: v.timestamp || 0
+          }))
+          .sort((a, b) => a.timestamp - b.timestamp); // Oldest first
+        
+        let freedSpace = 0;
+        while (currentSize + valueStr.length - freedSpace > MAX_STORAGE_BYTES && entries.length > 0) {
+          const oldest = entries.shift();
+          this.storage.delete(oldest.key);
+          freedSpace += oldest.size;
+        }
+        
+        if (currentSize + valueStr.length - freedSpace > MAX_STORAGE_BYTES) {
+          return { stored: false, error: 'Storage full' };
+        }
+      }
+      
+      // Store with metadata
+      const storageEntry = {
+        ...value,
+        timestamp: Date.now(),
+        size: valueStr.length
+      };
+      
+      this.storage.set(key, storageEntry);
+      
+      return { stored: true };
+    }
   
   // High-level operations
   async ping(peer) {
@@ -454,56 +465,136 @@ handleStore(params, senderId) {
   }
   
   // Store a value in the DHT
-    async store(key, value) {
+    async store(key, value, options = {}) {
+      const { 
+        propagate = true, 
+        refresh = true,
+        isRefresh = false,
+        replicationFactor = this.replicationFactor 
+      } = options;
+      
       const keyId = await this.hashToNodeId(key);
       
-      // Always store locally first
-      this.storage.set(key, value);
-      console.log(`[DHT] Stored ${key} locally`);
+      // Store locally first with metadata
+      const storageEntry = {
+        value,
+        timestamp: Date.now(),
+        refresh,
+        storedBy: this.uint8ArrayToHex(this.nodeId)
+      };
       
-      // If we have no peers, that's OK - we're done
+      this.storage.set(key, storageEntry);
+      console.log(`[DHT] Stored ${key} locally${isRefresh ? ' (refresh)' : ''}`);
+      
+      // Add to refresh queue if requested
+      if (refresh && !isRefresh) {
+        this.refreshQueue.set(key, {
+          value,
+          lastRefresh: Date.now(),
+          options: { propagate, replicationFactor }
+        });
+      }
+      
+      if (!propagate) {
+        return { stored: true, replicas: 1 };
+      }
+      
+      // Find k closest peers for replication
       const totalPeers = this.buckets.reduce((sum, bucket) => sum + bucket.length, 0);
       if (totalPeers === 0) {
         console.log(`[DHT] No peers available - stored ${key} locally only`);
-        return true; // Return success for local storage
+        return { stored: true, replicas: 1 };
       }
       
-      // Otherwise try to replicate to k closest peers
       const closest = await this.findNode(keyId);
-      
       if (closest.length === 0) {
         console.log(`[DHT] No reachable peers for replication of ${key}`);
-        return true; // Still return true since we stored it locally
+        return { stored: true, replicas: 1 };
       }
       
-      const storePromises = closest.slice(0, this.k).map(peer =>
-        this.sendRPC(peer, 'STORE', { key, value }).catch(() => false)
-      );
+      // Attempt to store on k closest peers
+      const targetReplicas = Math.min(replicationFactor, closest.length);
+      const storePromises = [];
+      const replicationResults = [];
+      
+      for (let i = 0; i < targetReplicas; i++) {
+        const peer = closest[i];
+        const promise = this.sendRPC(peer, 'STORE', { key, value })
+          .then(result => {
+            if (result && result.stored) {
+              replicationResults.push({ peer: peer.id, success: true });
+              return true;
+            }
+            replicationResults.push({ peer: peer.id, success: false, reason: 'rejected' });
+            return false;
+          })
+          .catch(error => {
+            replicationResults.push({ peer: peer.id, success: false, reason: error.message });
+            return false;
+          });
+        
+        storePromises.push(promise);
+      }
       
       const results = await Promise.all(storePromises);
-      const stored = results.filter(r => r && r.stored).length;
+      const successCount = results.filter(r => r === true).length;
       
-      console.log(`[DHT] Stored key ${key} at ${stored}/${this.k} remote nodes (plus local)`);
-      return true; // Always return true since we at least stored locally
+      console.log(`[DHT] Stored key ${key} at ${successCount}/${targetReplicas} remote nodes (plus local)`);
+      
+      // Log detailed results for debugging
+      if (successCount < targetReplicas / 2) {
+        console.warn(`[DHT] Poor replication for ${key}:`, replicationResults);
+      }
+      
+      // Update replication status
+      this.replicationStatus.set(key, {
+        replicas: successCount + 1, // +1 for local
+        lastCheck: Date.now()
+      });
+      
+      return { 
+        stored: true, 
+        replicas: successCount + 1,
+        details: replicationResults 
+      };
     }
   
   // Retrieve a value from the DHT
-  async get(key) {
-    const keyId = await this.hashToNodeId(key);
-    const seen = new Set();
-    const shortlist = this.findClosestPeers(keyId, this.alpha);
-    
-    while (shortlist.length > 0) {
-      const peer = shortlist.shift();
+async get(key) {
+  // Check local storage first
+  const localValue = this.storage.get(key);
+  if (localValue) {
+    console.log(`[DHT] Found ${key} in local storage`);
+    return localValue.value || localValue; // Handle both old and new format
+  }
+  
+  const keyId = await this.hashToNodeId(key);
+  const seen = new Set();
+  const shortlist = this.findClosestPeers(keyId, this.alpha);
+  
+  // Try multiple peers in parallel for faster lookups
+  const parallelQueries = 3;
+  let foundValue = null;
+  
+  while (shortlist.length > 0 && !foundValue) {
+    const batch = shortlist.splice(0, parallelQueries);
+    const queries = batch.map(async (peer) => {
       const peerId = this.uint8ArrayToHex(peer.id);
-      
-      if (seen.has(peerId)) continue;
+      if (seen.has(peerId)) return null;
       seen.add(peerId);
       
       try {
         const result = await this.sendRPC(peer, 'FIND_VALUE', { key });
         
         if (result.found) {
+          // Store locally for caching
+          this.storage.set(key, {
+            value: result.value,
+            timestamp: Date.now(),
+            cached: true,
+            cachedFrom: peerId
+          });
+          
           return result.value;
         }
         
@@ -525,49 +616,259 @@ handleStore(params, senderId) {
           }
         }
         
-        // Sort by distance
-        shortlist.sort((a, b) => {
-          const distA = this.distance(keyId, a.id);
-          const distB = this.distance(keyId, b.id);
-          for (let i = 0; i < 20; i++) {
-            if (distA[i] !== distB[i]) {
-              return distA[i] - distB[i];
-            }
-          }
-          return 0;
-        });
-        
+        return null;
       } catch (e) {
         // Continue with next peer
+        return null;
       }
+    });
+    
+    const results = await Promise.all(queries);
+    foundValue = results.find(v => v !== null);
+    
+    if (foundValue) {
+      console.log(`[DHT] Found value for ${key} from network`);
+      return foundValue;
     }
     
-    return null;
+    // Sort shortlist by distance for next iteration
+    shortlist.sort((a, b) => {
+      const distA = this.distance(keyId, a.id);
+      const distB = this.distance(keyId, b.id);
+      return this.compareUint8Arrays(distA, distB);
+    });
   }
+  
+  console.log(`[DHT] Value not found for key: ${key}`);
+  return null;
+}
   
   // Bootstrap the DHT by finding our own node ID
   async bootstrap() {
     console.log("Bootstrapping DHT...");
     const closest = await this.findNode(this.nodeId);
     console.log(`DHT bootstrap complete, found ${closest.length} peers`);
+      // Start refresh timer after bootstrap
+    this.startRefreshTimer();
   }
   
   // Get routing table statistics
-  getStats() {
-    let totalPeers = 0;
-    let activeBuckets = 0;
+getStats() {
+  let totalPeers = 0;
+  let activeBuckets = 0;
+  
+  for (let i = 0; i < this.buckets.length; i++) {
+    const bucketSize = this.buckets[i].length;
+    totalPeers += bucketSize;
+    if (bucketSize > 0) activeBuckets++;
+  }
+  
+  // Calculate replication health
+  let wellReplicated = 0;
+  let underReplicated = 0;
+  
+  for (const [key, status] of this.replicationStatus) {
+    if (status.replicas >= this.k / 2) {
+      wellReplicated++;
+    } else {
+      underReplicated++;
+    }
+  }
+  
+  return {
+    totalPeers,
+    activeBuckets,
+    avgBucketSize: activeBuckets > 0 ? (totalPeers / activeBuckets).toFixed(2) : 0,
+    storageSize: this.storage.size,
+    localKeys: this.storage.size,
+    refreshQueueSize: this.refreshQueue.size,
+    replicationHealth: {
+      wellReplicated,
+      underReplicated,
+      total: this.replicationStatus.size
+    }
+  };
+}
+  
+    /**
+   * Serializes the entire DHT state for saving.
+   * @returns {object} - An object containing the routing table and storage.
+   */
+serialize() {
+  const serializedBuckets = this.buckets.map(bucket =>
+    bucket.map(peer => ({
+      id: this.uint8ArrayToHex(peer.id),
+      lastSeen: peer.lastSeen,
+      failures: peer.failures,
+    }))
+  );
+  
+  // Serialize refresh queue
+  const serializedRefreshQueue = Array.from(this.refreshQueue.entries()).map(([key, data]) => ({
+    key,
+    value: data.value,
+    lastRefresh: data.lastRefresh,
+    options: data.options
+  }));
+  
+  return {
+    buckets: serializedBuckets,
+    storage: Array.from(this.storage.entries()),
+    refreshQueue: serializedRefreshQueue,
+    replicationStatus: Array.from(this.replicationStatus.entries())
+  };
+}
+
+
+  /**
+   * Deserializes and loads the DHT state from a saved object.
+   * @param {object} state - The saved state from serialize().
+   */
+deserialize(state) {
+  if (state.buckets) {
+    this.buckets = state.buckets.map(bucket =>
+      bucket.map(peer => ({
+        id: this.hexToUint8Array(peer.id),
+        wire: null,
+        lastSeen: peer.lastSeen,
+        failures: peer.failures,
+      }))
+    );
+    console.log(`[DHT] Loaded ${state.buckets.flat().length} peers into routing table.`);
+  }
+  
+  if (state.storage) {
+    this.storage = new Map(state.storage);
+    console.log(`[DHT] Loaded ${this.storage.size} key-value pairs into DHT storage.`);
+  }
+  
+  if (state.refreshQueue) {
+    this.refreshQueue = new Map(state.refreshQueue.map(item => [
+      item.key,
+      {
+        value: item.value,
+        lastRefresh: item.lastRefresh,
+        options: item.options
+      }
+    ]));
+    console.log(`[DHT] Loaded ${this.refreshQueue.size} keys into refresh queue.`);
+  }
+  
+  if (state.replicationStatus) {
+    this.replicationStatus = new Map(state.replicationStatus);
+  }
+  
+  // Restart refresh timer if we have data to refresh
+  if (this.refreshQueue.size > 0) {
+    this.startRefreshTimer();
+  }
+}
+  startRefreshTimer() {
+  if (this.refreshTimer) return;
+  
+  // Run refresh every 10 minutes
+  this.refreshTimer = setInterval(() => {
+    this.refreshStoredValues().catch(e => 
+      console.error('[DHT] Refresh error:', e)
+    );
+  }, 600000); // 10 minutes
+  
+  console.log('[DHT] Started refresh timer');
+}
+
+stopRefreshTimer() {
+  if (this.refreshTimer) {
+    clearInterval(this.refreshTimer);
+    this.refreshTimer = null;
+  }
+}
+
+async refreshStoredValues() {
+  const now = Date.now();
+  let refreshedCount = 0;
+  
+  for (const [key, refreshData] of this.refreshQueue) {
+    const timeSinceRefresh = now - (refreshData.lastRefresh || 0);
     
-    for (let i = 0; i < this.buckets.length; i++) {
-      const bucketSize = this.buckets[i].length;
-      totalPeers += bucketSize;
-      if (bucketSize > 0) activeBuckets++;
+    // Skip if recently refreshed
+    if (timeSinceRefresh < this.refreshInterval) {
+      continue;
     }
     
-    return {
-      totalPeers,
-      activeBuckets,
-      avgBucketSize: activeBuckets > 0 ? (totalPeers / activeBuckets).toFixed(2) : 0,
-      storageSize: this.storage.size
-    };
+    try {
+      // Re-store to ensure replication
+      await this.store(key, refreshData.value, {
+        ...refreshData.options,
+        isRefresh: true
+      });
+      
+      refreshData.lastRefresh = now;
+      refreshedCount++;
+      
+      console.log(`[DHT] Refreshed key: ${key}`);
+    } catch (e) {
+      console.error(`[DHT] Failed to refresh key ${key}:`, e);
+    }
   }
+  
+  if (refreshedCount > 0) {
+    console.log(`[DHT] Refreshed ${refreshedCount} keys`);
+  }
+  
+  // Also check replication status
+  await this.checkReplicationStatus();
+}
+
+async checkReplicationStatus() {
+  const keysToCheck = Array.from(this.refreshQueue.keys()).slice(0, 10); // Check 10 at a time
+  
+  for (const key of keysToCheck) {
+    const status = await this.getReplicationStatus(key);
+    this.replicationStatus.set(key, {
+      replicas: status.replicas,
+      lastCheck: Date.now()
+    });
+    
+    // If under-replicated, force refresh
+    if (status.replicas < Math.floor(this.replicationFactor / 2)) {
+      console.log(`[DHT] Key ${key} under-replicated (${status.replicas} replicas), forcing refresh`);
+      const refreshData = this.refreshQueue.get(key);
+      if (refreshData) {
+        refreshData.lastRefresh = 0; // Force refresh on next cycle
+      }
+    }
+  }
+}
+
+async getReplicationStatus(key) {
+  const keyId = await this.hashToNodeId(key);
+  const closestPeers = await this.findNode(keyId);
+  
+  let replicaCount = 0;
+  const checkPromises = closestPeers.slice(0, this.k).map(async (peer) => {
+    try {
+      const result = await this.sendRPC(peer, 'CHECK_VALUE', { key });
+      if (result.hasValue) {
+        replicaCount++;
+      }
+    } catch (e) {
+      // Peer didn't respond or doesn't have value
+    }
+  });
+  
+  await Promise.all(checkPromises);
+  
+  // Include ourselves if we have it
+  if (this.storage.has(key)) {
+    replicaCount++;
+  }
+  
+  return { replicas: replicaCount, checked: checkPromises.length };
+}
+  
+  shutdown() {
+  this.stopRefreshTimer();
+  console.log('[DHT] Shutdown complete');
+}
+  
 }

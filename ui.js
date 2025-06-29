@@ -4,7 +4,7 @@
 
 // --- IMPORTS ---
 import { state, imageStore, toggleCarry, createReply, createPostWithTopics, findRootPost, isImageToxic, isToxic,sendDirectMessage } from './main.js';
-import { sanitize } from './utils.js';
+import { sanitize, sanitizeDM } from './utils.js';
 import { CONFIG } from './config.js';
 
 
@@ -957,7 +957,7 @@ export function addMessageToConversation(handle, messageText, direction, timesta
   const msgEl = document.createElement('div');
   msgEl.className = `dm-message ${direction}`;
   msgEl.innerHTML = `
-    <div class="dm-message-content">${sanitize(messageText)}</div>
+    <div class="dm-message-content">${sanitizeDM(messageText)}</div>
     <div class="dm-message-time">${new Date(timestamp).toLocaleTimeString()}</div>
   `;
   
@@ -1033,7 +1033,7 @@ export function updateDMInbox() {
           <span class="ember-indicator">🔥</span>
           ${conv.handle}
         </div>
-        <div class="dm-preview">${sanitize(preview)}</div>
+        <div class="dm-preview">${sanitizeDM(preview)}</div>
         <div class="dm-time">${timeAgo}</div>
       </div>
     `;
@@ -1048,7 +1048,6 @@ function getTimeAgo(timestamp) {
   return `${Math.floor(seconds / 86400)}d`;
 }
 
-// Update the existing storeDMLocally function to trigger inbox update
 export function storeDMLocallyAndUpdateUI(otherHandle, messageText, direction) {
   const key = `ember-dms-${otherHandle}`;
   let conversation = [];
@@ -1066,14 +1065,15 @@ export function storeDMLocallyAndUpdateUI(otherHandle, messageText, direction) {
     message: messageText,
     direction: direction,
     timestamp: Date.now(),
-    read: direction === 'sent' // Mark sent messages as read
+    read: direction === 'sent' || direction === 'queued',
+    status: direction === 'queued' ? 'pending' : 'sent' 
   });
+  
   if (conversation.length > 100) {
     conversation = conversation.slice(-100);
   }
   
   localStorage.setItem(key, JSON.stringify(conversation));
-  // Update the inbox display
   updateDMInbox();
 }
 

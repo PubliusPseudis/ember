@@ -203,6 +203,34 @@ function handleBootstrapWire(wire, addr) {
 
   attachEphemeralExtension(wire);
 
+    // Set up a delayed identity announcement
+    setTimeout(async () => {
+      if (wire.destroyed) return;
+      
+      // If we have an identity, announce our routing info
+      if (state.myIdentity && state.identityRegistry) {
+        try {
+          await state.identityRegistry.updatePeerLocation(
+            state.myIdentity.handle,
+            state.myIdentity.nodeId,
+            idKey // This is the normalized peer ID
+          );
+          console.log(`[Network] Announced routing info for ${state.myIdentity.handle}`);
+          
+          // Also send a direct announcement to this peer
+          sendPeer(wire, {
+            type: 'identity_announce',
+            handle: state.myIdentity.handle,
+            publicKey: state.myIdentity.publicKey,
+            wirePeerId: idKey
+          });
+        } catch (e) {
+          console.error('[Network] Failed to update peer location:', e);
+        }
+      }
+    }, 2000); // Wait 2 seconds for connection to stabilize
+
+
   wire.on('close', () => {
     console.log(`Bootstrap peer disconnected: ${idKey.substring(0, 12)}...`);
     state.peers.delete(idKey);
@@ -340,6 +368,32 @@ function handleWire(wire, addr) {
   });
 
   attachEphemeralExtension(wire);
+
+
+setTimeout(async () => {
+  if (wire.destroyed) return;
+  
+  if (state.myIdentity && state.identityRegistry) {
+    try {
+      await state.identityRegistry.updatePeerLocation(
+        state.myIdentity.handle,
+        state.myIdentity.nodeId,
+        idKey
+      );
+      console.log(`[Network] Announced routing info for ${state.myIdentity.handle}`);
+      
+      sendPeer(wire, {
+        type: 'identity_announce',
+        handle: state.myIdentity.handle,
+        publicKey: state.myIdentity.publicKey,
+        wirePeerId: idKey
+      });
+    } catch (e) {
+      console.error('[Network] Failed to update peer location:', e);
+    }
+  }
+}, 2000);
+
 
   const delay = Math.random() * 10000;
   setTimeout(() => {
@@ -685,6 +739,103 @@ async function handlePeerMessage(msg, fromWire) {
           challenge.resolver(false);
         }
         state.peerChallenges.delete(peerId);
+      }
+      break;
+    case "identity_announce":
+      if (msg.handle && msg.publicKey && msg.wirePeerId) {
+        console.log(`[Network] Received identity announcement from ${msg.handle}`);
+        
+        // Store the wire-to-handle mapping locally for quick lookups
+        if (!state.peerIdentities) state.peerIdentities = new Map();
+        state.peerIdentities.set(fromWire.peerId, {
+          handle: msg.handle,
+          publicKey: msg.publicKey,
+          timestamp: Date.now()
+        });
+        
+        // Update the peer data with identity info
+        const peerData = state.peers.get(fromWire.peerId);
+        if (peerData) {
+          peerData.handle = msg.handle;
+          peerData.identityVerified = false; // Will verify later
+          
+          // Verify the identity claim asynchronously
+          state.identityRegistry.lookupHandle(msg.handle).then(claim => {
+            if (claim && claim.publicKey === msg.publicKey) {
+              peerData.identityVerified = true;
+              console.log(`[Network] Verified identity for peer ${msg.handle}`);
+            }
+          });
+        }
+      }
+      break;
+      case "dm_delivered":
+          if (msg.messageId) {
+            console.log(`[DM] Received delivery confirmation for message ${msg.messageId}`);
+            stateManager.markMessageDelivered(msg.messageId);
+            
+            // Update UI to show delivered status
+            notify(`Message to ${msg.recipient} delivered ✓`);
+          }
+          break;
+    case "routing_update":
+      if (msg.handle && msg.nodeId && msg.peerId && msg.timestamp) {
+        console.log(`[Network] Received routing update from ${msg.handle}`);
+        
+        // Verify the update is recent
+        const age = Date.now() - msg.timestamp;
+        if (age > 300000) { // 5 minutes
+          console.log(`[Network] Ignoring stale routing update (${age}ms old)`);
+          break;
+        }
+        
+        // Store in our local routing cache
+        if (!state.peerRoutingCache) state.peerRoutingCache = new Map();
+        state.peerRoutingCache.set(msg.handle, {
+          nodeId: msg.nodeId,
+          peerId: msg.peerId,
+          timestamp: msg.timestamp,
+          publicKey: msg.publicKey,
+          fromWire: fromWire.peerId
+        });
+        
+        // Update the DHT if we have it
+        if (state.identityRegistry) {
+          const routingKey = `routing:${msg.handle.toLowerCase()}`;
+          const routingInfo = {
+            handle: msg.handle,
+            nodeId: msg.nodeId,
+            wirePeerId: msg.peerId,
+            timestamp: msg.timestamp,
+            ttl: 300000
+          };
+          
+          // Store in our local DHT (don't propagate to avoid loops)
+          state.dht.storage.set(routingKey, routingInfo);
+        }
+        
+        // Update peer identity mapping
+        const peerData = state.peers.get(fromWire.peerId);
+        if (peerData) {
+          peerData.handle = msg.handle;
+          peerData.lastRoutingUpdate = Date.now();
+        }
+      }
+      break;
+
+    case "routing_heartbeat":
+      if (msg.handle && msg.timestamp) {
+        // Update last seen time for this peer's routing
+        if (state.peerRoutingCache && state.peerRoutingCache.has(msg.handle)) {
+          const cached = state.peerRoutingCache.get(msg.handle);
+          cached.lastHeartbeat = Date.now();
+        }
+        
+        // Update peer data
+        const peerData = state.peers.get(fromWire.peerId);
+        if (peerData) {
+          peerData.lastHeartbeat = Date.now();
+        }
       }
       break;
   }

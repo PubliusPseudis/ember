@@ -213,16 +213,24 @@ export async function createNewIdentity() {
         };
         
         // Register immediately in DHT
-        const identityClaim = await state.identityRegistry.registerIdentity(
-            handle,
-            keyPair,
-            proofResult,
-            vdfInput
-        );
-        
-        state.myIdentity.identityClaim = identityClaim;
-        state.myIdentity.isRegistered = true;
-        state.myIdentity.registrationVerified = true;
+        try {
+            const identityClaim = await state.identityRegistry.registerIdentity(
+                handle,
+                keyPair,
+                proofResult,
+                vdfInput
+            );
+            state.myIdentity.identityClaim = identityClaim;
+            state.myIdentity.isRegistered = true;
+            state.myIdentity.registrationVerified = true;
+        } catch (e) {
+            // This will now correctly catch if a handle is already taken
+            notify(e.message);
+            // Re-show the handle selection screen so the user can pick another
+            step2.style.display = 'none';
+            showHandleSelection();
+            return; // Stop the process
+        }
         
         
         // Update the DHT nodeId now that we have our real identity

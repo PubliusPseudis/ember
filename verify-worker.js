@@ -130,19 +130,21 @@ self.addEventListener('message', async function(e) {
         switch (type) {
             case 'verify_batch':
                 const results = await verifyBatch(data.posts);
+            
                 self.postMessage({ type: 'batch_complete', id, results });
                 break;
                 
             case 'verify_single':
                 const result = await verifySinglePost(data.post);
                 self.postMessage({ type: 'single_complete', id, result });
-                break;
+     
+           break;
         }
     } catch (error) {
         self.postMessage({ 
             type: 'error', 
             id, 
-            error: error.message 
+            error: String(error) 
         });
     }
 });
