@@ -67,12 +67,7 @@ export class RoutingManager {
       console.log(`[RoutingManager] Peer ID changed from ${this.lastKnownPeerId} to ${currentPeerId}`);
       force = true;
     }
-    
-    // Skip update if peer ID hasn't changed (unless forced)
-    if (!force && this.lastKnownPeerId === currentPeerId && this.routingFailures === 0) {
-      console.log('[RoutingManager] Peer ID unchanged, skipping update');
-      return;
-    }
+
     
     try {
       // Update routing in DHT

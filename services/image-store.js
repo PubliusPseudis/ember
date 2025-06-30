@@ -1,3 +1,5 @@
+import { sendPeer } from '../p2p/network-manager.js'; 
+import { generateId } from '../utils.js';
 import { state } from '../main.js';
 
 

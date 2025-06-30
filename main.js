@@ -205,42 +205,50 @@ export async function handlePostsResponse(list, fromWire) {
 export async function handleVerificationResults(results) {
     let newlyVerifiedCount = 0;
     console.log(`[Debug] Processing ${results.length} verification results`);
-    
     for (const result of results) {
         const post = state.pendingVerification.get(result.id);
         if (!post) continue;
-        
-        console.log(`[Debug] Processing post ${result.id.substring(0,8)}... hasImage: ${!!post.imageHash}, parentId: ${post.parentId || 'none'}, valid: ${result.valid}`);
-        
+
         if (result.valid) {
             post.verified = true;
-            
-            // Check identity but don't require it for post acceptance
             let identityStatus = 'unknown';
             if (state.identityRegistry) {
                 try {
                     const claim = await state.identityRegistry.lookupHandle(post.author);
                     if (claim) {
-                        // Identity found - verify it matches
                         const identityValid = await state.identityRegistry.verifyAuthorIdentity(post);
                         identityStatus = identityValid ? 'verified' : 'mismatch';
                     }
-                    // If no claim found, identityStatus remains 'unknown'
                 } catch (e) {
                     console.warn(`Identity check error for ${post.author}:`, e);
                 }
             }
-            
+
             post.identityStatus = identityStatus;
-            
-            // Reject only if identity exists but doesn't match (impersonation)
             if (identityStatus === 'mismatch') {
                 console.warn(`Rejecting post from ${post.author} - identity mismatch!`);
                 state.pendingVerification.delete(result.id);
                 continue;
             }
-            
-            // Handle parent/reply relationships
+
+            // MODIFIED IMAGE HANDLING LOGIC
+            if (post.imageHash && !post.imageData) {
+                const imageData = await imageStore.retrieveImage(post.imageHash);
+                if (!imageData) {
+                    // Image is not ready. Request it and defer rendering.
+                    console.log(`[Image] Post ${post.id} is valid but awaiting image data. Requesting from peers.`);
+                    const peers = Array.from(state.peers.values()).slice(0, 3);
+                    for (const peer of peers) {
+                        sendPeer(peer.wire, { type: "request_image", imageHash: post.imageHash });
+                    }
+                    // Skip the rest of this loop, leaving the post in pendingVerification.
+                    continue;
+                }
+                // If we get here, image data was found locally.
+                post.imageData = imageData;
+            }
+
+            // This block is now only reached if the post has no image or its image is ready.
             if (post.parentId) {
                 const parent = state.posts.get(post.parentId);
                 if (parent) {
@@ -248,41 +256,19 @@ export async function handleVerificationResults(results) {
                     post.depth = Math.min(parent.depth + 1, 5);
                     refreshPost(parent);
                 } else {
-                    // Parent not found yet - set default depth
                     post.depth = 1;
-                    console.log(`Reply ${post.id} added without parent ${post.parentId}`);
                 }
             }
-            
-            // Handle images
-            if (post.imageHash && !post.imageData) {
-                const imageData = await imageStore.retrieveImage(post.imageHash);
-                if (imageData) {
-                    post.imageData = imageData;
-                } else {
-                    const peers = Array.from(state.peers.values()).slice(0, 3);
-                    for (const peer of peers) {
-                        sendPeer(peer.wire, { type: "request_image", imageHash: post.imageHash });
-                    }
-                }
-            }
-            
+
             state.posts.set(post.id, post);
-            console.log(`[Debug] Added post ${post.id.substring(0,8)}... to state.posts. Total posts: ${state.posts.size}`);
             renderPost(post);
             newlyVerifiedCount++;
-            // Generate and broadcast attestation for this verified post
             generateAndBroadcastAttestation(post);
-            
-            // Update peer reputation if this came from a peer
-            // (We'll need to track which peer sent each post - for now just log)
             console.log(`[Attestation] Would update peer reputation for valid post`);
         }
-        
+
         state.pendingVerification.delete(result.id);
     }
-    
-    console.log(`[Debug] Finished processing. Added ${newlyVerifiedCount} posts. state.posts.size: ${state.posts.size}`);
 
     if (newlyVerifiedCount > 0) {
         notify(`Added ${newlyVerifiedCount} new verified posts`);
@@ -857,23 +843,39 @@ async function storePendingMessage(recipientHandle, messageText, status = 'queue
 
 
 // Direct Message Functions
+/**
+ * Asynchronously sends an end-to-end encrypted direct message to another user.
+ *
+ * The delivery strategy is prioritized for robustness and efficiency:
+ * 1. **Identity Lookup**: First, finds the recipient's identity claim, which is
+ * necessary for their public encryption key. Retries several times.
+ * 2. **Direct Delivery**: Checks for an active, direct connection to the recipient.
+ * If found, the message is sent immediately. This is the fastest and most
+ * reliable method.
+ * 3. **DHT-Routed Delivery**: If no direct connection exists, it queries the DHT
+ * for the recipient's last known network location and attempts to route the
+ * message through the network.
+ * 4. **Offline Storage**: If both direct and routed delivery methods fail, the
+ * message is stored locally and will be sent when the recipient comes online.
+ *
+ * @param {string} recipientHandle - The handle of the user to send the message to.
+ * @param {string} messageText - The plain text content of the message.
+ * @returns {Promise<boolean>} A promise that resolves to true if the message was
+ * successfully sent or queued, and false if a critical error occurred.
+ */
 export async function sendDirectMessage(recipientHandle, messageText) {
-  try {
-    // Step 1: Get static identity (public keys, etc.)
-    let recipientClaim = null;
-    const maxAttempts = 5;
-    const initialDelay = 1000;
+  console.log(`[DM] Initializing DM to ${recipientHandle}...`);
 
+  try {
+    // --- Step 1: Find and Validate Recipient's Identity ---
+    // This is a prerequisite. We can't do anything without their public key.
+    let recipientClaim = null;
+    const maxAttempts = 3;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      notify(`Searching for ${recipientHandle} on the network... (Attempt ${attempt + 1})`);
+      if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      notify(`Searching for ${recipientHandle}... (Attempt ${attempt + 1})`);
       recipientClaim = await state.identityRegistry.lookupHandle(recipientHandle);
-      if (recipientClaim) {
-        break;
-      }
-      if (attempt < maxAttempts - 1) {
-        const delay = initialDelay * Math.pow(2, attempt);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
+      if (recipientClaim) break;
     }
 
     if (!recipientClaim) {
@@ -886,44 +888,28 @@ export async function sendDirectMessage(recipientHandle, messageText) {
       return false;
     }
 
-    // Step 2: Check if user is currently online via routing info
-    const routingInfo = await state.identityRegistry.lookupPeerLocation(recipientHandle);
-    
-    if (!routingInfo) {
-      console.log(`[DM] No current routing info for ${recipientHandle}, attempting offline delivery`);
-      
-      // Store message for offline delivery
-      await storePendingMessage(recipientHandle, messageText, 'queued');
-      notify(`${recipientHandle} appears offline. Message saved for later delivery.`);
-      return true;
-    }
+    // --- Step 2: Prepare the Encrypted Packet ---
+    // Encrypt the message once upfront for efficiency.
+    const nonce = nacl.randomBytes(24);
+    const messageBytes = new TextEncoder().encode(messageText);
+    const recipientPublicKey = base64ToArrayBuffer(recipientClaim.encryptionPublicKey);
+    const ciphertext = nacl.box(
+      messageBytes, nonce, recipientPublicKey, state.myIdentity.encryptionSecretKey
+    );
+    const dmPacket = {
+      type: 'e2e_dm',
+      recipient: recipientHandle,
+      sender: state.myIdentity.handle,
+      ciphertext: arrayBufferToBase64(ciphertext),
+      nonce: arrayBufferToBase64(nonce),
+      timestamp: Date.now()
+    };
 
-    // Step 3: Try direct delivery if peer is connected
+    // --- Step 3: Attempt Direct Delivery (Highest Priority) ---
+    // The most reliable "online" check is an active, direct connection.
     const directPeer = await findPeerByHandle(recipientHandle);
-    
     if (directPeer) {
-      console.log(`[DM] Found direct connection to ${recipientHandle}`);
-      
-      // Encrypt and send directly
-      const nonce = nacl.randomBytes(24);
-      const messageBytes = new TextEncoder().encode(messageText);
-      const recipientPublicKey = base64ToArrayBuffer(recipientClaim.encryptionPublicKey);
-      const ciphertext = nacl.box(
-        messageBytes,
-        nonce,
-        recipientPublicKey,
-        state.myIdentity.encryptionSecretKey
-      );
-      
-      const dmPacket = {
-        type: 'e2e_dm',
-        recipient: recipientHandle,
-        sender: state.myIdentity.handle,
-        ciphertext: arrayBufferToBase64(ciphertext),
-        nonce: arrayBufferToBase64(nonce),
-        timestamp: Date.now()
-      };
-      
+      console.log(`[DM] Direct connection found. Sending message to ${recipientHandle}.`);
       sendPeer(directPeer.wire, dmPacket);
       storeDMLocallyAndUpdateUI(recipientHandle, messageText, 'sent');
       addMessageToConversation(recipientHandle, messageText, 'sent');
@@ -931,69 +917,34 @@ export async function sendDirectMessage(recipientHandle, messageText) {
       return true;
     }
 
-    // Step 4: Try routing through DHT if no direct connection
-    console.log(`[DM] No direct connection, routing through DHT`);
-    
-    // Use the nodeId from routing info (which is current) instead of from the claim
-    const recipientNodeId = base64ToArrayBuffer(routingInfo.nodeId);
-    const closestPeers = await state.dht.findNode(recipientNodeId);
-    
-    if (closestPeers.length === 0) {
-      // Store for offline delivery
-      await storePendingMessage(recipientHandle, messageText, 'queued');
-      notify(`Cannot reach ${recipientHandle} right now. Message saved for later.`);
-      return true;
-    }
+    // --- Step 4: Fallback to DHT-based Routing ---
+    // If no direct connection, check the DHT for their last known location.
+    const routingInfo = await state.identityRegistry.lookupPeerLocation(recipientHandle);
+    if (routingInfo) {
+      console.log(`[DM] No direct connection. Forwarding message to ${recipientHandle} via DHT.`);
+      dmPacket.routingHint = routingInfo.wirePeerId;
+      const recipientNodeId = base64ToArrayBuffer(routingInfo.nodeId);
+      const closestPeers = await state.dht.findNode(recipientNodeId);
 
-    // Encrypt the message
-    const nonce = nacl.randomBytes(24);
-    const messageBytes = new TextEncoder().encode(messageText);
-    const recipientPublicKey = base64ToArrayBuffer(recipientClaim.encryptionPublicKey);
-    const ciphertext = nacl.box(
-      messageBytes,
-      nonce,
-      recipientPublicKey,
-      state.myIdentity.encryptionSecretKey
-    );
-
-    const dmPacket = {
-      type: 'e2e_dm',
-      recipient: recipientHandle,
-      sender: state.myIdentity.handle,
-      ciphertext: arrayBufferToBase64(ciphertext),
-      nonce: arrayBufferToBase64(nonce),
-      timestamp: Date.now(),
-      routingHint: routingInfo.wirePeerId // Include routing hint for intermediate nodes
-    };
-
-    // Send to multiple peers for redundancy
-    let sent = false;
-    const maxPeersToTry = Math.min(3, closestPeers.length);
-    
-    for (let i = 0; i < maxPeersToTry; i++) {
-      const peer = closestPeers[i];
-      if (peer.wire && !peer.wire.destroyed) {
-        sendPeer(peer.wire, dmPacket);
-        sent = true;
-        console.log(`[DM] Sent to peer ${i + 1}/${maxPeersToTry} for routing`);
+      if (closestPeers.length > 0) {
+        sendPeer(closestPeers[0].wire, dmPacket);
+        storeDMLocallyAndUpdateUI(recipientHandle, messageText, 'sent');
+        addMessageToConversation(recipientHandle, messageText, 'sent');
+        notify(`Message sent to ${recipientHandle} via network routing`);
+        return true;
       }
     }
 
-    if (sent) {
-      storeDMLocallyAndUpdateUI(recipientHandle, messageText, 'sent');
-      addMessageToConversation(recipientHandle, messageText, 'sent');
-      notify(`Message sent to ${recipientHandle} via DHT routing`);
-      return true;
-    } else {
-      // All routing failed, store for offline
-      await storePendingMessage(recipientHandle, messageText, 'queued');
-      notify(`Failed to send message. Saved for when ${recipientHandle} comes online.`);
-      return true;
-    }
-    
+    // --- Step 5: Last Resort - Store for Offline Delivery ---
+    // If both direct and DHT lookups fail, the user is unreachable.
+    console.log(`[DM] User ${recipientHandle} is unreachable. Storing message for later delivery.`);
+    await storePendingMessage(recipientHandle, messageText, 'queued');
+    notify(`${recipientHandle} appears to be offline. Your message has been saved.`);
+    return true;
+
   } catch (error) {
-    console.error('DM send error:', error);
-    notify(`Error sending message: ${error.message}`);
+    console.error('Error sending direct message:', error);
+    notify(`Error: Could not send message to ${recipientHandle}.`);
     return false;
   }
 }

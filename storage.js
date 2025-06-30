@@ -1,7 +1,9 @@
+import { generateId } from './utils.js';
 import { state, imageStore } from './main.js'; 
 import { Post } from './models/post.js';
 import { peerManager } from './main.js';
 import { renderPost } from './ui.js'; 
+
 export class StateManager {
   constructor() {
     this.dbName = 'EmberNetwork';
@@ -365,7 +367,6 @@ export class StateManager {
   
   async storePendingMessage(recipientHandle, messageText, senderHandle, encrypted = null) {
       if (!this.db) return null;
-      
       try {
         const messageId = generateId();
         const pendingMessage = {
@@ -373,17 +374,22 @@ export class StateManager {
           recipient: recipientHandle,
           sender: senderHandle,
           message: messageText,
-          encrypted: encrypted, // Store encrypted version if available
+          encrypted: encrypted,
           timestamp: Date.now(),
           attempts: 0,
           lastAttempt: null,
-          status: 'pending', // pending, delivered, failed
+          status: 'pending',
           expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 days
         };
-        
         const transaction = this.db.transaction(['pendingMessages'], 'readwrite');
         const store = transaction.objectStore('pendingMessages');
-        await store.add(pendingMessage);
+        
+        // FIX: Wrap the IDBRequest in a Promise
+        await new Promise((resolve, reject) => {
+            const request = store.add(pendingMessage);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
         
         console.log(`[Storage] Stored pending message ${messageId} for ${recipientHandle}`);
         return messageId;
@@ -395,15 +401,18 @@ export class StateManager {
 
     async getPendingMessagesFor(recipientHandle) {
       if (!this.db) return [];
-      
       try {
         const transaction = this.db.transaction(['pendingMessages'], 'readonly');
         const store = transaction.objectStore('pendingMessages');
         const index = store.index('recipient');
         
-        const messages = await index.getAll(recipientHandle);
+        // FIX: Wrap the IDBRequest in a Promise
+        const messages = await new Promise((resolve, reject) => {
+            const request = index.getAll(recipientHandle);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
         
-        // Filter out expired messages
         const now = Date.now();
         return messages.filter(msg => 
           msg.status === 'pending' && 
@@ -417,13 +426,18 @@ export class StateManager {
 
     async getPendingMessagesFrom(senderHandle) {
       if (!this.db) return [];
-      
       try {
         const transaction = this.db.transaction(['pendingMessages'], 'readonly');
         const store = transaction.objectStore('pendingMessages');
         const index = store.index('sender');
         
-        const messages = await index.getAll(senderHandle);
+        // FIX: Wrap the IDBRequest in a Promise
+        const messages = await new Promise((resolve, reject) => {
+            const request = index.getAll(senderHandle);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+
         return messages.filter(msg => msg.status === 'pending');
       } catch (error) {
         console.error('[Storage] Failed to get pending messages from sender:', error);
@@ -433,26 +447,39 @@ export class StateManager {
 
     async markMessageDelivered(messageId) {
       if (!this.db) return;
-      
       try {
         const transaction = this.db.transaction(['pendingMessages', 'messageReceipts'], 'readwrite');
         const messagesStore = transaction.objectStore('pendingMessages');
         const receiptsStore = transaction.objectStore('messageReceipts');
         
-        // Update message status
-        const message = await messagesStore.get(messageId);
+        // FIX: Wrap the IDBRequest in a Promise
+        const message = await new Promise((resolve, reject) => {
+            const request = messagesStore.get(messageId);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+
         if (message) {
           message.status = 'delivered';
           message.deliveredAt = Date.now();
-          await messagesStore.put(message);
           
-          // Store delivery receipt
-          await receiptsStore.add({
-            messageId: messageId,
-            timestamp: Date.now(),
-            recipient: message.recipient
+          // FIX: Wrap subsequent requests in Promises
+          await new Promise((resolve, reject) => {
+              const request = messagesStore.put(message);
+              request.onsuccess = () => resolve(request.result);
+              request.onerror = () => reject(request.error);
           });
           
+          await new Promise((resolve, reject) => {
+              const request = receiptsStore.add({
+                  messageId: messageId,
+                  timestamp: Date.now(),
+                  recipient: message.recipient
+              });
+              request.onsuccess = () => resolve(request.result);
+              request.onerror = () => reject(request.error);
+          });
+
           console.log(`[Storage] Marked message ${messageId} as delivered`);
         }
       } catch (error) {
@@ -462,22 +489,31 @@ export class StateManager {
 
     async updateMessageAttempt(messageId) {
       if (!this.db) return;
-      
       try {
         const transaction = this.db.transaction(['pendingMessages'], 'readwrite');
         const store = transaction.objectStore('pendingMessages');
         
-        const message = await store.get(messageId);
+        // FIX: Wrap the IDBRequest in a Promise
+        const message = await new Promise((resolve, reject) => {
+            const request = store.get(messageId);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+
         if (message) {
           message.attempts++;
           message.lastAttempt = Date.now();
           
-          // Mark as failed after 10 attempts
           if (message.attempts >= 10) {
             message.status = 'failed';
           }
           
-          await store.put(message);
+          // FIX: Wrap the put request in a Promise
+          await new Promise((resolve, reject) => {
+              const request = store.put(message);
+              request.onsuccess = () => resolve(request.result);
+              request.onerror = () => reject(request.error);
+          });
         }
       } catch (error) {
         console.error('[Storage] Failed to update message attempt:', error);
@@ -576,15 +612,21 @@ async loadDHTState() {
     
     // Wait for DHT to be initialized
     if (state.dht && bucketsData.length > 0) {
-      const buckets = [];
-      bucketsData.forEach(item => {
-        buckets[item.bucketIndex] = item.peers;
-      });
-      
-      const storage = storageData.map(item => [item.key, item.value]);
-      
-      state.dht.deserialize({ buckets, storage });
-      console.log('[StateManager] Loaded DHT state with', bucketsData.length, 'buckets and', storageData.length, 'keys');
+        // First, create a new, full, and valid array of 160 empty buckets.
+        const buckets = new Array(160).fill(null).map(() => []);
+
+        // Then, populate it with the data that was loaded from storage.
+        bucketsData.forEach(item => {
+          // Ensure the saved index is valid before assigning.
+          if (item.bucketIndex >= 0 && item.bucketIndex < 160) {
+            buckets[item.bucketIndex] = item.peers;
+          }
+        });
+        const storage = storageData.map(item => [item.key, item.value]);
+
+        // Deserialize the now-complete and valid state into the DHT instance.
+        state.dht.deserialize({ buckets, storage });
+        console.log('[StateManager] Loaded DHT state with', bucketsData.length, 'buckets and', storageData.length, 'keys');
     }
   } catch (error) {
     console.error('[StateManager] Failed to load DHT state:', error);

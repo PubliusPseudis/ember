@@ -73,71 +73,104 @@ async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
   
   // --- STEP 2: Main lookup function ---
   // Now, to look up a user, we first find their pubkey, then get their full data.
-  async lookupHandle(handle) {
-      const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
-      console.log(`[DM] Looking up handle: ${handle} at DHT address: ${handleAddress}`);
-      
-      const mapping = await this.dht.get(handleAddress);
-      if (!mapping || !mapping.publicKey) {
-          console.warn(`[DM] No public key found for handle ${handle}.`);
-          return null;
-      }
-      
-      const publicKeyB64 = mapping.publicKey;
-      const pubkeyAddress = `pubkey:${publicKeyB64}`;
-      console.log(`[DM] Found public key. Fetching full claim from: ${pubkeyAddress}`);
-      
-      const claim = await this.dht.get(pubkeyAddress);
-      if (!claim) {
-          console.warn(`[DM] Found pubkey for ${handle}, but the full claim is missing from the DHT.`);
-          return null;
-      }
+async lookupHandle(handle) {
+    const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
+    console.log(`[DM] Looking up handle: ${handle} at DHT address: ${handleAddress}`);
+    
+    const mapping = await this.dht.get(handleAddress);
+    if (!mapping || !mapping.publicKey) {
+        console.warn(`[DM] No public key found for handle ${handle}.`);
+        return null;
+    }
+    
+    const publicKeyB64 = mapping.publicKey;
+    const pubkeyAddress = `pubkey:${publicKeyB64}`;
+    console.log(`[DM] Found public key. Fetching full claim from: ${pubkeyAddress}`);
+    
+    const claim = await this.dht.get(pubkeyAddress);
+    if (!claim) {
+        console.warn(`[DM] Found pubkey for ${handle}, but the full claim is missing from the DHT.`);
+        return null;
+    }
 
-      // Always verify the integrity of the claim.
-      if (await this.verifyClaim(claim)) {
-          console.log(`[DM] Claim for ${handle} is verified.`);
-          return claim;
-      }
-      
-      console.warn(`[DM] Claim verification failed for ${handle}.`);
-      return null;
-  }
+    // Handle wrapped values from DHT storage
+    const actualClaim = claim.value || claim;
+
+    // DEBUG: Log the claim structure
+    console.log(`[DM] Retrieved claim structure:`, Object.keys(actualClaim));
+    console.log(`[DM] Claim has encryptionPublicKey: ${!!actualClaim.encryptionPublicKey}`);
+
+    // Always verify the integrity of the claim.
+    try {
+        const isValid = await this.verifyClaim(actualClaim);
+        if (isValid) {
+            console.log(`[DM] Claim for ${handle} is verified.`);
+            return actualClaim;
+        } else {
+            console.warn(`[DM] Claim verification failed for ${handle}.`);
+            return null;
+        }
+    } catch (error) {
+        console.error(`[DM] Error verifying claim for ${handle}:`, error);
+        return null;
+    }
+}
   
   // --- STEP 3: Verification Logic (mostly unchanged, but still important) ---
-  async verifyClaim(claim) {
-      try {
-          const claimData = JSON.stringify(claim);
-          const publicKey = base64ToArrayBuffer(claim.publicKey);
-          
-          // Remove the signature from the data before verifying
-          const dataToVerify = { ...claim };
-          delete dataToVerify.signature;
-          const signedString = JSON.stringify(dataToVerify);
-          
-          const signature = base64ToArrayBuffer(claim.signature);
-          
-          const verifiedMessage = nacl.sign.open(signature, publicKey);
-          if (!verifiedMessage) {
-               console.warn("[Identity] nacl.sign.open returned null. Invalid signature.");
-               return false;
-          }
+async verifyClaim(claim) {
+    try {
+        console.log("[Identity] Starting claim verification for handle:", claim.handle);
+        
+        const claimData = JSON.stringify(claim);
+        const publicKey = base64ToArrayBuffer(claim.publicKey);
+        
+        // Remove the signature from the data before verifying
+        const dataToVerify = {
+            handle: claim.handle,
+            publicKey: claim.publicKey,
+            encryptionPublicKey: claim.encryptionPublicKey,
+            vdfProof: claim.vdfProof,
+            vdfInput: claim.vdfInput,
+            claimedAt: claim.claimedAt,
+            nodeId: claim.nodeId
+        };
+        const signedString = JSON.stringify(dataToVerify);
+        
+        const signature = base64ToArrayBuffer(claim.signature);
+        
+        console.log("[Identity] Verifying signature...");
+        const verifiedMessage = nacl.sign.open(signature, publicKey);
+        if (!verifiedMessage) {
+             console.warn("[Identity] nacl.sign.open returned null. Invalid signature.");
+             return false;
+        }
 
-          const decodedMessage = new TextDecoder().decode(verifiedMessage);
-          if (decodedMessage !== signedString) {
-              console.warn("[Identity] Signature is valid, but message content does not match.");
-              return false;
-          }
-          
-          // VDF verification logic remains the same...
-          if (!claim.vdfProof || !claim.vdfInput) return false;
-          const vdfProofObj = new wasmVDF.VDFProof(claim.vdfProof.y, claim.vdfProof.pi, claim.vdfProof.l, claim.vdfProof.r, BigInt(claim.vdfProof.iterations));
-          return await wasmVDF.computer.verify_proof(claim.vdfInput, vdfProofObj);
+        const decodedMessage = new TextDecoder().decode(verifiedMessage);
+        if (decodedMessage !== signedString) {
+            console.warn("[Identity] Signature is valid, but message content does not match.");
+            return false;
+        }
+        
+        console.log("[Identity] Signature verified, checking VDF proof...");
+        // VDF verification logic remains the same...
+        if (!claim.vdfProof || !claim.vdfInput) {
+            console.warn("[Identity] Missing VDF proof or input");
+            return false;
+        }
+        
+        console.log("[Identity] VDF proof structure:", Object.keys(claim.vdfProof));
+        console.log("[Identity] Calling wasmVDF.verifyVDFProof...");
+        
+        const vdfValid = await wasmVDF.verifyVDFProof(claim.vdfInput, claim.vdfProof);
+        console.log("[Identity] VDF verification result:", vdfValid);
+        
+        return vdfValid;
 
-      } catch (e) {
-          console.error("Identity claim verification failed:", e);
-          return false;
-      }
-  }
+    } catch (e) {
+        console.error("Identity claim verification failed:", e);
+        return false;
+    }
+}
 
   // --- STEP 4: Other functions remain largely the same ---
   
@@ -233,14 +266,21 @@ async lookupPeerLocation(handle) {
 }
 
 async removeExpiredRouting() {
-  // This should be called periodically to clean up stale routing entries
   const routingPrefix = 'routing:';
   const wirePrefix = 'wire-to-handle:';
   
   for (const [key, value] of this.dht.storage) {
-    if (key.startsWith(routingPrefix) || key.startsWith(wirePrefix)) {
-      if (value.timestamp && Date.now() - value.timestamp > (value.ttl || 300000)) {
-        console.log(`[Identity] Removing expired routing entry: ${key}`);
+    if (key.startsWith(routingPrefix)) {
+      // For routing entries, check the routing info's own timestamp
+      const routingInfo = value.value || value; // Handle both wrapped and unwrapped values
+      if (routingInfo.timestamp && Date.now() - routingInfo.timestamp > (routingInfo.ttl || 300000)) {
+        console.log(`[Identity] Removing expired routing entry: ${key} (age: ${Date.now() - routingInfo.timestamp}ms)`);
+        this.dht.storage.delete(key);
+      }
+    } else if (key.startsWith(wirePrefix)) {
+      // For wire-to-handle mappings, check if they have a timestamp
+      if (value.timestamp && Date.now() - value.timestamp > 300000) {
+        console.log(`[Identity] Removing expired wire mapping: ${key}`);
         this.dht.storage.delete(key);
       }
     }

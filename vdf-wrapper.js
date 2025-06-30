@@ -38,6 +38,23 @@ class WasmVDF {
             }
         };
     }
+    
+    async verifyVDFProof(input, proofData) {
+        if (!this.computer || !this.VDFProof) {
+            throw new Error("WASM VDF not initialized for verification.");
+        }
+        // Internally create the proof object from the raw data
+        const proofObject = new this.VDFProof(
+            proofData.y,
+            proofData.pi,
+            proofData.l,
+            proofData.r,
+            BigInt(proofData.iterations)
+        );
+        // Call the underlying WASM verification function
+        return await this.computer.verify_proof(input, proofObject);
+    }
+    
     async initialize() {
         if (this.computer) return; // Only initialize once
         await init(new URL('./wasm/vdf_wasm_bg.wasm', import.meta.url));
