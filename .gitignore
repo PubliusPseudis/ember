@@ -4,6 +4,7 @@ vdf-wasm/target
 concatenated_output.txt
 concat.sh
 dist
+docs
 test-safety.html
 test-results.txt
 test-safety.js
