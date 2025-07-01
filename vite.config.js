@@ -11,8 +11,5 @@ export default defineConfig({
   build: {
     target: 'esnext',
     outDir: 'docs', // Output build files to 'docs' instead of 'dist'
-    // Optional: Ensure assets are correctly pathed for GitHub Pages
-    assetsDir: 'assets',
   },
-  base: '/ember/',
 });
