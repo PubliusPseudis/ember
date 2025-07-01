@@ -1,1 +1,0 @@
-import{_ as r}from"./index-CHdHfGUK.js";import"./__vite-browser-external-D7Ct-6yo.js";var o=function(){return r(()=>import("./model.min-Dy8shFxn.js"),[])},i=[function(){return r(()=>import("./group1-shard1of2.min-CbLR05No.js"),[])},function(){return r(()=>import("./group1-shard2of2.min-D8ff2eBC.js"),[])}];export{o as modelJson,i as weightBundles};

@@ -14,5 +14,5 @@ export default defineConfig({
     // Optional: Ensure assets are correctly pathed for GitHub Pages
     assetsDir: 'assets',
   },
-  base: '/',
+  base: '/ember/',
 });
