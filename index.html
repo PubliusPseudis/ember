@@ -68,8 +68,8 @@
           <div class="compose-footer">
             <input type="file" id="image-input" accept="image/*" style="display:none;" onchange="handleImageSelect(this)" />
             <button onclick="document.getElementById('image-input').click()" class="image-button">📷</button>
-            <span class="char-count"><span id="char-current">0</span>/500</span>
-            <button id="send-button" class="primary-button" onclick="createPostWithTopics()">🔥 Light it up</button>
+            <span class="char-count"><span id="char-current">0</span>/1120</span>
+            <button id="send-button" class="primary-button" onclick="createPostWithTopics()">🔥</button>
           </div>
         </div>
       <div id="status">
@@ -187,12 +187,16 @@
 <div id="dm-panel" style="display: none;">
   <div class="dm-header">
     <h3>Chat with <span id="dm-recipient"></span></h3>
-    <button class="close-button" onclick="closeDMPanel()">✕</button>
+    <div class="dm-header-controls">
+      <button class="minimize-button" onclick="toggleDMMinimize()">–</button>
+      <button class="close-button" onclick="closeDMPanel()">✕</button>
+    </div>
   </div>
   <div id="dm-messages" class="dm-messages"></div>
   <div class="dm-compose">
-<textarea id="dm-input" placeholder="Type a message..." rows="1" 
-  onkeypress="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendDM(); }"></textarea>
+    <textarea id="dm-input" placeholder="Type a message..." rows="1" 
+      onkeypress="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendDM(); }"
+      oninput="autoResizeDMInput(this)"></textarea>
     <button onclick="sendDM()" class="primary-button">Send</button>
   </div>
 </div>

@@ -175,6 +175,30 @@ async function updateInner(el, p) {
         }
     }
 
+    // Gets the community rating of the post
+    const ratingSummary = p.getRatingSummary();
+    const userVote = p.ratings.get(state.myIdentity?.handle)?.vote;
+    
+    // Display score as percentage with emoji indicator
+    let scoreDisplay = 'Unrated';
+    let scoreEmoji = '';
+    if (ratingSummary.total > 0) {
+        const percentage = Math.round(ratingSummary.score * 100);
+        scoreDisplay = `${percentage}%`;
+        
+        // Add emoji based on score
+        if (percentage >= 80) scoreEmoji = '🔥';
+        else if (percentage >= 60) scoreEmoji = '✨';
+        else if (percentage >= 40) scoreEmoji = '💨';
+        else scoreEmoji = '❄️';
+    }
+    
+    // Confidence visualization 
+    const confidenceLevel = Math.round(ratingSummary.confidence * 5);
+    const confidenceDisplay = '●'.repeat(confidenceLevel) + '○'.repeat(5 - confidenceLevel);
+
+
+
   // This logic adds the topic tags to the post's HTML
   let topicsHtml = '';
   if (state.scribe) {
@@ -201,14 +225,34 @@ el.innerHTML = `
             <span class="carrier-count">${carrierCount}</span>&nbsp;${carrierCount === 1 ? 'breath' : 'breaths'}
             ${hasReplies ? `<span class="thread-stats"><span class="thread-ember">🔥</span> ${threadSize} in thread</span>` : ''}
         </div>
+        <div class="rating-display">
+            <span class="rating-score" title="Community rating: ${ratingSummary.weightedTotal.toFixed(1)} weighted votes">
+                ${scoreEmoji} ${scoreDisplay}
+            </span>
+            <span class="rating-confidence" title="Confidence: ${(ratingSummary.confidence * 100).toFixed(0)}%">
+                ${confidenceDisplay}
+            </span>
+        </div>
+        <div class="rating-buttons">
+            <button class="rate-up ${userVote === 'up' ? 'active' : ''}" 
+                    onclick="ratePost('${p.id}', 'up')" 
+                    title="Good post"
+                    ${userVote === 'up' ? 'disabled' : ''}>
+                👍 <span class="vote-count">${ratingSummary.upvotes}</span>
+            </button>
+            <button class="rate-down ${userVote === 'down' ? 'active' : ''}" 
+                    onclick="ratePost('${p.id}', 'down')" 
+                    title="Poor post"
+                    ${userVote === 'down' ? 'disabled' : ''}>
+                👎 <span class="vote-count">${ratingSummary.downvotes}</span>
+            </button>
+        </div>
         <div class="post-actions">
             <button class="carry-button ${mine ? 'withdrawing' : 'blowing'}" onclick="toggleCarry('${p.id}')">
-                ${isAuthor ? "🔥 Your Ember" : (mine ? "💨 Withdraw" : "🌬️ Blow")}
+                ${isAuthor ? "🌬️" : (mine ? "💨" : "🔥")}
             </button>
-            <button class="reply-button" onclick="toggleReplyForm('${p.id}')">
-                💬 Reply
-            </button>
-            ${!isAuthor ? `<button class="dm-button" onclick="openDMPanel('${p.author}')">📨 DM</button>` : ''}
+            <button class="reply-button" onclick="toggleReplyForm('${p.id}')">💬</button>
+            ${!isAuthor ? `<button class="dm-button" onclick="openDMPanel('${p.author}')">📨</button>` : ''}
             ${hasReplies ? `<span class="collapse-thread" onclick="toggleThread('${p.id}')">[${el.classList.contains('collapsed') ? '+' : '-'}]</span>` : ''}
         </div>
     </div>
@@ -222,7 +266,7 @@ el.innerHTML = `
             <input type="file" id="reply-image-input-${p.id}" accept="image/*" style="display:none;" onchange="handleReplyImageSelect(this, '${p.id}')" />
             <button onclick="document.getElementById('reply-image-input-${p.id}').click()" class="image-button">📷</button>
             <span class="char-count"><span id="reply-char-${p.id}">0</span>/${CONFIG.MAX_POST_SIZE}</span>
-            <button onclick="createReply('${p.id}')" class="primary-button">🔥 Add Gas!</button>
+            <button onclick="createReply('${p.id}')" class="primary-button">🔥</button>
         </div>
     </div>`;
 
@@ -911,7 +955,7 @@ export function openDMPanel(handle) {
     console.error('Failed to mark messages as read:', e);
   }
   
-  document.getElementById('dm-panel').style.display = 'block';
+  document.getElementById('dm-panel').style.display = 'flex';
   document.getElementById('dm-recipient').textContent = handle;
   loadDMConversation(handle);
   document.getElementById('dm-input').focus();

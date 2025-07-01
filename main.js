@@ -653,6 +653,70 @@ export function toggleCarry(id, isManual = true) {
     }
 }
 
+export async function ratePost(postId, vote) {
+    const post = state.posts.get(postId);
+    if (!post) return;
+    
+    // Can't rate your own posts - return early
+    if (post.author === state.myIdentity.handle) {
+        notify("You cannot rate your own posts");
+        return;
+    }
+    
+    // For the current user voting on others' posts, just use a default reputation
+    const myReputation = 50; // Default reputation for self
+    
+    // Add/update rating
+    const changed = post.addRating(state.myIdentity.handle, vote, myReputation);
+    
+    if (changed) {
+        // Animate the score update
+        const scoreEl = document.querySelector(`#post-${postId} .rating-score`);
+        if (scoreEl) {
+            scoreEl.classList.add('updating');
+            setTimeout(() => scoreEl.classList.remove('updating'), 300);
+        }
+        
+        // Update UI
+        refreshPost(post);
+        
+        // Broadcast rating to network
+        const ratingMsg = {
+            type: 'post_rating',
+            postId: postId,
+            voter: state.myIdentity.handle,
+            vote: vote,
+            reputation: myReputation,
+            timestamp: Date.now()
+        };
+        
+        // Sign the rating
+        const msgStr = JSON.stringify({
+            postId: ratingMsg.postId,
+            voter: ratingMsg.voter,
+            vote: ratingMsg.vote,
+            timestamp: ratingMsg.timestamp
+        });
+        
+        const signature = nacl.sign(
+            new TextEncoder().encode(msgStr),
+            state.myIdentity.secretKey
+        );
+        
+        ratingMsg.signature = arrayBufferToBase64(signature);
+        ratingMsg.voterPublicKey = arrayBufferToBase64(state.myIdentity.publicKey);
+        
+        broadcast(ratingMsg);
+        
+        // Visual feedback
+        const emoji = vote === 'up' ? '👍' : '👎';
+        notify(`Rated post ${emoji}`);
+    } else {
+        notify("You've already given this rating");
+    }
+}
+
+
 export async function createReply(parentId) {
     const input = document.getElementById(`reply-input-${parentId}`);
     if (!input) return;
@@ -1490,6 +1554,71 @@ async function init() {
   }
 }
 
+export async function handlePostRating(msg, fromWire) {
+    const { postId, voter, vote, reputation, timestamp, signature, voterPublicKey } = msg;
+    
+    // Validate message
+    if (!postId || !voter || !vote || !signature || !voterPublicKey) {
+        console.warn('[Rating] Invalid rating message');
+        return;
+    }
+    
+    // Check if post exists
+    const post = state.posts.get(postId);
+    if (!post) return;
+    
+    // Verify signature
+    try {
+        const dataToVerify = JSON.stringify({
+            postId,
+            voter,
+            vote,
+            timestamp
+        });
+        
+        const publicKey = base64ToArrayBuffer(voterPublicKey);
+        const sig = base64ToArrayBuffer(signature);
+        
+        const verified = nacl.sign.open(sig, publicKey);
+        if (!verified) {
+            console.warn(`[Rating] Invalid signature from ${voter}`);
+            return;
+        }
+        
+        const decodedData = new TextDecoder().decode(verified);
+        if (decodedData !== dataToVerify) {
+            console.warn(`[Rating] Signature mismatch from ${voter}`);
+            return;
+        }
+    } catch (e) {
+        console.error('[Rating] Signature verification failed:', e);
+        return;
+    }
+    
+    // Check timestamp (prevent replay attacks)
+    const age = Date.now() - timestamp;
+    if (age > 300000) { // 5 minutes
+        console.warn(`[Rating] Rating too old: ${age}ms`);
+        return;
+    }
+    
+    // Look up voter's actual reputation if we know them
+    let actualReputation = reputation || 10;
+    for (const [peerId, peerData] of state.peers) {
+        if (peerData.handle === voter) {
+            actualReputation = peerManager.getScore(peerId);
+            break;
+        }
+    }
+    
+    // Apply rating
+    const changed = post.addRating(voter, vote, actualReputation);
+    if (changed) {
+        refreshPost(post);
+        console.log(`[Rating] Applied rating from ${voter} to post ${postId}`);
+    }
+}
+
 
 export function initializeP2PProtocols() {
   if (!state.myIdentity) {
@@ -1651,6 +1780,26 @@ if (typeof window !== 'undefined') {
   window.switchDrawer = switchDrawer; // If this exists
     window.setRulePackPath = setRulePackPath;   // choose a new JSON file
     window.reloadRulePack  = reloadRulePack;    // refresh the current file
+window.ratePost = ratePost;
+
+
+window.toggleDMMinimize = function() {
+  const panel = document.getElementById('dm-panel');
+  panel.classList.toggle('minimized');
+  
+  // If minimized, clicking header should restore
+  if (panel.classList.contains('minimized')) {
+    panel.querySelector('.dm-header').onclick = () => toggleDMMinimize();
+  } else {
+    panel.querySelector('.dm-header').onclick = null;
+  }
+};
+
+window.autoResizeDMInput = function(textarea) {
+  textarea.style.height = 'auto';
+  textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+};
+
 
   // Debugging interface
   window.ephemeralDebug = {

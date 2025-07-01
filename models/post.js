@@ -56,7 +56,16 @@ export class Post {
         } else {
             this.authorVdfProof = null;
         }
-
+        //nb do not sign ratings. they are mutable. 
+        //we will use basic bayesian conjugate pair - beta-binomial.
+        this.ratings = new Map(); // voter handle -> { vote: 'up'|'down', reputation: number }
+        this.ratingStats = {
+            alpha: 1, // Beta distribution parameter (successes + 1)
+            beta: 1,  // Beta distribution parameter (failures + 1)
+            totalWeight: 0,
+            score: 0.5 // Prior: neutral
+        };
+        
         this.signature = null;
 
         // Ephemeral state
@@ -233,6 +242,104 @@ export class Post {
         return oldestAge;
     }
 
+    /**
+     * Add or update a rating using beta-binomial model
+     * @param {string} voterHandle - Handle of the voter
+     * @param {string} vote - 'up' or 'down'
+     * @param {number} voterReputation - Reputation score of the voter
+     * @returns {boolean} - True if rating was new or changed
+     */
+    addRating(voterHandle, vote, voterReputation) {
+        const existingRating = this.ratings.get(voterHandle);
+        
+        // If same vote, no change needed
+        if (existingRating && existingRating.vote === vote) {
+            return false;
+        }
+        
+        // Weight based on reputation (log scale with minimum)
+        const weight = Math.max(0.1, Math.log10(voterReputation + 10));
+        
+        // Remove old vote effect if changing vote
+        if (existingRating) {
+            if (existingRating.vote === 'up') {
+                this.ratingStats.alpha -= existingRating.weight;
+            } else {
+                this.ratingStats.beta -= existingRating.weight;
+            }
+            this.ratingStats.totalWeight -= existingRating.weight;
+        }
+        
+        // Add new vote
+        this.ratings.set(voterHandle, { vote, weight, reputation: voterReputation });
+        
+        if (vote === 'up') {
+            this.ratingStats.alpha += weight;
+        } else {
+            this.ratingStats.beta += weight;
+        }
+        this.ratingStats.totalWeight += weight;
+        
+        // Calculate score using beta distribution mean
+        // For beta-binomial, the posterior mean is alpha/(alpha+beta)
+        this.ratingStats.score = this.calculateBayesianScore();
+        
+        console.log(`[Rating] ${voterHandle} rated post ${this.id} as ${vote} (weight: ${weight.toFixed(2)}, score: ${this.ratingStats.score.toFixed(3)})`);
+        
+        return true;
+    }
+
+    /**
+     * Calculate Bayesian score using beta-binomial posterior
+     * This gives us a score that accounts for uncertainty
+     */
+    calculateBayesianScore() {
+        // Beta distribution parameters (with prior of alpha=1, beta=1)
+        const a = this.ratingStats.alpha;
+        const b = this.ratingStats.beta;
+        const n = a + b - 2; // Total weighted votes (minus prior)
+        
+        if (n <= 0) return 0.5; // No votes, return neutral prior
+        
+        // Posterior mean
+        const mean = a / (a + b);
+        
+        // For ranking, we want to penalize uncertainty
+        // Use lower bound of credible interval (similar to Wilson score idea)
+        // This approximation works well for beta distribution
+        const z = 1.96; // 95% confidence
+        const variance = (a * b) / ((a + b) * (a + b) * (a + b + 1));
+        const stderr = Math.sqrt(variance);
+        
+        // Lower bound of credible interval
+        const lowerBound = mean - z * stderr;
+        
+        // Ensure bounds
+        return Math.max(0, Math.min(1, lowerBound));
+    }
+
+    /**
+     * Get rating summary for display
+     */
+    getRatingSummary() {
+        const upvotes = Array.from(this.ratings.values()).filter(r => r.vote === 'up').length;
+        const downvotes = Array.from(this.ratings.values()).filter(r => r.vote === 'down').length;
+        
+        // Calculate confidence based on total weighted votes
+        // More votes = higher confidence
+        const confidence = 1 - Math.exp(-this.ratingStats.totalWeight / 10);
+        
+        return {
+            score: this.ratingStats.score,
+            confidence: confidence,
+            upvotes,
+            downvotes,
+            total: this.ratings.size,
+            weightedTotal: this.ratingStats.totalWeight
+        };
+    }
+
+
 
     /**
      * Prepares the entire Post object for network transmission.
@@ -271,7 +378,13 @@ export class Post {
             signature: this.signature ? arrayBufferToBase64(this.signature) : null,
             carriers: [...this.carriers],
             replies: [...this.replies],
-            depth: this.depth
+            depth: this.depth,
+            ratings: Array.from(this.ratings.entries()).map(([handle, data]) => ({
+                handle,
+                vote: data.vote,
+                weight: data.weight
+            })),
+            ratingStats: this.ratingStats
         };
     }
 
@@ -379,6 +492,26 @@ export class Post {
         p.trustScore = 0;
         p.attesters = new Set();
         p.attestationTimestamps = new Map();
+        
+        //community ratings:
+        p.ratings = new Map();
+        if (j.ratings && Array.isArray(j.ratings)) {
+            j.ratings.forEach(r => {
+                p.ratings.set(r.handle, {
+                    vote: r.vote,
+                    weight: r.weight || 1,
+                    reputation: r.reputation || 0
+                });
+            });
+        }
+
+        p.ratingStats = j.ratingStats || {
+            alpha: 1,
+            beta: 1,
+            totalWeight: 0,
+            score: 0.5
+        };
+        
         
         console.log('[Post.fromJSON] Reconstructed post:', {
             id: p.id,

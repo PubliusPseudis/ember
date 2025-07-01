@@ -3,7 +3,7 @@
 
 // --- IMPORTS ---
 import WebTorrent from 'webtorrent';
-import { epidemicGossip, state, peerManager, imageStore, dandelion, handleNewPost, handleProvisionalClaim, handleConfirmationSlip, handleParentUpdate, handlePostsResponse, handleCarrierUpdate, handleVerificationResults, generateAndBroadcastAttestation,evaluatePostTrust, handleDirectMessage } from '../main.js';
+import { epidemicGossip, state, peerManager, imageStore, dandelion, handleNewPost, handleProvisionalClaim, handleConfirmationSlip, handleParentUpdate, handlePostsResponse, handleCarrierUpdate, handleVerificationResults, generateAndBroadcastAttestation,evaluatePostTrust, handleDirectMessage, handlePostRating } from '../main.js';
 import { updateConnectionStatus, notify, updateStatus, refreshPost, renderPost } from '../ui.js';
 import { CONFIG } from '../config.js';
 import { generateId, hexToUint8Array, normalizePeerId, arrayBufferToBase64, base64ToArrayBuffer } from '../utils.js';
@@ -701,6 +701,9 @@ async function handlePeerMessage(msg, fromWire) {
         sendPeer(fromWire, { type: "posts_response", posts: list });
       }
       break;
+    case "post_rating":
+        handlePostRating(msg, fromWire);
+        break;
     case "posts_response":
       await handlePostsResponse(msg.posts, fromWire);
       break;
