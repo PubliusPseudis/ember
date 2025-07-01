@@ -3,6 +3,12 @@
 // It initializes all modules, manages the global state, and wires up event handlers.
 
 // --- 1. IMPORTS ---
+import { getContentSafety, setRulePackPath, reloadRulePack  } from './services/content-safety-wrapper.js';
+import * as tf from '@tensorflow/tfjs';                 //  for nsfwjs
+import '@tensorflow/tfjs-backend-cpu';               //  for nsfwjs
+import nacl from 'tweetnacl'; 
+import * as nsfwjs from 'nsfwjs';
+import DOMPurify from 'dompurify';
 import { CONFIG } from './config.js';
 import { Post } from './models/post.js';
 import { VerificationQueue } from './verification-queue.js';
@@ -82,15 +88,6 @@ function applyConfigToUI() {
   }
 }
 
-async function initContentFilter() {
-  try {
-    state.toxicityClassifier = await toxicity.load(CONFIG.TOXICITY_THRESHOLD);
-    console.log("Toxicity model ready");
-  } catch (e) {
-    console.error("Toxicity model failed:", e);
-  }
-}
-
 async function initImageFilter() {
     try {
         state.imageClassifier = await nsfwjs.load(CONFIG.NSFWJS_MODEL_PATH);
@@ -100,14 +97,32 @@ async function initImageFilter() {
     }
 }
 
+
+async function initContentFilter() {
+  try {
+    // Use the new content safety filter
+    state.toxicityClassifier = await getContentSafety();
+    console.log("Content safety filter ready");
+  } catch (e) {
+    console.error("Content safety filter failed:", e);
+  }
+}
+
 export async function isToxic(text) {
   if (!state.toxicityClassifier) return false;
+  
   try {
-    const preds = await state.toxicityClassifier.classify([text]);
-    for (const p of preds) if (p.results[0].match) return p.label;
+    const result = await state.toxicityClassifier.checkContent(text);
+    
+    if (result.shouldBlock) {
+      // Return the most severe violation type
+      const violation = result.violations[0];
+      return violation.type.toUpperCase();
+    }
+    
     return false;
   } catch (e) {
-    console.error("toxicity check failed:", e);
+    console.error("Content check failed:", e);
     return false;
   }
 }
@@ -141,9 +156,15 @@ export async function handleNewPost(data, fromWire) {
   if (postData.content.length > CONFIG.MAX_POST_SIZE) {
     return;
   }
-  if (await isToxic(postData.content)) {
-    return;
-  }
+  // Quick pattern check for received content
+    if (await isToxic(postData.content)) {
+      notify(`Blocked harmful content from ${postData.author}`);
+      console.warn(`Blocked harmful content from ${postData.author}`);
+      if (fromWire) {
+        peerManager.updateScore(fromWire.peerId, 'harmful_content', -50);
+      }
+      return;
+    }
 
   state.seenPosts.add(postData.id);
   const p = Post.fromJSON(postData);
@@ -1091,8 +1112,8 @@ async function initTopics() {
 }
 
 // --- 5. MAINTENANCE & GARBAGE COLLECTION ---
-let maintenanceInterval;
-function startMaintenanceLoop() {
+export let maintenanceInterval;
+export function startMaintenanceLoop() {
   let tick = 0;
   maintenanceInterval = setInterval(() => {
     tick++;
@@ -1470,7 +1491,7 @@ async function init() {
 }
 
 
-function initializeP2PProtocols() {
+export function initializeP2PProtocols() {
   if (!state.myIdentity) {
     console.error("Cannot initialize P2P protocols without an identity.");
     return;
@@ -1510,7 +1531,7 @@ function initializeP2PProtocols() {
 }
 
 // helper function for init
-async function initNetworkWithTempId(tempNodeId) {
+export async function initNetworkWithTempId(tempNodeId) {
   initNetwork(); // This will create state.client
   
   // Initialize DHT and identity registry immediately
@@ -1606,123 +1627,119 @@ export function debugPostRemoval(postId, reason) {
 
 // --- 7. GLOBALS & KICKOFF ---
 // Expose functions to the global scope so onclick handlers in the HTML can find them.
-window.createPostWithTopics = createPostWithTopics;
-window.toggleCarry = toggleCarry;
-window.createReply = createReply;
-window.handleImageSelect = handleImageSelect;
-window.removeImage = removeImage;
-window.toggleReplyForm = toggleReplyForm;
-window.subscribeToTopic = subscribeToTopic;
-window.filterByTopic = filterByTopic;
-window.setFeedMode = setFeedMode;
-window.discoverAndFilterTopic = discoverAndFilterTopic;
-window.completeTopicSuggestion = completeTopicSuggestion;
-window.scrollToPost = scrollToPost;
-window.clearLocalData = () => stateManager.clearLocalData();
-window.handleReplyImageSelect = handleReplyImageSelect;
-window.removeReplyImage = removeReplyImage;
-window.openDMPanel = openDMPanel;
-window.closeDMPanel = closeDMPanel;
-window.sendDM = sendDM;
-window.toggleThread = toggleThread; 
+if (typeof window !== 'undefined') {
+  // Expose functions to the global scope so onclick handlers in the HTML can find them.
+  window.createPostWithTopics = createPostWithTopics;
+  window.toggleCarry = toggleCarry;
+  window.createReply = createReply;
+  window.handleImageSelect = handleImageSelect;
+  window.removeImage = removeImage;
+  window.toggleReplyForm = toggleReplyForm;
+  window.subscribeToTopic = subscribeToTopic;
+  window.filterByTopic = filterByTopic;
+  window.setFeedMode = setFeedMode;
+  window.discoverAndFilterTopic = discoverAndFilterTopic;
+  window.completeTopicSuggestion = completeTopicSuggestion;
+  window.scrollToPost = scrollToPost;
+  window.clearLocalData = () => stateManager.clearLocalData();
+  window.handleReplyImageSelect = handleReplyImageSelect;
+  window.removeReplyImage = removeReplyImage;
+  window.openDMPanel = openDMPanel;
+  window.closeDMPanel = closeDMPanel;
+  window.sendDM = sendDM;
+  window.toggleThread = toggleThread;
+  window.switchDrawer = switchDrawer; // If this exists
+    window.setRulePackPath = setRulePackPath;   // choose a new JSON file
+    window.reloadRulePack  = reloadRulePack;    // refresh the current file
 
-// Start the application initialization process once the page is loaded.
-window.addEventListener("load", init);
+  // Debugging interface
+  window.ephemeralDebug = {
+    posts: () => state.posts,
+    peers: () => state.peers,
+    id: () => state.myIdentity,
+    stats: () => ({ posts: state.posts.size, peers: state.peers.size }),
+    wasmVDF: wasmVDF,
+    reputations: () => {
+      console.table(peerManager.debugReputations());
+      const stats = peerManager.getReputationStats();
+      console.log('Reputation distribution:', stats);
+      return stats;
+    },
+    routing: () => {
+      console.log('=== Routing Status ===');
+      console.log('Routing Manager:', routingManager.getStats());
+      
+      if (state.peerRoutingCache) {
+        console.log('\nRouting Cache:');
+        const now = Date.now();
+        for (const [handle, info] of state.peerRoutingCache) {
+          console.log(`  ${handle}: age=${Math.floor((now - info.timestamp)/1000)}s, peerId=${info.peerId.substring(0,8)}...`);
+        }
+      }
+      
+      console.log('\nPeer Identities:');
+      if (state.peerIdentities) {
+        for (const [peerId, identity] of state.peerIdentities) {
+          console.log(`  ${peerId.substring(0,8)}... => ${identity.handle}`);
+        }
+      }
+      
+      return 'See console for routing details';
+    },
+    forceRoutingUpdate: () => {
+      routingManager.updateRouting(true).then(() => 
+        console.log('Routing update forced')
+      );
+    },
+    dhtHealth: () => {
+      if (!state.dht) {
+        return 'DHT not initialized';
+      }
+      
+      const stats = state.dht.getStats();
+      console.log('=== DHT Health Report ===');
+      console.log('Network:', {
+        totalPeers: stats.totalPeers,
+        activeBuckets: stats.activeBuckets,
+        avgBucketSize: stats.avgBucketSize
+      });
+      console.log('Storage:', {
+        localKeys: stats.localKeys,
+        refreshQueue: stats.refreshQueueSize
+      });
+      console.log('Replication:', stats.replicationHealth);
+      
+      console.log('\nReplication Details (sample):');
+      let count = 0;
+      for (const [key, status] of state.dht.replicationStatus) {
+        if (count++ >= 10) break;
+        console.log(`  ${key}: ${status.replicas} replicas, last checked ${Math.floor((Date.now() - status.lastCheck) / 1000)}s ago`);
+      }
+      
+      return 'See console for DHT health details';
+    },
+    forceRefresh: async (key) => {
+      if (!state.dht) return 'DHT not initialized';
+      
+      if (key) {
+        const value = state.dht.storage.get(key);
+        if (value) {
+          const result = await state.dht.store(key, value.value || value, { propagate: true });
+          return `Refreshed ${key}: ${result.replicas} replicas`;
+        }
+        return `Key ${key} not found locally`;
+      } else {
+        await state.dht.refreshStoredValues();
+        return 'Triggered refresh of all stored values';
+      }
+    },
+    checkReplication: async (key) => {
+      if (!state.dht) return 'DHT not initialized';
+      const status = await state.dht.getReplicationStatus(key);
+      return `Key ${key}: ${status.replicas} replicas found`;
+    }
+  };
 
-// Debugging
-window.ephemeralDebug = {
-  posts: () => state.posts,
-  peers: () => state.peers,
-  id: () => state.myIdentity,
-  stats: () => ({ posts: state.posts.size, peers: state.peers.size }),
-  wasmVDF: wasmVDF,
-  // ADD THIS NEW DEBUG COMMAND:
-  reputations: () => {
-    console.table(peerManager.debugReputations());
-    const stats = peerManager.getReputationStats();
-    console.log('Reputation distribution:', stats);
-    return stats;
-  },
-
-  routing: () => {
-    console.log('=== Routing Status ===');
-    console.log('Routing Manager:', routingManager.getStats());
-    
-    if (state.peerRoutingCache) {
-      console.log('\nRouting Cache:');
-      const now = Date.now();
-      for (const [handle, info] of state.peerRoutingCache) {
-        console.log(`  ${handle}: age=${Math.floor((now - info.timestamp)/1000)}s, peerId=${info.peerId.substring(0,8)}...`);
-      }
-    }
-    
-    console.log('\nPeer Identities:');
-    if (state.peerIdentities) {
-      for (const [peerId, identity] of state.peerIdentities) {
-        console.log(`  ${peerId.substring(0,8)}... => ${identity.handle}`);
-      }
-    }
-    
-    return 'See console for routing details';
-  },
-  
-  forceRoutingUpdate: () => {
-    routingManager.updateRouting(true).then(() => 
-      console.log('Routing update forced')
-    );
-  },
-  
-  
-  dhtHealth: () => {
-    if (!state.dht) {
-      return 'DHT not initialized';
-    }
-    
-    const stats = state.dht.getStats();
-    console.log('=== DHT Health Report ===');
-    console.log('Network:', {
-      totalPeers: stats.totalPeers,
-      activeBuckets: stats.activeBuckets,
-      avgBucketSize: stats.avgBucketSize
-    });
-    console.log('Storage:', {
-      localKeys: stats.localKeys,
-      refreshQueue: stats.refreshQueueSize
-    });
-    console.log('Replication:', stats.replicationHealth);
-    
-    // Show sample of replication status
-    console.log('\nReplication Details (sample):');
-    let count = 0;
-    for (const [key, status] of state.dht.replicationStatus) {
-      if (count++ >= 10) break;
-      console.log(`  ${key}: ${status.replicas} replicas, last checked ${Math.floor((Date.now() - status.lastCheck) / 1000)}s ago`);
-    }
-    
-    return 'See console for DHT health details';
-  },
-  
-  forceRefresh: async (key) => {
-    if (!state.dht) return 'DHT not initialized';
-    
-    if (key) {
-      // Refresh specific key
-      const value = state.dht.storage.get(key);
-      if (value) {
-        const result = await state.dht.store(key, value.value || value, { propagate: true });
-        return `Refreshed ${key}: ${result.replicas} replicas`;
-      }
-      return `Key ${key} not found locally`;
-    } else {
-      // Refresh all
-      await state.dht.refreshStoredValues();
-      return 'Triggered refresh of all stored values';
-    }
-  },
-  
-  checkReplication: async (key) => {
-    if (!state.dht) return 'DHT not initialized';
-    const status = await state.dht.getReplicationStatus(key);
-    return `Key ${key}: ${status.replicas} replicas found`;
-  }
-};
+  // Start the application initialization process once the page is loaded.
+  window.addEventListener("load", init);
+} 

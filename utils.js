@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify'; 
 import { CONFIG } from './config.js';
 
 export class BloomFilter {
@@ -166,7 +167,7 @@ export function sanitize(content) {
   }
 
   // 2. Use DOMPurify when available with SAFE settings
-  if (window.DOMPurify) {
+  if (DOMPurify) {
     const purified = DOMPurify.sanitize(content, {
       ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'code', 'br'],
       ALLOWED_ATTR: ['href', 'target', 'rel'],

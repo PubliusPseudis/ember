@@ -1,0 +1,32 @@
+{
+  "name": "ember-headless-relay",
+  "version": "1.0.0",
+  "description": "Headless Ember relay node for strengthening the network",
+  "type": "module",
+  "main": "headless.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "node --import-map=import-map.json headless.js"
+  },
+  "keywords": [
+    "ember",
+    "p2p",
+    "relay",
+    "headless"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dompurify": "^3.2.6",
+    "http-server": "^14.1.1",
+    "nsfwjs": "^4.2.1",
+    "process": "^0.11.10",
+    "tweetnacl": "^1.0.3",
+    "webtorrent": "^2.6.10"
+  },
+  "devDependencies": {
+    "vite": "^5.3.1",
+    "vite-plugin-node-polyfills": "^0.23.0"
+  }
+}

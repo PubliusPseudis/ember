@@ -3,3 +3,9 @@ ember-headless-node
 vdf-wasm/target
 concatenated_output.txt
 concat.sh
+dist
+test-safety.html
+test-results.txt
+test-safety.js
+node_modules
+node_modules/

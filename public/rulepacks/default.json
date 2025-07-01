@@ -1,0 +1,25 @@
+{
+  "profanity_basic": {
+    "severity": "medium",
+    "patterns": [
+      "\\b(fuck|shit|damn)\\b"
+    ],
+    "requiresContext": false
+  },
+
+  "hate_slurs_core": {
+    "severity": "high",
+    "patterns": [
+      "\\b(kike|gook|wetback|tranny|barkerd)\\b"
+    ],
+    "requiresContext": false
+  },
+
+  "spam_links": {
+    "severity": "low",
+    "patterns": [
+      "https?:\\/\\/(?:[^\\s]+\\.)?(?:free-gift|win-big|click-here)[^\\s]*"
+    ],
+    "requiresContext": false
+  }
+}

@@ -2,6 +2,7 @@
 // and acts as the main dispatcher for all incoming P2P messages.
 
 // --- IMPORTS ---
+import WebTorrent from 'webtorrent';
 import { epidemicGossip, state, peerManager, imageStore, dandelion, handleNewPost, handleProvisionalClaim, handleConfirmationSlip, handleParentUpdate, handlePostsResponse, handleCarrierUpdate, handleVerificationResults, generateAndBroadcastAttestation,evaluatePostTrust, handleDirectMessage } from '../main.js';
 import { updateConnectionStatus, notify, updateStatus, refreshPost, renderPost } from '../ui.js';
 import { CONFIG } from '../config.js';
@@ -10,18 +11,22 @@ import { KademliaDHT } from './dht.js';
 import { HyParView } from './hyparview.js';
 import { Scribe } from './scribe.js';
 import { Plumtree } from './plumtree.js';
+import nacl from 'tweetnacl'; 
 
+
+const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
 
 
 // --- FUNCTION DEFINITIONS ---
 
-function initNetwork() {
+function initNetwork() { // It no longer needs to be async
   updateConnectionStatus("Initializing WebTorrent...");
 
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
   console.log("Initializing network... iOS:", isIOS);
 
-  if (!window.RTCPeerConnection) {
+ 
+  if (!isNode && !window.RTCPeerConnection) {
     console.error("WebRTC not supported!");
     updateConnectionStatus("WebRTC not supported on this device", 'error');
     notify("WebRTC not supported on this device");
@@ -29,17 +34,16 @@ function initNetwork() {
   }
 
   updateConnectionStatus("Setting up peer connections...");
-
   const trackers = [
     'wss://tracker.openwebtorrent.com',
     'wss://tracker.webtorrent.dev',
     'wss://tracker.btorrent.xyz',
     'wss://tracker.files.fm:7073/announce',
   ];
-
   state.trackers = trackers;
 
   try {
+    // This line will now use the `WebTorrent` variable we just defined above.
     state.client = new WebTorrent({
       dht: !isIOS,
       maxConns: isIOS ? 20 : 100,

@@ -891,7 +891,7 @@ function removeReplyImage(postId) {
 // DM UI Functions
 window.currentDMConversation = null;
 
-function openDMPanel(handle) {
+export function openDMPanel(handle) {
   currentDMRecipient = handle;
   
   // Mark messages as read
@@ -920,12 +920,12 @@ function openDMPanel(handle) {
   updateDMInbox();
 }
 
-function closeDMPanel() {
+export function closeDMPanel() {
   document.getElementById('dm-panel').style.display = 'none';
   currentDMRecipient = null; // FIX: Was window.currentDMConversation
 }
 
-function loadDMConversation(handle) {
+export function loadDMConversation(handle) {
   const messagesEl = document.getElementById('dm-messages');
   messagesEl.innerHTML = '';
   
@@ -965,7 +965,7 @@ export function addMessageToConversation(handle, messageText, direction, timesta
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-async function sendDM() {
+export async function sendDM() {
   const input = document.getElementById('dm-input');
   const message = input.value.trim();
   const recipient = currentDMRecipient;
@@ -1082,7 +1082,7 @@ export function storeDMLocallyAndUpdateUI(otherHandle, messageText, direction) {
 let currentDrawer = 'bonfire';
 
 // Drawer switching function
-window.switchDrawer = function(drawerId) {
+window.switchDrawer =  function(drawerId) {
   // Don't switch if already active
   if (currentDrawer === drawerId) return;
   

@@ -1,3 +1,4 @@
+import nacl from 'tweetnacl'; 
 import { state, imageStore } from '../main.js'; 
 import { generateId, sanitize, arrayBufferToBase64, base64ToArrayBuffer } from '../utils.js';
 import { CONFIG } from '../config.js';

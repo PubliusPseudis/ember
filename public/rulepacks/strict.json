@@ -1,0 +1,33 @@
+{
+  "profanity_basic": {
+    "severity": "high",           // ↑ stricter than default
+    "patterns": [
+      "\\b(fuck|shit|damn|bitch|asshole)\\b"
+    ],
+    "requiresContext": false
+  },
+
+  "hate_slurs_core": {
+    "severity": "critical",       // ↑
+    "patterns": [
+      "\\b(kike|gook|wetback|tranny|nigger|faggot)\\b"
+    ],
+    "requiresContext": false
+  },
+
+  "spam_links": {
+    "severity": "medium",         // ↑
+    "patterns": [
+      "https?:\\/\\/(?:[^\\s]+\\.)?(?:free-gift|win-big|click-here)[^\\s]*"
+    ],
+    "requiresContext": false
+  },
+
+  "capslock_yelling": {
+    "severity": "low",
+    "patterns": [
+      "^[A-Z\\s]{20,}$"            // whole message ≥20 chars, all caps
+    ],
+    "requiresContext": false
+  }
+}

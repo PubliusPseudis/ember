@@ -16,39 +16,67 @@ export class VerificationQueue {
     }
 }
     
-    async init() {
-        const workerCount = 4;
-        console.log(`Initializing ${workerCount} workers sequentially...`);
+async init() {
+    const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
+    const workerCount = 4;
+    console.log(`Initializing ${workerCount} verification workers...`);
 
-        for (let i = 0; i < workerCount; i++) {
-            await new Promise((resolve, reject) => {
-                const worker = new Worker('verify-worker.js', { type: 'module' });
+    for (let i = 0; i < workerCount; i++) {
+        await new Promise(async (resolve, reject) => {
+            let worker;
 
-                const errorListener = (error) => {
-                    console.error(`Worker ${i} failed to initialize:`, error);
-                    reject(error); // This will stop the initialization process
-                };
+            // Define a simple error listener that just rejects the promise.
+            const errorListener = (error) => {
+                console.error(`Worker ${i} failed to initialize:`, error);
+                reject(error);
+            };
 
-                // Listen for the error event, but only once.
+            if (isNode) {
+                try {
+                    const { Worker: NodeWorker } = await import('worker_threads');
+                    const { fileURLToPath } = await import('url');
+                    const { dirname, join } = await import('path');
+                    const __filename = fileURLToPath(import.meta.url);
+                    const __dirname = dirname(__filename);
+
+                    // FIX #1: Correct the path to the worker script. It's in the same directory.
+                    const workerPath = join(__dirname, 'verify-worker.js');
+
+                    worker = new NodeWorker(workerPath);
+
+                    // FIX #2: Use .once() for a one-time error listener in Node.js.
+                    // This automatically removes the listener after it runs, preventing the TypeError.
+                    worker.once('error', errorListener);
+                    worker.on('message', (data) => {
+                        this.handleWorkerMessage(data, i);
+                    });
+
+                } catch (e) {
+                    console.error("Failed to create Node.js worker instance:", e);
+                    return reject(e);
+                }
+            } else {
+                // Browser environment
+                // THIS IS THE NEW SYNTAX FOR VITE
+                worker = new Worker(new URL('./verify-worker.js', import.meta.url), { type: 'module' });
                 worker.addEventListener('error', errorListener, { once: true });
-
-                // We assume success if the error event doesn't fire almost immediately.
-                // A more robust way is for the worker to post a "ready" message.
-                worker.addEventListener('message', (e) => this.handleWorkerMessage(e.data, i));
-                
-                this.workers.push({
-                    id: i,
-                    worker,
-                    busy: false,
-                    currentBatch: null
+                worker.addEventListener('message', (event) => {
+                    this.handleWorkerMessage(event.data, i);
                 });
+            }
 
-                console.log(`Worker ${i} created.`);
-                resolve();
+            this.workers.push({
+                id: i,
+                worker,
+                busy: false,
+                currentBatch: null
             });
-        }
-        console.log('All workers have been initialized.');
+            console.log(`Worker ${i} created.`);
+            resolve();
+        });
     }
+    console.log('All workers have been initialized.');
+}
 
     async initializeWorkers(count) {
         console.log(`Initializing ${count} workers sequentially...`);

@@ -1,3 +1,4 @@
+import nacl from 'tweetnacl';
 // Import the WASM module
 import init, { VDFComputer, VDFProof } from './wasm/vdf_wasm.js';
 
@@ -15,8 +16,6 @@ async function initializeWasm() {
     }
 }
 
-// Nacl for signature verification - use CDN or bundle it
-import nacl from 'https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/+esm';
 
 /**
  * Converts a Base64 string to a Uint8Array 

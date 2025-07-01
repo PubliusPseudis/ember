@@ -1,3 +1,4 @@
+import nacl from 'tweetnacl';
 import { state } from '../main.js';
 import { notify } from '../ui.js';
 import { arrayBufferToBase64, JSONStringifyWithBigInt } from '../utils.js';
@@ -6,11 +7,15 @@ import wasmVDF from '../vdf-wrapper.js';
 
 export async function createNewIdentity() {
   return new Promise(async (resolve, reject) => {
+          console.log('[DEBUG] createNewIdentity called.'); //
+
     const overlay = document.getElementById('identity-creation-overlay');
     const step0 = document.getElementById('identity-step-0-disclaimer');
     const acknowledgeButton = document.getElementById('acknowledge-button');
     
     acknowledgeButton.onclick = () => {
+              console.log('[DEBUG] Acknowledge button clicked.'); //
+
       step0.style.display = 'none';
       showHandleSelection();
     };
@@ -18,6 +23,8 @@ export async function createNewIdentity() {
     overlay.style.display = 'flex';
     
     async function showHandleSelection() {
+              console.log('[DEBUG] showHandleSelection called.'); //
+
       const step3 = document.getElementById('identity-step-3-prompt');
       
       step3.innerHTML = `
@@ -67,13 +74,19 @@ export async function createNewIdentity() {
         
         // Debounce the actual check
         checkTimeout = setTimeout(async () => {
+                      console.log('[DEBUG] Checking handle availability for:', handle); //
+
           try {
             // First check if we even have peers
             if (state.peers.size === 0) {
               // We're the first node! All handles are available
+                            console.log('[DEBUG] No peers found. Assuming handle is available.'); //
+
               availabilityDiv.innerHTML = '<span style="color: #44ff44">✓ Handle available! (First node)</span>';
               confirmButton.disabled = false;
               lastCheckedHandle = handle;
+                            console.log('[DEBUG] lastCheckedHandle is now:', lastCheckedHandle); //
+
               return;
             }
             
@@ -112,13 +125,19 @@ export async function createNewIdentity() {
       
       confirmButton.onclick = async () => {
         const handle = handleInput.value.trim();
-        
+                console.log('[DEBUG] Claim Handle button clicked.'); //
+        console.log('[DEBUG] Current handle value:', handle); //
+        console.log('[DEBUG] lastCheckedHandle value:', lastCheckedHandle); //
+
         // Double-check it's still available
         if (handle !== lastCheckedHandle) {
+                      console.log('[DEBUG] Gatekeeper FAILED: handle does not match lastCheckedHandle.'); //
+
           availabilityDiv.innerHTML = '<span style="color: #ff6b4a">Please wait for availability check</span>';
           return;
         }
-        
+                console.log('[DEBUG] Gatekeeper PASSED. Proceeding to VDF computation.'); //
+
         // Disable inputs during VDF computation
         handleInput.disabled = true;
         confirmButton.disabled = true;
