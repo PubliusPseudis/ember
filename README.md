@@ -63,7 +63,7 @@ identity = {
 
 **VDF Implementation**: 
 - Wesolowski's construction with RSA-2048 modulus
-- Adaptive difficulty based on device calibration (1-30 seconds)
+- Adaptive difficulty based on device calibration (30 seconds)
 - Deterministic verification in O(log T) time
 - WASM implementation for consistent cross-platform behavior
 
@@ -174,12 +174,31 @@ Relay nodes strengthen the network by:
 
 ## Protocol Properties
 
-### Achieved
+### Status of Protocol as Implemented
 - **Censorship Resistance**: No single point of control
 - **Sybil Resistance**: VDF-based identity cost
 - **Privacy**: Dandelion routing, local filtering
 - **Ephemerality**: Natural content expiration
 - **Spam Resistance**: Computational and social costs
+
+### Community Rating System
+Posts support community ratings using a Bayesian approach:
+- Weighted voting based on peer reputation
+- Beta-binomial model for score calculation
+- Visual feedback with confidence indicators
+
+### Reputation System
+Peers build reputation through:
+- Valid post attestations
+- Accurate content verification
+- Network contribution metrics
+- Used for trust-based fast verification
+
+### Advanced Features
+- **Image Storage**: Content-addressed chunked storage with Merkle tree verification
+- **Offline Messaging**: Queued delivery for offline recipients
+- **Rate Limiting**: Automatic DoS protection and IP-based rate limiting
+- **Dual-Key Identity**: Separate keys for signing and encryption
 
 ### Trade-offs
 - **No Persistent History**: Feature, not bug
