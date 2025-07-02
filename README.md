@@ -1,86 +1,210 @@
-# 🔥 Ember: The Ephemeral Social Network – Where Posts Live and Die
+# Ember: An Ephemeral P2P Social Network 🔥
 
-## About
+A trust-minimized, censorship-resistant social network where content persistence is determined by community interest rather than corporate algorithms or permanent storage.
 
-Ember is a decentralized, peer-to-peer social network where the lifespan of content is determined by the community. Unlike traditional social media, posts on Ember are ephemeral; they "live" as long as users actively "carry" them, metaphorically fanning their flames. When a post runs out of "breaths" (carriers), it "dies" and vanishes from the network.
+**Live Network**: https://ember-network.netlify.app/  
+**Repository**: https://github.com/PubliusPseudis/ember/tree/main
 
-This project is an experiment in decentralized content persistence, privacy-preserving routing, and proof-of-work based identity. It leverages a modern P2P stack, WebAssembly for performance-critical operations, and advanced cryptographic principles.
+## Overview
 
-**Experience a truly open social network, free from the constraints of corporate control. No ads. No algorithms dictating your feed. No hidden data mining. Just genuine, ephemeral interactions driven by the community.**
+Ember implements a novel approach to decentralized social networking where posts exist only as long as network participants actively choose to "carry" them. This creates a natural attention economy without artificial engagement metrics, while preserving user autonomy through local-first moderation and cryptographic identity guarantees.
 
-## Features
+The protocol combines several cryptographic and distributed systems primitives to achieve properties traditionally considered mutually exclusive: ephemerality with reliability, openness with spam resistance, and community governance without central coordination.
 
-* **Ephemeral Posts:** Content persists only as long as it is actively carried by peers. When all carriers drop a post, it disappears.
-* **Modular, Modern Architecture:** The entire application is built with a clean separation of concerns, using ES Modules for maintainability and scalability.
-* **Advanced P2P Stack:** Ember uses a multi-layered P2P networking stack for resilience and efficiency:
-    * **HyParView & Plumtree:** For maintaining a robust active peer set and enabling efficient, low-overhead message gossip.
-    * **Scribe:** A topic-based multicast protocol for hashtag-based content discovery and filtering.
-    * **Kademlia-based DHT:** For peer discovery and distributed data storage.
-    * **Dandelion++ Routing:** For privacy-preserving message routing that obscures the origin of posts.
-* **High-Performance VDF Identity (Rust & WASM):** New user identities are generated via a Verifiable Delay Function written in Rust and compiled to WebAssembly. This computation runs in a Web Worker to prevent UI blocking, providing a smooth and secure Sybil-resistant identity mechanism.
-* **Robust Verification Pipeline:** Post and identity signatures are verified cryptographically in a background worker queue, ensuring network integrity without impacting user experience.
-* **Content-Addressed Images:** Images are chunked, hashed, and stored using a content-addressed model with Merkle trees for data integrity, enabling resilient and efficient P2P image sharing.
-* **Local Data Persistence:** Posts are saved locally using IndexedDB, managed by a dedicated `StateManager`, and intelligently re-integrated into the network on rejoining.
-* **Client-Side Content Moderation:** Integrates TensorFlow.js models for optional, client-side toxicity detection and NSFW image filtering. **Your data remains on your device.**
+## Design Philosophy
 
-## Technology Stack
+### Trust Minimization
+Following cypherpunk principles, Ember minimizes trust requirements at every layer:
+- **Identity**: Self-sovereign identities secured by Verifiable Delay Functions (VDFs)
+- **Content**: Cryptographically signed posts with community attestation
+- **Moderation**: Local-first filtering with user-controlled rulesets
+- **Network**: No privileged nodes or coordinators
 
-* **P2P Networking:** WebTorrent.js for browser-to-browser connectivity.
-* **Custom P2P Protocol Suite:**
-    * **HyParView, Plumtree, Scribe, Dandelion:** Custom implementations for robust and efficient gossip and pub/sub.
-    * **Kademlia DHT:** For peer routing and discovery.
-* **Core Technologies:** Modern HTML5, CSS3, and ES6+ JavaScript.
-* **Cryptography:** TweetNacl.js for Ed25519 digital signatures.
-* **VDF Engine:** A custom Rust-based Verifiable Delay Function compiled to **WebAssembly** for high performance.
-* **Background Processing:** **Web Workers** for non-blocking VDF computation and post verification.
-* **Client-Side AI:** TensorFlow.js with the Toxicity and NSFW.js models.
-* **Security:** DOMPurify for sanitizing user-generated content to prevent XSS attacks.
-* **Storage:** IndexedDB for persistent local storage.
+### Ephemeral by Design
+Posts naturally expire when community interest wanes, creating:
+- **Organic content lifecycle** without arbitrary deletion policies
+- **Natural spam resistance** through carry cost
+- **Privacy through forgetfulness** - the network has no permanent memory
 
-## Access it in Pages
+## Technical Architecture
 
-You can access the live version of Ember via GitHub Pages: [publiuspseudis.github.io/ember](https://publiuspseudis.github.io/ember)
+### Network Stack
 
-## How to Run Locally
+The protocol employs a multi-layer P2P architecture:
 
-Ember is designed to run entirely in your web browser.
+```
+Application Layer:     Posts, Carries, Replies, DMs
+├── Routing Layer:     Dandelion, Traffic Mixing  
+├── Multicast Layer:   Scribe Trees, Plumtree Gossip
+├── Overlay Layer:     HyParView, Kademlia DHT
+└── Transport Layer:   WebTorrent (WebRTC + Trackers)
+```
 
-1.  **Clone the repository:**
-    ```bash
-    git clone [https://github.com/PubliusPseudis/ember.git](https://github.com/PubliusPseudis/ember.git)
-    cd ember
-    ```
-2.  **Serve the files:** You'll need a simple local web server. Python's built-in server is a good option:
-    ```bash
-    # For Python 3
-    python -m http.server
-    ```
-    Alternatively, use Node.js with `http-server`:
-    ```bash
-    npm install -g http-server
-    http-server .
-    ```
-3.  **Open in your browser:** Navigate to `http://localhost:8000` (or the port indicated by your server).
+**WebTorrent Bootstrap**: Leverages existing WebRTC infrastructure for NAT traversal and initial peer discovery through a shared bootstrap torrent.
 
-**Note:** For the NSFW.js and VDF modules to work, the `nsfwjs-model/` and `wasm/` directories must be served correctly alongside `index.html`.
+**Kademlia DHT**: Provides decentralized storage for identity claims and routing information with configurable replication factor (default: 20).
 
-## Project Structure
+**HyParView**: Maintains a partial view overlay for reliable message dissemination with Active View (5 peers) and Passive View (30 peers).
 
-The codebase is organized into a modular structure to ensure separation of concerns and maintainability.
+**Scribe/Plumtree**: Topic-based multicast trees with efficient gossip dissemination and lazy push for bandwidth optimization.
 
-* `index.html`: The main HTML document and application entry point.
-* `style.css`: Defines all application styling and themes.
-* `main.js`: The central orchestrator; initializes all modules and manages global state.
-* `ui.js`: Handles all DOM manipulation, rendering, and UI event listeners.
-* `storage.js`: Manages data persistence and all interactions with IndexedDB.
-* `config.js`: Contains global configuration constants for the application.
-* `p2p/`: Contains all networking protocol implementations (Dandelion, DHT, HyParView, Scribe, Plumtree, etc.).
-* `identity/`: Contains the logic for VDF-based identity creation, management, and verification.
-* `services/`: Contains background services like the `MemoryManager`, `PeerManager`, and `ImageStore`.
-* `models/`: Contains the `Post` class definition.
-* `vdf-wasm/`: Contains the Rust source code and compiled WebAssembly module for the Verifiable Delay Function.
-* `*-worker.js`: Web Worker scripts for offloading heavy computations (e.g., `vdf-worker.js`, `verify-worker.js`).
+### Cryptographic Identity System
+
+Identity creation employs VDFs to impose computational cost without ongoing proof-of-work:
+
+```rust
+identity = {
+  handle: string,
+  publicKey: Ed25519PublicKey,
+  vdfProof: WesolowskiVDFProof,
+  nodeId: SHA1(publicKey)
+}
+```
+
+**VDF Implementation**: 
+- Wesolowski's construction with RSA-2048 modulus
+- Adaptive difficulty based on device calibration (1-30 seconds)
+- Deterministic verification in O(log T) time
+- WASM implementation for consistent cross-platform behavior
+
+**Benefits**:
+- Sybil resistance without ongoing computational waste
+- One-time identity cost encourages reputation building
+- Device-agnostic time-lock puzzles
+
+### Content Attestation Protocol
+
+Posts undergo progressive verification through community attestation:
+
+1. **Signature Verification**: Ed25519 signature validates authorship
+2. **VDF Verification**: Proof-of-work prevents spam at creation time
+3. **Trust Accumulation**: Peers attest to post validity weighted by reputation
+4. **Threshold Acceptance**: Posts accepted after reaching configurable trust score
+
+This creates a "web of trust" without central authorities, where peer reputation emerges from attestation accuracy over time.
+
+### Privacy-Preserving Routing
+
+**Dandelion++ Implementation (no Onion routing yet)**:
+- Stem phase: 90% probability of forwarding to single peer
+- Fluff phase: Epidemic broadcast after random walk
+- Planned - Onion routing: 3-layer encryption for high-value posts
+
+**Traffic Analysis Resistance**:
+- Noise injection at 10-second intervals
+- Message mixing pools with random delays
+- Padding to obscure message sizes
+
+### Local-First Moderation
+
+Content filtering operates entirely client-side with pluggable rulesets:
+
+```javascript
+contentSafety: {
+  patterns: RegExp[],        // Detection patterns
+  obfuscation: Analyzer,     // Leetspeak, unicode tricks
+  contextual: Evaluator,     // Consider surrounding text
+  severity: Classifier       // critical/high/medium/low
+}
+```
+
+**Key Features**:
+- N-gram similarity detection for obfuscation
+- Context-aware evaluation (quotes, education, fiction)
+- Hot-reloadable JSON rulesets
+- No network consensus required
+
+**Image Screening**: Local NSFWJS model prevents illegal content without central scanning.
+
+### Ephemeral Storage Model
+
+Content persistence follows thermodynamic principles:
+
+```
+Heat(post) = Carriers(post) + 2 × Replies(post)
+Priority = Heat / (Age + 1)^1.5
+```
+
+**Carrier Mechanics**:
+- Users explicitly "carry" posts they value
+- Carried posts propagate to new peers
+- Zero carriers → post evaporates
+- Replies automatically carried with parent
+
+**Memory Management**:
+- Adaptive cleanup based on heap usage
+- Priority queue eviction
+- Explicit carries never evicted
+
+### Direct Messaging
+
+End-to-end encrypted DMs using NaCl box construction:
+
+```
+ciphertext = nacl.box(message, nonce, recipientPublicKey, senderSecretKey)
+```
+
+**Routing**: DHT-based peer location with store-and-forward for offline recipients.
+
+## Running Ember
+
+### Web Client
+
+```bash
+git clone https://github.com/PubliusPseudis/ember
+cd ember
+npm install
+npm run build
+# Serve the 'docs' directory on any HTTP server
+```
+
+### Headless Relay Node
+
+Support the network by running a headless relay:
+
+```bash
+# Create identity in browser first, export to headless-identity.json
+node headless.js
+```
+
+Relay nodes strengthen the network by:
+- Maintaining DHT state across sessions
+- Relaying posts between browser peers  
+- Providing stable routing infrastructure
+
+## Protocol Properties
+
+### Achieved
+- **Censorship Resistance**: No single point of control
+- **Sybil Resistance**: VDF-based identity cost
+- **Privacy**: Dandelion routing, local filtering
+- **Ephemerality**: Natural content expiration
+- **Spam Resistance**: Computational and social costs
+
+### Trade-offs
+- **No Persistent History**: Feature, not bug
+- **Online Requirement**: Peers must be active to maintain content
+- **Bootstrap Dependency**: Initial WebTorrent trackers needed
+
+## Future Directions
+
+- **Proof of Carry**: Cryptographic evidence of content propagation
+- **Reputation Markets**: Transferable attestation credits
+- **Bridge Nodes**: Gateway to other protocols (Nostr, ActivityPub)
+- **Mobile Clients**: Native implementations for better battery life
+
+## Contributing
+
+Ember is an experiment in trust-minimized social protocols. Contributions welcome, particularly in:
+- Cryptographic protocol improvements
+- Network resilience enhancements  
+- Privacy-preserving features
+- Accessibility improvements
 
 ## License
 
-This project is open-source and available under the GNU GPL v3 License.
+GPL-3.0 - Copyleft ensures the protocol remains open.
+
+---
+
+*"In a world of permanent records, the right to be forgotten is revolutionary. In a world of corporate algorithms, community curation is radical. Ember is both."*
