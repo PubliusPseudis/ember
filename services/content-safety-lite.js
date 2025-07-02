@@ -762,7 +762,6 @@ const harmfulSignatures = {
   'ain': { word: 'cocaine', type: 'illegal_trade', severity: 'high' },
   'her': { word: 'heroin', type: 'illegal_trade', severity: 'high' },
   'ero': { word: 'heroin', type: 'illegal_trade', severity: 'high' },
-  'oin': { word: 'heroin', type: 'illegal_trade', severity: 'high' },
   'fen': { word: 'fentanyl', type: 'illegal_trade', severity: 'high' },
   'ent': { word: 'fentanyl', type: 'illegal_trade', severity: 'high' },
   'nyl': { word: 'fentanyl', type: 'illegal_trade', severity: 'high' },
@@ -791,7 +790,7 @@ const harmfulSignatures = {
     }
   }
   
-  // KEY CHANGE: Require at least 3 matching trigrams (was 2)
+  // KEY CHANGE: Require at least 2 matching trigrams 
   for (const [word, count] of wordMatches) {
     if (count >= 2) {
       const config = Object.values(harmfulSignatures).find(h => h.word === word);
@@ -799,7 +798,7 @@ const harmfulSignatures = {
         violations.push({
           type: config.type,
           severity: config.severity,
-          confidence: Math.min(count * 0.2, 0.8), // Reduced confidence
+          confidence: Math.min(count * 0.1, 0.8), // Reduced confidence
           method: 'ngram_analysis',
           match: word
         });
@@ -1081,7 +1080,7 @@ const harmfulSignatures = {
           violations.push({
             type,
             severity,
-            confidence: 0.9,
+            confidence: 0.2,
             method: 'quick_evasion',
             match: text.match(pattern)[0]
           });
@@ -1231,7 +1230,7 @@ checkLegitimateContext(text) {
   else if (this.isLegitimateCreativeContext(text)) {
     context.isLegitimate = true;
     context.type = 'creative';
-    context.confidence = 0.8;
+    context.confidence = 0.9;
   }
   // Support/crisis context
   else if (this.isLegitimateSupportContext(text)) {
@@ -1348,7 +1347,7 @@ shouldSkipInContext(category, context) {
     }
   }
   
-  return contextExemptions[context.type]?.includes(category) && context.confidence > 0.7;
+  return contextExemptions[context.type]?.includes(category) && context.confidence > 0.6;
 }
   
   checkRequiredContext(text, contextRules) {
@@ -1551,8 +1550,8 @@ analyzeContext(text, violations) {
           const distance = this.levenshteinDistance(word, harmfulWord);
           const similarity = 1 - (distance / Math.max(word.length, harmfulWord.length));
           
-          // If similarity is above 0.70, flag it
-          if (similarity >= 0.70) {
+          // If similarity is above 0.80, flag it
+          if (similarity >= 0.80) {
             violations.push({
               type: config.type,
               severity: config.severity,
@@ -1690,7 +1689,7 @@ deduplicateViolations(violations) {
       }
     // Check for critical violations
     const critical = activeSeverityViolations.filter(v => v.severity === 'critical');
-    if (critical.length > 0) {
+    if (critical.length >= 1) {
         return {
             safe: false,
             shouldBlock: true,
@@ -1700,7 +1699,7 @@ deduplicateViolations(violations) {
     
     // Check for high severity - USE activeSeverityViolations NOT violations!
     const high = activeSeverityViolations.filter(v => v.severity === 'high');
-    if (high.length > 0) {
+    if (high.length >= 1) {
         return {
             safe: false,
             shouldBlock: true,
@@ -1710,10 +1709,10 @@ deduplicateViolations(violations) {
     
     // Check for medium severity - USE activeSeverityViolations NOT violations!
     const medium = activeSeverityViolations.filter(v => v.severity === 'medium');
-    if (medium.length >= 1) {
+    if (medium.length > 1) {
         return {
             safe: false,
-            shouldBlock: true,
+            shouldBlock: false,
             confidence: Math.max(...medium.map(v => v.confidence))
         };
     }
