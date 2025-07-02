@@ -578,13 +578,13 @@ export async function createPostWithTopics() {
         if (await isToxic(txt)) {
             notify(`Your post may be seen as toxic. Please rephrase.`);
             btn.disabled = false;
-            btn.textContent = "🔥 Light it up";
+            btn.textContent = "🔥";
             return;
         }
         if (imageData && await isImageToxic(imageData)) {
             notify("Image content not allowed");
             btn.disabled = false;
-            btn.textContent = "🔥 Light it up";
+            btn.textContent = "🔥";
             return;
         }
         
@@ -618,13 +618,13 @@ export async function createPostWithTopics() {
         removeImage();
 
         btn.disabled = false;
-        btn.textContent = "🔥 Light it up";
+        btn.textContent = "🔥";
         notify("Posted to the void");
     } catch (error) {
         console.error("VDF computation failed:", error);
         notify("Failed to compute proof of work", 5000);
         btn.disabled = false;
-        btn.textContent = "🔥 Light it up";
+        btn.textContent = "🔥";
     }
 }
 
