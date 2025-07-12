@@ -10,6 +10,6 @@ export default defineConfig({
   // Add this build configuration
   build: {
     target: 'esnext',
-    outDir: 'docs', // Output build files to 'docs' instead of 'dist'
+    outDir: 'dist', // Output build files to 'docs' instead of 'dist'
   },
 });

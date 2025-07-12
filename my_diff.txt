@@ -1,0 +1,1794 @@
+diff --git a/README.md b/README.md
+index 6b720dc..30e4f21 100644
+--- a/README.md
++++ b/README.md
+@@ -163,7 +163,7 @@ npm run build
+ Support the network by running a headless relay:
+ 
+ ```bash
+-# Create identity in browser first, export to headless-identity.json
++# all you have to do is run:
+ node headless.js
+ ```
+ 
+diff --git a/headless-identity.json b/headless-identity.json
+deleted file mode 100644
+index 041a3cb..0000000
+--- a/headless-identity.json
++++ /dev/null
+@@ -1 +0,0 @@
+-{"handle":"bob","publicKey":"1Iv+g0cnj4zo+Fxw8s58KFC2r4dD9Y4IQtPVSwi9+5E=","secretKey":[191,211,200,34,171,85,196,88,57,165,11,222,106,11,163,99,133,243,162,239,172,122,103,51,59,34,226,18,133,39,120,9,212,139,254,131,71,39,143,140,232,248,92,112,242,206,124,40,80,182,175,135,67,245,142,8,66,211,213,75,8,189,251,145],"encryptionPublicKey":"n3uWmqmuelfMqG2mGsf3FbEPea0YI9L3vsLq/Z54dRk=","encryptionSecretKey":[113,141,131,41,144,1,134,222,121,94,201,60,148,147,242,52,12,175,200,96,200,197,187,179,3,26,237,47,22,157,123,172],"vdfProof":{"y":"YdyI1Ve6Wl4wWaUDFl86uy0uFPQvYI6TYBBVaj8cCu+96LGkhaF+KCimIZN2Y77mjZjKVmFZMYSfAbqOPagVuyr5TCEgEv3iVWtS6B5QrEyGWw4zuOmMVOINWkKLgcvfw5UqfTrmyAsn25zg6YOKlZH1ySn/gF/Vpx+EIuYEM3vNnsuRrD4GqQmiVg8LpQskZ72DZ77TcH7M8OdHoVRvHMCA5MUAzFUZskfearQF/ChQdiZxcSwcuMlOr+9wCgz8avjhVUoGDWBSdVgSC2jUudt2qHvDfoRBY+aUAHGNQV5F9LDeOls9+kLNN9lvKPb5HOcwk9ZUgSO2Cec1GjVxGg==","pi":"kQz4V78LMNLbvEDwxIhJ/ueWlfUqxOl9akZrIkxP/lD26Ex8/JfOXIyM0hIWLEY3GbzIqxzsnRYXrihlntmmX7lC+AAt8eFLjY4l6rYWoHEouvy7DmoTPbtG9mS2OzksxbmbZBHjW4O53qmA7ZNdL7MssAt0gX3uAB7o8JOwSHbM5NrcoHGkpY2ERn8eL518NSokmmVmogmzyZjWLs1pQXEtglp87opm0qH20FlZqcihF3CXIGOxFY8z/J9URu7+S4T5AV5MbcFrgTSZojTu34oOIFmS6pTgQ4DENjY/KN8hVmGcJl/S6jKT++KNYw20Cl383BgDUzDtUOZ04p4tqw==","l":"/5ef9SZHVbtfrXJthAzfuQ==","r":"2mg6IOJy+0qLPLVVDPQCDA==","iterations":"456621"},"vdfInput":"ephemeral-identity-creation-bob-y8a4b0hyz","uniqueId":"y8a4b0hyz","nodeId":[224,106,41,114,171,70,41,52,204,221,3,185,112,55,165,234,140,94,97,2],"deviceCalibration":{"iterationsPerMs":15.220700152207002,"calibrationTime":328.5,"targetIterations":456621},"identityClaim":{"handle":"bob","publicKey":"1Iv+g0cnj4zo+Fxw8s58KFC2r4dD9Y4IQtPVSwi9+5E=","encryptionPublicKey":"n3uWmqmuelfMqG2mGsf3FbEPea0YI9L3vsLq/Z54dRk=","vdfProof":{"y":"YdyI1Ve6Wl4wWaUDFl86uy0uFPQvYI6TYBBVaj8cCu+96LGkhaF+KCimIZN2Y77mjZjKVmFZMYSfAbqOPagVuyr5TCEgEv3iVWtS6B5QrEyGWw4zuOmMVOINWkKLgcvfw5UqfTrmyAsn25zg6YOKlZH1ySn/gF/Vpx+EIuYEM3vNnsuRrD4GqQmiVg8LpQskZ72DZ77TcH7M8OdHoVRvHMCA5MUAzFUZskfearQF/ChQdiZxcSwcuMlOr+9wCgz8avjhVUoGDWBSdVgSC2jUudt2qHvDfoRBY+aUAHGNQV5F9LDeOls9+kLNN9lvKPb5HOcwk9ZUgSO2Cec1GjVxGg==","pi":"kQz4V78LMNLbvEDwxIhJ/ueWlfUqxOl9akZrIkxP/lD26Ex8/JfOXIyM0hIWLEY3GbzIqxzsnRYXrihlntmmX7lC+AAt8eFLjY4l6rYWoHEouvy7DmoTPbtG9mS2OzksxbmbZBHjW4O53qmA7ZNdL7MssAt0gX3uAB7o8JOwSHbM5NrcoHGkpY2ERn8eL518NSokmmVmogmzyZjWLs1pQXEtglp87opm0qH20FlZqcihF3CXIGOxFY8z/J9URu7+S4T5AV5MbcFrgTSZojTu34oOIFmS6pTgQ4DENjY/KN8hVmGcJl/S6jKT++KNYw20Cl383BgDUzDtUOZ04p4tqw==","l":"/5ef9SZHVbtfrXJthAzfuQ==","r":"2mg6IOJy+0qLPLVVDPQCDA==","iterations":"456621"},"vdfInput":"ephemeral-identity-creation-bob-y8a4b0hyz","claimedAt":1751256974861,"nodeId":"4GopcqtGKTTM3QO5cDel6oxeYQI=","signature":"A7shg2OYrS0lMg5Lwx5jYNJ08gINQVNa7r3plsHWX9RMTgpJ3DiMu3/G7KRI3n/DX6e3Di6olU/3+C4XttT2DnsiaGFuZGxlIjoiYm9iIiwicHVibGljS2V5IjoiMUl2K2cwY25qNHpvK0Z4dzhzNThLRkMycjRkRDlZNElRdFBWU3dpOSs1RT0iLCJlbmNyeXB0aW9uUHVibGljS2V5IjoibjN1V21xbXVlbGZNcUcybUdzZjNGYkVQZWEwWUk5TDN2c0xxL1o1NGRSaz0iLCJ2ZGZQcm9vZiI6eyJ5IjoiWWR5STFWZTZXbDR3V2FVREZsODZ1eTB1RlBRdllJNlRZQkJWYWo4Y0N1Kzk2TEdraGFGK0tDaW1JWk4yWTc3bWpaaktWbUZaTVlTZkFicU9QYWdWdXlyNVRDRWdFdjNpVld0UzZCNVFyRXlHV3c0enVPbU1WT0lOV2tLTGdjdmZ3NVVxZlRybXlBc24yNXpnNllPS2xaSDF5U24vZ0YvVnB4K0VJdVlFTTN2Tm5zdVJyRDRHcVFtaVZnOExwUXNrWjcyRFo3N1RjSDdNOE9kSG9WUnZITUNBNU1VQXpGVVpza2ZlYXJRRi9DaFFkaVp4Y1N3Y3VNbE9yKzl3Q2d6OGF2amhWVW9HRFdCU2RWZ1NDMmpVdWR0MnFIdkRmb1JCWSthVUFIR05RVjVGOUxEZU9sczkra0xOTjlsdktQYjVIT2N3azlaVWdTTzJDZWMxR2pWeEdnPT0iLCJwaSI6ImtRejRWNzhMTU5MYnZFRHd4SWhKL3VlV2xmVXF4T2w5YWtacklreFAvbEQyNkV4OC9KZk9YSXlNMGhJV0xFWTNHYnpJcXh6c25SWVhyaWhsbnRtbVg3bEMrQUF0OGVGTGpZNGw2cllXb0hFb3V2eTdEbW9UUGJ0RzltUzJPemtzeGJtYlpCSGpXNE81M3FtQTdaTmRMN01zc0F0MGdYM3VBQjdvOEpPd1NIYk01TnJjb0hHa3BZMkVSbjhlTDUxOE5Tb2ttbVZtb2dtenlaaldMczFwUVhFdGdscDg3b3BtMHFIMjBGbFpxY2loRjNDWElHT3hGWTh6L0o5VVJ1NytTNFQ1QVY1TWJjRnJnVFNab2pUdTM0b09JRm1TNnBUZ1E0REVOalkvS044aFZtR2NKbC9TNmpLVCsrS05ZdzIwQ2wzODNCZ0RVekR0VU9aMDRwNHRxdz09IiwibCI6Ii81ZWY5U1pIVmJ0ZnJYSnRoQXpmdVE9PSIsInIiOiIybWc2SU9KeSswcUxQTFZWRFBRQ0RBPT0iLCJpdGVyYXRpb25zIjoiNDU2NjIxIn0sInZkZklucHV0IjoiZXBoZW1lcmFsLWlkZW50aXR5LWNyZWF0aW9uLWJvYi15OGE0YjBoeXoiLCJjbGFpbWVkQXQiOjE3NTEyNTY5NzQ4NjEsIm5vZGVJZCI6IjRHb3BjcXRHS1RUTTNRTzVjRGVsNm94ZVlRST0ifQ=="},"isRegistered":true,"registrationVerified":true}
+diff --git a/headless-ui.js b/headless-ui.js
+deleted file mode 100644
+index ebeec7a..0000000
+--- a/headless-ui.js
++++ /dev/null
+@@ -1,78 +0,0 @@
+-// headless-ui.js
+-// A 'stub' version of the UI module for the headless node. Logs critical info.
+-
+-export function notify(msg, dur, onClick) { 
+-  console.log(`[UI NOTIFY] ${msg}`); 
+-}
+-
+-export function updateConnectionStatus(message, type = 'info') { 
+-  console.log(`[CONNECTION] ${type.toUpperCase()}: ${message}`); 
+-}
+-
+-export function updateLoadingMessage(message) { 
+-  console.log(`[LOADING] ${message}`); 
+-}
+-
+-// Visual functions - empty stubs since headless has no UI
+-export function renderPost(p) { }
+-export function refreshPost(p) { }
+-export function dropPost(id) { }
+-export function setupThemeToggle() { }
+-export function applyTheme(theme) { }
+-export function showConnectScreen() { }
+-export function updateAges() { }
+-export function scrollToPost(postId) { }
+-export function updateStatus() { console.log(`[STATUS] Posts: ${globalThis.state?.posts?.size || 0}, Peers: ${globalThis.state?.peers?.size || 0}`); }
+-
+-// Topic management stubs
+-export function loadTopicSubscriptions() { }
+-export function updateTopicFilter() { }
+-export function addTopicToUI(topic) { console.log(`[TOPIC] Added ${topic} to subscriptions`); }
+-export function updateTopicStats() { }
+-export function subscribeToTopic() { }
+-export function filterByTopic() { }
+-export function setFeedMode() { }
+-export function discoverAndFilterTopic() { }
+-export function completeTopicSuggestion() { }
+-
+-// Image handling stubs
+-export function handleImageSelect() { }
+-export function removeImage() { }
+-export function handleReplyImageSelect() { }
+-export function removeReplyImage() { }
+-
+-// Reply/thread stubs
+-export function toggleReplyForm() { }
+-export function toggleThread() { }
+-
+-// DM stubs - log for awareness
+-export function addMessageToConversation(handle, messageText, direction, timestamp) {
+-  console.log(`[DM] ${direction === 'sent' ? 'Sent to' : 'Received from'} ${handle}: ${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}`);
+-}
+-
+-export function storeDMLocallyAndUpdateUI(otherHandle, messageText, direction) {
+-  console.log(`[DM] Message ${direction} with ${otherHandle}: ${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}`);
+-}
+-
+-export function updateDMInbox() { }
+-export function updateUnreadBadge() { }
+-
+-// Current DM recipient (needed by main.js)
+-export let currentDMRecipient = null;
+-
+-// DM panel functions
+-export function openDMPanel(handle) {
+-  console.log(`[UI] Would open DM panel for ${handle} (no-op in headless mode)`);
+-}
+-
+-export function closeDMPanel() {
+-  console.log(`[UI] Would close DM panel (no-op in headless mode)`);
+-}
+-
+-export function sendDM() {
+-  console.log(`[UI] Would send DM (no-op in headless mode)`);
+-}
+-
+-export function switchDrawer(drawerId) {
+-  console.log(`[UI] Would switch to drawer ${drawerId} (no-op in headless mode)`);
+-}
+diff --git a/headless.js b/headless.js
+index c780b1c..b0cc84e 100644
+--- a/headless.js
++++ b/headless.js
+@@ -1,284 +1,323 @@
+-// headless.js - Fixed version with comprehensive browser API mocking
+-
+-import fs from 'fs';
+-import { JSONParseWithBigInt, base64ToArrayBuffer } from './utils.js';
+-import wasmVDF from './vdf-wrapper.js';
+-import { StatelessManager } from './stateless-manager.js';
+-
+-
+-async function main() {
+-  console.log("🔥 Initializing Headless Ember Relay Node...");
+-
+-  try {
+-    // FIRST: Set up comprehensive global polyfills for Node.js environment
+-    // This must happen BEFORE importing main.js
+-    const { default: WebTorrent } = await import('webtorrent');
+-
+-    // Create a mock window object with all properties ui.js might access
+-    globalThis.window = {
+-      currentDMConversation: null,
+-      ephemeralDebug: {},
+-      addEventListener: () => {},
+-      removeEventListener: () => {},
+-      dispatchEvent: () => {},
+-      location: { reload: () => {} },
+-      animationObserver: null,
+-      RTCPeerConnection: class {},
+-      WebTorrent: WebTorrent, 
+-      networkStartTime: Date.now()
+-    };
+-        console.log('[DEBUG in headless.js] The value of window.WebTorrent is now:', globalThis.window.WebTorrent);
+-
+-    // Mock document
+-    globalThis.document = {
+-      getElementById: () => null,
+-      querySelector: () => null,
+-      querySelectorAll: () => [],
+-      createElement: () => ({
+-        style: {},
+-        classList: {
+-          add: () => {},
+-          remove: () => {},
+-          toggle: () => {},
+-          contains: () => false
+-        },
+-        addEventListener: () => {},
+-        removeEventListener: () => {},
+-        innerHTML: '',
+-        textContent: '',
+-        appendChild: () => {},
+-        querySelector: () => null,
+-        querySelectorAll: () => []
+-      }),
+-      body: {
+-        appendChild: () => {},
+-        classList: {
+-          add: () => {},
+-          remove: () => {},
+-          contains: () => false
++// headless.js - Ember Network Headless Relay (Upgraded)
++// It is not enough to just survive; we must build a network that endures.
++
++import WebTorrent from 'webtorrent';
++import crypto from 'crypto';
++import { StringDecoder } from 'string_decoder';
++// Core Protocol Imports - The building blocks of a resilient network
++import { KademliaDHT } from './p2p/dht.js';
++import { HyParView } from './p2p/hyparview.js';
++import { Plumtree } from './p2p/plumtree.js';
++import { hexToUint8Array } from './utils.js';
++
++// System Configuration
++const CONFIG = {
++  MAX_POST_SIZE: 1120,
++  MAX_MESSAGE_SIZE: 1 * 1024 * 1024,
++  MAX_POSTS: 1000,
++  POST_TTL: 24 * 60 * 60 * 1000, // 24 hours
++  TRACKERS: [
++    'wss://tracker.openwebtorrent.com',
++    'wss://tracker.webtorrent.dev',
++    'wss://tracker.btorrent.xyz',
++    'wss://tracker.files.fm:7073/announce'
++  ]
++};
++
++// Global Relay State
++const state = {
++  posts: new Map(),
++  peers: new Map(),
++  seenMessages: new Set(),
++  seenPosts: new Set(),
++  client: null,
++  startTime: Date.now(),
++  // Protocol State - The heart of the node's intelligence
++  nodeId: crypto.randomBytes(20), // A unique identity for this session
++  dht: null,
++  hyparview: null,
++  plumtree: null
++};
++
++// Generates a unique identifier for a message
++function generateMessageId() {
++  return crypto.randomBytes(16).toString('hex');
++}
++
++// A simple but necessary filter for harmful content
++function isContentSafe(text) {
++  const blockedPatterns = [
++    /\b(kill|murder|bomb|suicide)\s*(you|me|them|everyone)/i,
++    /\b(child|minor|kid).*\b(porn|sex|abuse|naked)/i,
++    /\b(nigger|faggot|kike|spic|chink)/i,
++    /\bhow\s*to\s*(make|build|create).*\b(bomb|weapon|poison)/i
++  ];
++  for (const pattern of blockedPatterns) {
++    if (pattern.test(text)) return false;
++  }
++  return true;
++}
++
++// Validates the structural integrity of a post
++function isValidPost(post) {
++  return post &&
++    typeof post.id === 'string' &&
++    typeof post.content === 'string' &&
++    typeof post.author === 'string' &&
++    typeof post.timestamp === 'number' &&
++    post.content.length <= CONFIG.MAX_POST_SIZE;
++}
++
++// Processes a post delivered by the Plumtree protocol
++function handleNewPost(data, fromWire) {
++  const post = data.post || data;
++  if (!isValidPost(post) || state.posts.has(post.id) || state.seenPosts.has(post.id)) {
++    return;
++  }
++  if (!isContentSafe(post.content)) {
++    console.log(`[Relay] Blocked harmful content from ${post.author}`);
++    return;
++  }
++
++  state.seenPosts.add(post.id);
++  state.posts.set(post.id, { ...post, receivedAt: Date.now() });
++  console.log(`[Relay] Stored post ${post.id.substring(0, 8)}... (${state.posts.size} total)`);
++
++  // Re-broadcast using the intelligent Plumtree protocol
++  state.plumtree.broadcast({ type: 'new_post', data: post }, fromWire ? fromWire.peerId : null);
++}
++
++// Transmits a message to a specific peer
++function sendMessage(wire, msg) {
++  const msgStr = JSON.stringify(msg);
++  if (msgStr.length > CONFIG.MAX_MESSAGE_SIZE) return;
++
++  const data = Buffer.from(msgStr);
++  if (wire.ephemeral_msg && wire.ephemeral_msg._ready) {
++    wire.extended(wire.ephemeral_msg.peerId, data);
++  }
++}
++
++// Central dispatcher for all incoming peer messages
++function handleMessage(msg, wire) {
++  if (msg.msgId && state.seenMessages.has(msg.msgId)) return;
++  if (msg.msgId) state.seenMessages.add(msg.msgId);
++
++  switch (msg.type) {
++    case 'plumtree':
++      state.plumtree.handleMessage(msg, wire);
++      break;
++    case 'hyparview':
++      state.hyparview.handleMessage(msg, wire);
++      break;
++    case 'new_post': // For legacy or simple peers
++      handleNewPost(msg, wire);
++      break;
++    case 'request_posts':
++      const posts = Array.from(state.posts.values()).sort((a, b) => b.timestamp - a.timestamp).slice(0, 50).map(p => p.toJSON());
++      sendMessage(wire, { type: 'posts_response', posts });
++      break;
++    case 'posts_response':
++      if (Array.isArray(msg.posts)) {
++        for (const post of msg.posts) {
++          handleNewPost({ post }, wire);
+         }
+-      },
+-      head: {
+-        appendChild: () => {}
+-      },
+-      addEventListener: () => {},
+-      removeEventListener: () => {},
+-      hidden: false
+-    };
+-    
+-    // Mock localStorage
+-    const localStorageData = {};
+-    globalThis.localStorage = {
+-      getItem: (key) => localStorageData[key] || null,
+-      setItem: (key, value) => { localStorageData[key] = value; },
+-      removeItem: (key) => { delete localStorageData[key]; },
+-      clear: () => { for (let key in localStorageData) delete localStorageData[key]; }
+-    };
+-    
+-    // Mock other browser APIs
+-    globalThis.navigator = {
+-        userAgent: 'node.js', // Provide a mock user agent
+-        platform: 'linux'     // Provide a mock platform
+-    };
+-    globalThis.IntersectionObserver = class {
+-      constructor() {}
+-      observe() {}
+-      unobserve() {}
+-      disconnect() {}
+-    };
+-    
+-    globalThis.DOMPurify = {
+-      sanitize: (content) => content,
+-      addHook: () => {}
+-    };
+-    
+-    // Mock CustomEvent
+-    globalThis.CustomEvent = class CustomEvent {
+-      constructor(type, eventInitDict) {
+-        this.type = type;
+-        this.detail = eventInitDict?.detail;
+       }
+-    };
+-    
+-    // Mock crypto.subtle if not available
+-    if (!globalThis.crypto) {
+-      globalThis.crypto = {
+-        getRandomValues: (arr) => {
+-          for (let i = 0; i < arr.length; i++) {
+-            arr[i] = Math.floor(Math.random() * 256);
+-          }
+-          return arr;
+-        },
+-        subtle: {
+-          digest: async (algorithm, data) => {
+-            // Simple mock - in production you'd use Node's crypto
+-            return new ArrayBuffer(32);
+-          }
++      break;
++    default:
++      // Other message types are irrelevant to the core mission
++      break;
++  }
++}
++
++// Attaches the custom protocol extension to a peer connection
++function setupWireExtension(wire) {
++  function EphemeralExtension() {
++    this._wire = wire;
++    this._ready = false;
++    this._messageBuffer = '';
++    this._decoder = new StringDecoder('utf8');
++  }
++  EphemeralExtension.prototype.name = 'ephemeral_msg';
++  EphemeralExtension.prototype.onExtendedHandshake = function(handshake) {
++    if (!handshake.m || typeof handshake.m.ephemeral_msg === 'undefined') return;
++    this.peerId = handshake.m.ephemeral_msg;
++    this._ready = true;
++    this._wire.ephemeral_msg = this;
++    setTimeout(() => {
++      if (!this._wire.destroyed && this._ready) {
++        sendMessage(this._wire, { type: 'request_posts' });
++      }
++    }, 1000);
++  };
++  // A robust parser for handling concatenated JSON objects in a single stream
++  EphemeralExtension.prototype.onMessage = function(buf) {
++    this._messageBuffer += this._decoder.write(buf);
++    let braceCount = 0;
++    let lastSlice = 0;
++    let inString = false;
++    let escaped = false;
++    for (let i = 0; i < this._messageBuffer.length; i++) {
++        const char = this._messageBuffer[i];
++        if (escaped) {
++            escaped = false;
++            continue;
+         }
+-      };
+-    }
+-    
+-    // Mock performance.memory
+-    if (!globalThis.performance) {
+-      globalThis.performance = {
+-        now: () => Date.now(),
+-        memory: {
+-          usedJSHeapSize: 50 * 1024 * 1024,
+-          jsHeapSizeLimit: 100 * 1024 * 1024
++        if (char === '\\') {
++            escaped = true;
++            continue;
++        }
++        if (char === '"') {
++            inString = !inString;
++        }
++        if (!inString) {
++            if (char === '{') braceCount++;
++            else if (char === '}') braceCount--;
++        }
++        if (braceCount === 0 && !inString && i > lastSlice && this._messageBuffer[lastSlice] === '{') {
++            const jsonStr = this._messageBuffer.substring(lastSlice, i + 1);
++            try {
++                const msg = JSON.parse(jsonStr);
++                handleMessage(msg, this._wire);
++            } catch (e) {
++                // Ignore parse errors from potentially corrupt or non-standard peers
++            }
++            lastSlice = i + 1;
+         }
+-      };
+-    }
+-    
+-    // Mock alert, confirm
+-    globalThis.alert = (msg) => console.log(`[ALERT] ${msg}`);
+-    globalThis.confirm = (msg) => {
+-      console.log(`[CONFIRM] ${msg} (auto-accepting in headless mode)`);
+-      return true;
+-    };
+-    
+-    // Mock nacl if needed
+-    if (!globalThis.nacl) {
+-      try {
+-        const { default: nacl } = await import('tweetnacl');
+-        globalThis.nacl = nacl;
+-      } catch (e) {
+-        console.warn("Could not load tweetnacl, some crypto functions may fail");
+-      }
+     }
+-    
+-    
+-
+-    globalThis.openDMPanel = (handle) => console.log(`[UI] openDMPanel called for ${handle} (no-op)`);
+-    globalThis.closeDMPanel = () => console.log('[UI] closeDMPanel called (no-op)');
+-    globalThis.sendDM = () => console.log('[UI] sendDM called (no-op)');
+-    globalThis.switchDrawer = (drawerId) => console.log(`[UI] switchDrawer called for ${drawerId} (no-op)`);
+-
+-    // Mock content safety for headless
+-    globalThis.contentSafety = {
+-      checkContent: async (text) => ({ safe: true, violations: [], shouldBlock: false }),
+-      quickCheck: async (text) => ({ safe: true, violations: [], shouldBlock: false })
+-    };
+-
+-    // NOW: Import main.js after all mocks are set up
+-    const mainModule = await import('./main.js');
+-    const { state, initNetworkWithTempId, initializeP2PProtocols, startMaintenanceLoop, verificationQueue, stateManager } = mainModule;
+-
+-    // Replace stateManager with stateless version
+-    const statelessManager = new StatelessManager();
+-    Object.setPrototypeOf(stateManager, StatelessManager.prototype);
+-    Object.assign(stateManager, statelessManager);
+-
+-    // Override any UI functions that might have been exposed globally
+-    if (globalThis.window) {
+-      const uiFunctions = [
+-        'createPostWithTopics', 'toggleCarry', 'createReply', 'handleImageSelect',
+-        'removeImage', 'toggleReplyForm', 'subscribeToTopic', 'filterByTopic',
+-        'setFeedMode', 'discoverAndFilterTopic', 'completeTopicSuggestion',
+-        'scrollToPost', 'clearLocalData', 'handleReplyImageSelect', 'removeReplyImage',
+-        'openDMPanel', 'closeDMPanel', 'sendDM', 'toggleThread', 'switchDrawer'
+-      ];
+-      
+-      uiFunctions.forEach(func => {
+-        globalThis.window[func] = () => {
+-          console.log(`[UI] ${func} called (no-op in headless mode)`);
+-        };
+-      });
++    if (lastSlice > 0) {
++        this._messageBuffer = this._messageBuffer.substring(lastSlice);
+     }
++  };
++  wire.use(EphemeralExtension);
++}
+ 
+-    // Rest of your existing code...
+-    // 1. Load Identity
+-    if (!fs.existsSync('headless-identity.json')) {
+-      console.error("❌ headless-identity.json not found! Please create an identity first:");
+-      console.error("   1. Run the browser version");
+-      console.error("   2. Create an identity");
+-      console.error("   3. Copy localStorage.getItem('ephemeral-id') to headless-identity.json");
+-      process.exit(1);
+-    }
++// Manages the lifecycle of a new peer connection
++function handlePeer(wire, addr) {
++  const peerIdStr = wire.peerId;
++  console.log(`[Relay] New peer ${peerIdStr.substring(0, 12)}... connected from ${addr}`);
++  state.peers.set(peerIdStr, { wire, addr, connectedAt: Date.now() });
+ 
+-    const identityData = fs.readFileSync('headless-identity.json', 'utf-8');
+-    const identityJSON = JSONParseWithBigInt(identityData);
+-    
+-    // Convert stored data back to proper types
+-    state.myIdentity = {
+-      ...identityJSON,
+-      secretKey: new Uint8Array(identityJSON.secretKey),
+-      encryptionSecretKey: new Uint8Array(identityJSON.encryptionSecretKey),
+-      publicKey: base64ToArrayBuffer(identityJSON.publicKey),
+-      encryptionPublicKey: base64ToArrayBuffer(identityJSON.encryptionPublicKey),
+-      nodeId: new Uint8Array(identityJSON.nodeId),
+-      vdfProof: { 
+-        ...identityJSON.vdfProof, 
+-        iterations: BigInt(identityJSON.vdfProof.iterations) 
+-      }
+-    };
+-    
+-    console.log(`✅ Relay node identity loaded for handle: ${state.myIdentity.handle}`);
+-
+-    // 2. Initialize Core Services
+-    console.log("🔧 Initializing WASM VDF...");
+-    await wasmVDF.initialize();
+-    
+-    console.log("🔧 Initializing verification queue...");
+-    await verificationQueue.init();
+-
+-    // 3. Start Networking
+-    console.log("🌐 Initializing network stack...");
+-    await initNetworkWithTempId(state.myIdentity.nodeId);
+-    
+-    // Give the DHT time to bootstrap before starting higher-level protocols
+-    console.log("⏳ Waiting for DHT bootstrap...");
+-    await new Promise(resolve => setTimeout(resolve, 5000));
+-    
+-    console.log("🔧 Initializing P2P protocols...");
+-    initializeP2PProtocols();
+-
+-    // 4. Start Maintenance
+-    console.log("🔧 Starting maintenance loop...");
+-    startMaintenanceLoop();
+-
+-    console.log("✅ Headless Ember Relay Node is online and ready!");
+-    console.log(`📊 Node ID: ${Array.from(state.myIdentity.nodeId).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 12)}...`);
+-    console.log("🔥 Listening for network activity and carrying the flame...");
+-
+-    // Log periodic status
+-    setInterval(() => {
+-      const peerCount = state.peers?.size || 0;
+-      const postCount = state.posts?.size || 0;
+-      const dhtPeers = state.dht?.getStats()?.totalPeers || 0;
+-      
+-      console.log(`[HEARTBEAT] Peers: ${peerCount}, Posts: ${postCount}, DHT: ${dhtPeers} nodes`);
+-    }, 60000); // Every minute
+-
+-  } catch (error) {
+-    console.error("❌ Failed to initialize headless node:", error);
+-    console.error("Stack trace:", error.stack);
+-    process.exit(1);
+-  }
++  // Integrate the new peer into the P2P protocols
++  const peerNodeId = hexToUint8Array(peerIdStr);
++  state.dht.addPeer(peerNodeId, { wire });
++  state.hyparview.addToPassiveView(peerNodeId, { wire }); // New peers start in the passive set
++
++  setupWireExtension(wire);
++
++  wire.on('close', () => {
++    console.log(`[Relay] Peer ${peerIdStr.substring(0, 12)}... disconnected`);
++    state.peers.delete(peerIdStr);
++    // Ensure protocols are aware of the disconnection
++    state.hyparview.handlePeerFailure(peerNodeId);
++    state.dht.removePeer(peerNodeId);
++  });
++  wire.on('error', (err) => {}); // Suppress minor wire errors
+ }
+ 
+-// Handle graceful shutdown
+-process.on('SIGINT', () => {
+-  console.log('\n🔥 Gracefully shutting down Ember relay node...');
+-  
+-  if (globalThis.state?.client) {
+-    globalThis.state.client.destroy();
++// Prunes old data to maintain a healthy state
++function garbageCollect() {
++  const now = Date.now();
++  let removed = 0;
++  for (const [id, post] of state.posts) {
++    if (now - post.receivedAt > CONFIG.POST_TTL) {
++      state.posts.delete(id);
++      removed++;
++    }
+   }
+-  
+-  if (globalThis.state?.dht) {
+-    globalThis.state.dht.shutdown();
++  if (removed > 0) {
++    console.log(`[Relay] Garbage collected ${removed} old posts`);
+   }
++}
++
++// Reports the current status and health of the relay
++function printStats() {
++  const uptime = Math.floor((Date.now() - state.startTime) / 1000);
++  const hours = Math.floor(uptime / 3600);
++  const minutes = Math.floor((uptime % 3600) / 60);
++  const seconds = uptime % 60;
+   
+-  console.log('✅ Shutdown complete. The flame lives on in other nodes.');
+-  process.exit(0);
+-});
++  const plumtreeStats = state.plumtree.getStats();
++  const hyparviewStats = state.hyparview.getStats();
+ 
+-process.on('SIGTERM', () => {
+-  console.log('\n🔥 Received SIGTERM, shutting down...');
+-  process.exit(0);
+-});
++  console.log('\n=== Ember Relay Statistics ===');
++  console.log(`Uptime: ${hours}h ${minutes}m ${seconds}s`);
++  console.log(`Connected peers: ${state.peers.size}`);
++  console.log(`HyParView Active/Passive: ${hyparviewStats.activeView}/${hyparviewStats.passiveView}`);
++  console.log(`Plumtree Eager/Lazy: ${plumtreeStats.eagerPeers}/${plumtreeStats.lazyPeers}`);
++  console.log(`Stored posts: ${state.posts.size}`);
++  console.log(`Memory usage: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
++  console.log('==============================\n');
++}
++
++// Main entry point for the relay node
++async function startRelay() {
++  console.log('🔥 Ember Network Headless Relay v1.0');
++  console.log('====================================');
++  console.log('Protocols: HyParView, Plumtree, WebTorrent');
++
++  // Initialize Core P2P Protocols
++  state.dht = new KademliaDHT(state.nodeId);
++  state.hyparview = new HyParView(state.nodeId, state.dht);
++  state.plumtree = new Plumtree(state.nodeId, state.hyparview);
++  console.log(`[Relay] Initialized with Node ID: ${state.nodeId.toString('hex')}`);
++
++  // Configure Plumtree to deliver finalized messages to the application layer
++  state.plumtree.deliver = (message) => {
++    if (message.type === 'post' && message.data) {
++        handleNewPost({ post: message.data });
++    }
++  };
++
++  // Initialize WebTorrent for transport
++  state.client = new WebTorrent({
++    dht: false,
++    maxConns: 50,
++    tracker: { announce: CONFIG.TRACKERS }
++  });
++  state.client.on('error', (err) => console.error('[Relay] Client error:', err.message));
++
++  // Connect to the network via the bootstrap torrent
++  const bootstrapData = Buffer.from('Ember-DHT-Bootstrap-v1');
++  state.client.seed(bootstrapData, { name: 'ember-bootstrap.txt', announce: CONFIG.TRACKERS }, (torrent) => {
++    console.log(`✅ Connected to Ember network`);
++    console.log(`📡 InfoHash: ${torrent.infoHash}`);
++    console.log('\nWaiting for peers...\n');
++
++    torrent.on('wire', handlePeer);
++    torrent.on('error', (err) => console.error('[Relay] Torrent error:', err.message));
++
++    // Begin network discovery via HyParView
++    state.hyparview.bootstrap();
++  });
++
++  // Schedule periodic maintenance
++  setInterval(garbageCollect, 60000);
++  setInterval(printStats, 300000);
++
++  // Ensure a clean shutdown
++  process.on('SIGINT', () => {
++    console.log('\n\n[Relay] Shutting down gracefully...');
++    printStats();
++    state.hyparview.destroy(); // Gracefully disconnect from the overlay network
++    if (state.client) {
++      state.client.destroy(() => {
++        console.log('[Relay] WebTorrent client destroyed');
++        console.log('👋 Goodbye!');
++        process.exit(0);
++      });
++    } else {
++      process.exit(0);
++    }
++  });
++
++  // Global error handlers to keep the node alive
++  process.on('uncaughtException', (err) => console.error('[Relay] Uncaught exception:', err));
++  process.on('unhandledRejection', (err) => console.error('[Relay] Unhandled rejection:', err));
++}
+ 
+-// Start the headless node
+-main().catch(err => {
+-  console.error("❌ A fatal error occurred in the headless node:", err);
++// Ignite the relay.
++startRelay().catch((err) => {
++  console.error('[Relay] A fatal error occurred during startup:', err);
+   process.exit(1);
+ });
+diff --git a/identity/identity-flow.js b/identity/identity-flow.js
+index 29673b4..5c7ae64 100644
+--- a/identity/identity-flow.js
++++ b/identity/identity-flow.js
+@@ -1,10 +1,14 @@
+ import nacl from 'tweetnacl';
+ import { state } from '../main.js';
+-import { notify } from '../ui.js';
+ import { arrayBufferToBase64, JSONStringifyWithBigInt } from '../utils.js';
+ import { HyParView } from '../p2p/hyparview.js';
+ import wasmVDF from '../vdf-wrapper.js';
+ 
++// DYNAMIC UI IMPORT
++const isNodeEnv = typeof process !== 'undefined' && process.versions && process.versions.node;
++const { notify } = isNodeEnv ? await import('../ui-headless.js') : await import('../ui.js');
++
++
+ export async function createNewIdentity() {
+   return new Promise(async (resolve, reject) => {
+           console.log('[DEBUG] createNewIdentity called.'); //
+diff --git a/identity/identity-manager.js b/identity/identity-manager.js
+index 1dfdff6..884d4d0 100644
+--- a/identity/identity-manager.js
++++ b/identity/identity-manager.js
+@@ -62,8 +62,8 @@ async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
+ 
+   // Store the secondary mapping from handle -> pubkey
+   const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
+-  const handleResult = await this.dht.store(handleAddress, { publicKey: publicKeyB64 }, identityOptions);
+-  
++  const handleResult = await this.dht.store(handleAddress, publicKeyB64, identityOptions);
++
+   if (handleResult.replicas < 3) {
+     console.warn(`[Identity] Low replication for handle mapping: ${handleResult.replicas} replicas`);
+   }
+@@ -78,13 +78,12 @@ async lookupHandle(handle) {
+     const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
+     console.log(`[DM] Looking up handle: ${handle} at DHT address: ${handleAddress}`);
+     
+-    const mapping = await this.dht.get(handleAddress);
+-    if (!mapping || !mapping.publicKey) {
++    const publicKeyB64 = await this.dht.get(handleAddress);
++    if (!publicKeyB64 || typeof publicKeyB64 !== 'string') {
+         console.warn(`[DM] No public key found for handle ${handle}.`);
+         return null;
+     }
+     
+-    const publicKeyB64 = mapping.publicKey;
+     const pubkeyAddress = `pubkey:${publicKeyB64}`;
+     console.log(`[DM] Found public key. Fetching full claim from: ${pubkeyAddress}`);
+     
+diff --git a/identity/vdf.js b/identity/vdf.js
+index b2900b0..f645a43 100644
+--- a/identity/vdf.js
++++ b/identity/vdf.js
+@@ -1,6 +1,9 @@
+ import { state } from '../main.js';
+-import { notify } from '../ui.js';
++
+ import wasmVDF from '../vdf-wrapper.js';
++// DYNAMIC UI IMPORT
++const isNodeEnv = typeof process !== 'undefined' && process.versions && process.versions.node;
++const { notify } = isNodeEnv ? await import('../ui-headless.js') : await import('../ui.js');
+ 
+ export class ProgressiveVDF {
+   constructor() {
+diff --git a/import-map.json b/import-map.json
+deleted file mode 100644
+index 4eb0d35..0000000
+--- a/import-map.json
++++ /dev/null
+@@ -1,5 +0,0 @@
+-{
+-  "imports": {
+-    "buffer/": "buffer"
+-  }
+-}
+diff --git a/main.js b/main.js
+index 6800a18..b5f8067 100644
+--- a/main.js
++++ b/main.js
+@@ -4,16 +4,31 @@
+ 
+ // --- 1. IMPORTS ---
+ import { getContentSafety, setRulePackPath, reloadRulePack  } from './services/content-safety-wrapper.js';
+-import * as tf from '@tensorflow/tfjs';                 //  for nsfwjs
+-import '@tensorflow/tfjs-backend-cpu';               //  for nsfwjs
++
+ import nacl from 'tweetnacl'; 
+-import * as nsfwjs from 'nsfwjs';
++//import * as tf from '@tensorflow/tfjs';                 //  for nsfwjs
++//import '@tensorflow/tfjs-backend-cpu';               //  for nsfwjs
++//import * as nsfwjs from 'nsfwjs';
+ import DOMPurify from 'dompurify';
+ import { CONFIG } from './config.js';
+ import { Post } from './models/post.js';
+ import { VerificationQueue } from './verification-queue.js';
+ import { KademliaDHT } from './p2p/dht.js';
+-import {currentDMRecipient,addMessageToConversation, applyTheme, setupThemeToggle, showConnectScreen, updateLoadingMessage, renderPost, refreshPost, dropPost, updateStatus, notify, loadTopicSubscriptions, updateTopicFilter, addTopicToUI, updateAges, updateTopicStats, handleImageSelect, removeImage, toggleReplyForm, discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, scrollToPost , subscribeToTopic,handleReplyImageSelect,removeReplyImage,storeDMLocallyAndUpdateUI , updateDMInbox, updateUnreadBadge, toggleThread} from './ui.js';
++// --- DYNAMIC UI IMPORT ---
++const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
++const ui = isNode ? await import('./ui-headless.js') : await import('./ui.js');
++const {
++    currentDMRecipient, addMessageToConversation, applyTheme, setupThemeToggle,
++    showConnectScreen, updateLoadingMessage, renderPost, refreshPost, dropPost,
++    updateStatus, notify, loadTopicSubscriptions, updateTopicFilter, addTopicToUI,
++    updateAges, updateTopicStats, handleImageSelect, removeImage, toggleReplyForm,
++    discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion,
++    scrollToPost, subscribeToTopic, handleReplyImageSelect, removeReplyImage,
++    storeDMLocallyAndUpdateUI, updateDMInbox, updateUnreadBadge, toggleThread
++} = ui;
++// --- END DYNAMIC UI IMPORT ---
++import { timeSync } from './services/time-sync.js';
++
+ import { StateManager } from './storage.js';
+ import { MemoryManager } from './services/memory-manager.js';
+ import { PeerManager } from './services/peer-manager.js';
+@@ -73,6 +88,7 @@ export const noiseGenerator = new NoiseGenerator();
+ export const trafficMixer = new TrafficMixer();
+ export const dandelion = new DandelionRouter();
+ export const epidemicGossip = new EpidemicGossip();
++export const timeSyncService = timeSync;
+ 
+ 
+ // --- 4. CORE LOGIC & HANDLERS ---
+@@ -89,11 +105,28 @@ function applyConfigToUI() {
+ }
+ 
+ async function initImageFilter() {
++    // Check if we are in a Node.js environment
++    const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
++
++    if (isNode) {
++        console.log("[StateManager] Skipping nsfwjs initialization in Node.js environment.");
++        state.imageClassifier = null; // Ensure the classifier is null
++        return;
++    }
++
++    // If not in Node, proceed with browser-based loading
+     try {
++        // Dynamically import TensorFlow and its backend first
++        await import('@tensorflow/tfjs');
++        await import('@tensorflow/tfjs-backend-cpu');
++
++        // Then, dynamically import nsfwjs
++        const nsfwjs = await import('nsfwjs');
++        
+         state.imageClassifier = await nsfwjs.load(CONFIG.NSFWJS_MODEL_PATH);
+         console.log("Image filter model ready");
+     } catch (e) {
+-        console.error("Image filter failed to load:", e);
++        console.error("Image filter or tfjs failed to load:", e);
+     }
+ }
+ 
+@@ -127,25 +160,19 @@ export async function isToxic(text) {
+   }
+ }
+ 
+-export async function isImageToxic(imageData) {
+-    if (!state.imageClassifier) return false;
+-    try {
+-        const img = new Image();
+-        img.src = imageData;
+-        await new Promise((resolve) => img.onload = resolve);
+-        const predictions = await state.imageClassifier.classify(img);
+-        const problematic = predictions.find(p => {
+-            if (p.className === 'Porn' && p.probability > 0.7) return true;
+-            if (p.className === 'Hentai' && p.probability > 0.7) return true;
+-            if (p.className === 'Sexy' && p.probability > 0.8) return true;
+-            return false;
+-        });
+-        return problematic ? problematic.className : false;
+-    } catch (e) {
+-        console.error("Image classification failed:", e);
+-        return false;
++export const isImageToxic = async (imageData) => {
++    if (!nsfwDetector.initialized) {
++        await nsfwDetector.initialize();
+     }
+-}
++    const predictions = await nsfwDetector.classify(imageData);
++    // The headless stub will always return an empty array, so this will be false.
++    const problematic = predictions.find(p => {
++        if ((p.className === 'Porn' || p.className === 'Hentai') && p.probability > 0.7) return true;
++        if (p.className === 'Sexy' && p.probability > 0.8) return true;
++        return false;
++    });
++    return problematic ? problematic.className : false;
++};
+ 
+ export async function handleNewPost(data, fromWire) {
+   const postData = data.post || data;
+@@ -603,11 +630,11 @@ export async function createPostWithTopics() {
+         document.getElementById("char-current").textContent = 0;
+         renderPost(p);
+ 
+-        if (state.peers.size >= 3) {
++if (state.peers.size >= 3) {
+             dandelion.routePostSecure(p);
+-        } else {
++} else {
+             dandelion.routePost(p);
+-        }
++}
+ 
+         if (state.scribe) {
+             topics.forEach(topic => {
+@@ -615,7 +642,7 @@ export async function createPostWithTopics() {
+             });
+         }
+ 
+-        removeImage();
++        ui.removeImage();
+ 
+         btn.disabled = false;
+         btn.textContent = "🔥";
+@@ -636,19 +663,20 @@ export function toggleCarry(id, isManual = true) {
+     if (!isCarrying) {
+         p.carriers.add(state.myIdentity.handle);
+         state.explicitlyCarrying.add(id);
+-        broadcast({ type: "carrier_update", postId: id, peer: state.myIdentity.handle, carrying: true });
+-        refreshPost(p);
++        broadcast({ type: "carrier_update", postId: id, peer: state.myIdentity.handle, carrying: true }); 
++                ui.refreshPost(p);
++                announcePostLocation(id);
+     } else {
+         p.carriers.delete(state.myIdentity.handle);
+         state.explicitlyCarrying.delete(id);
+-        broadcast({ type: "carrier_update", postId: id, peer: state.myIdentity.handle, carrying: false });
+-        if (p.carriers.size === 0 && !isReply(p)) {
++        broadcast({ type: "carrier_update", postId: id, peer: state.myIdentity.handle, carrying: false }); 
++        if (p.carriers.size === 0 && !isReply(p)) { 
+             if (!debugPostRemoval(p.id, 'toggleCarry - withdrawn')) {
+                 state.posts.delete(p.id);
+-                dropPost(id);
++            dropPost(id); 
+             }
+         } else {
+-            refreshPost(p);
++            ui.refreshPost(p);
+         }
+     }
+ }
+@@ -769,14 +797,14 @@ export async function createReply(parentId) {
+         parentPost.replies.add(reply.id);
+         if (!parentPost.carriers.has(state.myIdentity.handle)) {
+             parentPost.carriers.add(state.myIdentity.handle);
+-            state.explicitlyCarrying.add(parentId);
+-            broadcast({ type: "carrier_update", postId: parentId, peer: state.myIdentity.handle, carrying: true });
++            state.explicitlyCarrying.add(parentId); 
++        broadcast({ type: "carrier_update", postId: parentId, peer: state.myIdentity.handle, carrying: true }); 
+         }
+         
+         state.posts.set(reply.id, reply);
+-        renderPost(reply);
+-        
+-        const replyData = reply.toJSON();
++        ui.renderPost(reply);
++        announcePostLocation(reply.id);
++        const replyData = reply.toJSON(); 
+         broadcast({ type: "new_post", post: replyData });
+         broadcast({ type: "parent_update", parentId: parentId, replyId: reply.id });
+ 
+@@ -793,10 +821,10 @@ export async function createReply(parentId) {
+ 
+         // --- Final UI Cleanup ---
+ 
+-        input.value = "";
++        input.value = ""; 
+         document.getElementById(`reply-char-${parentId}`).textContent = 0;
+-        removeReplyImage(parentId);
+-        toggleReplyForm(parentId);
++        ui.removeReplyImage(parentId);
++        ui.toggleReplyForm(parentId);
+         notify("Gas'd the thread!");
+ 
+     } catch (error) {
+@@ -1402,6 +1430,8 @@ async function init() {
+                         : crypto.getRandomValues(new Uint8Array(20));
+     
+     await initNetworkWithTempId(tempNodeId);
++    timeSync.start(); // Start the time synchronization service
++
+     await stateManager.loadDHTState();
+     
+     // Wait for DHT to be ready
+@@ -1552,6 +1582,7 @@ async function init() {
+     console.error("Init failed:", e);
+     document.getElementById("loading").innerHTML = `<div class="loading-content"><h2>Init Failed</h2><p>${e.message}</p><button onclick="location.reload()">Try Again</button></div>`;
+   }
++  handleUrlHash();
+ }
+ 
+ export async function handlePostRating(msg, fromWire) {
+@@ -1661,15 +1692,110 @@ export function initializeP2PProtocols() {
+ 
+ // helper function for init
+ export async function initNetworkWithTempId(tempNodeId) {
+-  initNetwork(); // This will create state.client
++  initNetwork();
++  // Define handlers for the new message types
++  const originalHandler = handlePeerMessage;
++  handlePeerMessage = async (msg, fromWire) => { // eslint-disable-line no-func-assign
++    if (msg.type === 'request_single_post') {
++        const { postId } = msg;
++        const post = state.posts.get(postId);
++        if (post) {
++            sendPeer(fromWire, {
++                type: 'single_post_response',
++                post: post.toJSON()
++            });
++        }
++    } else if (msg.type === 'single_post_response') {
++        await handleNewPost(msg.post, fromWire);
++        // Allow time for render
++        setTimeout(() => focusOnPost(msg.post.id), 200);
++    } else {
++        // Fallback to original handler for all other messages
++        return originalHandler(msg, fromWire);
++    }
++  };
++// This will create state.client
+   
+   // Initialize DHT and identity registry immediately
+   state.dht = new KademliaDHT(tempNodeId);
+-  state.identityRegistry = new IdentityRegistry(state.dht);
++state.identityRegistry = new IdentityRegistry(state.dht);
+   
+   // The rest of the protocols will initialize after the bootstrap connection
+ }
+ 
++function handleUrlHash() {
++    if (!window.location.hash) return;
++    const hash = window.location.hash;
++    const postMatch = hash.match(/#\/post\/(\w+)/);
++    if (postMatch && postMatch[1]) {
++        const postId = postMatch[1];
++        console.log(`[Link] Found post link in URL: ${postId}`);
++        // Use a timeout to ensure the rest of the app has initialized
++        setTimeout(() => focusOnPost(postId), 1000);
++    }
++}
++
++export function copyPostLink(postId) {
++    const url = `${window.location.origin}${window.location.pathname}#/post/${postId}`;
++    navigator.clipboard.writeText(url).then(() => {
++        notify('Link copied to clipboard!');
++    }).catch(err => {
++        console.error('Failed to copy link: ', err);
++        notify('Could not copy link.');
++    });
++}
++
++export async function announcePostLocation(postId) {
++    if (!state.client || !state.dht) return;
++    const myPeerId = state.client.peerId;
++    if (!myPeerId) {
++        console.warn('[Announce] Cannot announce post location without a peer ID.');
++        return;
++    }
++    try {
++        const key = `post-location:${postId}`;
++        await state.dht.store(key, {
++            peerId: myPeerId,
++            timestamp: Date.now()
++        });
++        console.log(`[Announce] Announced location for post ${postId} as peer ${myPeerId.substring(0, 8)}...`);
++    } catch (e) {
++        console.error(`[Announce] Failed to announce post ${postId}:`, e);
++    }
++}
++
++async function findPostOnNetwork(postId) {
++    try {
++        const location = await state.dht.get(`post-location:${postId}`);
++        if (!location || !location.peerId) {
++            notify(`Could not find post ${postId.substring(0, 8)}... on the network.`);
++            return;
++        }
++
++        // Find the peer from our connected peers list
++        const peer = Array.from(state.peers.values()).find(p => p.idKey === location.peerId);
++
++        if (peer && peer.wire && !peer.wire.destroyed) {
++            console.log(`[Link] Requesting post ${postId} from peer ${location.peerId.substring(0, 8)}...`);
++            sendPeer(peer.wire, { type: 'request_single_post', postId });
++        } else {
++            notify(`Found a peer with the post, but not currently connected. Please wait or try again.`);
++        }
++    } catch (e) {
++        console.error(`[Link] Error finding post ${postId}:`, e);
++        notify('An error occurred while searching for the post.');
++    }
++}
++
++function focusOnPost(postId) {
++    if (state.posts.has(postId)) {
++        ui.scrollToPost(postId);
++    } else {
++        notify(`Searching for post ${postId.substring(0, 8)}...`);
++        findPostOnNetwork(postId);
++    }
++}
++
+ export function sendToPeer(peer, message) {
+     if (!peer || !peer.wire || peer.wire.destroyed) return false;
+     
+@@ -1735,6 +1861,7 @@ export async function findPeerByHandle(handle) {
+   console.log(`[FindPeer] Routing info found but peer not connected`);
+   return null;
+ }
++export { timeSync };
+ 
+ export function debugPostRemoval(postId, reason) {
+   // This allows for live debugging via the browser console, e.g.:
+diff --git a/p2p/network-manager.js b/p2p/network-manager.js
+index 51928b3..d117ea8 100644
+--- a/p2p/network-manager.js
++++ b/p2p/network-manager.js
+@@ -3,8 +3,7 @@
+ 
+ // --- IMPORTS ---
+ import WebTorrent from 'webtorrent';
+-import { epidemicGossip, state, peerManager, imageStore, dandelion, handleNewPost, handleProvisionalClaim, handleConfirmationSlip, handleParentUpdate, handlePostsResponse, handleCarrierUpdate, handleVerificationResults, generateAndBroadcastAttestation,evaluatePostTrust, handleDirectMessage, handlePostRating } from '../main.js';
+-import { updateConnectionStatus, notify, updateStatus, refreshPost, renderPost } from '../ui.js';
++import { epidemicGossip, state, peerManager, imageStore, dandelion, handleNewPost, handleProvisionalClaim, handleConfirmationSlip, handleParentUpdate, handlePostsResponse, handleCarrierUpdate, handleVerificationResults, generateAndBroadcastAttestation,evaluatePostTrust, handleDirectMessage, handlePostRating, announcePostLocation } from '../main.js';
+ import { CONFIG } from '../config.js';
+ import { generateId, hexToUint8Array, normalizePeerId, arrayBufferToBase64, base64ToArrayBuffer } from '../utils.js';
+ import { KademliaDHT } from './dht.js';
+@@ -15,6 +14,20 @@ import nacl from 'tweetnacl';
+ 
+ 
+ const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
++ 
++let ui;
++if (isNode) {
++   // In Node.js (headless relay), import the headless-safe stub.
++   // The path is relative to this file (p2p/network-manager.js).
++   ui = await import('../ui-headless.js');
++} else {
++   // In the browser, import the full UI module.
++   ui = await import('../ui.js');
++}
++ 
++// Destructure the functions from the dynamically imported module.
++// This ensures the rest of the file can use these functions without change.
++const { updateConnectionStatus, notify, updateStatus, refreshPost, renderPost } = ui;
+ 
+ 
+ // --- FUNCTION DEFINITIONS ---
+@@ -682,8 +695,12 @@ async function handlePeerMessage(msg, fromWire) {
+     case "new_post":
+       if (msg.phase === "stem" || msg.phase === "fluff") {
+         dandelion.handleRoutedPost(msg, fromWire);
+-      } else {
+-        await handleNewPost(msg.post || msg, fromWire);
++        } else {
++            await handleNewPost(msg.post || msg, fromWire);
++        }
++      // A peer is sharing a post, let's announce we might have it too
++      if (msg.post && msg.post.id) {
++        announcePostLocation(msg.post.id);
+       }
+       break;
+     case "request_image":
+@@ -724,7 +741,16 @@ async function handlePeerMessage(msg, fromWire) {
+         });
+       }
+       break;
+-
++    case "time_sync_ping":
++        if (msg.probeId) {
++            timeSync.handlePing(msg.probeId, fromWire);
++        }
++        break;
++    case "time_sync_pong":
++        if (msg.probeId && msg.serverTime) {
++            timeSync.handlePong(msg.probeId, msg.serverTime);
++        }
++        break;
+     case "auth_response":
+       const peerId = fromWire.peerId;
+       const challenge = state.peerChallenges?.get(peerId);
+diff --git a/services/memory-manager.js b/services/memory-manager.js
+index 3ccc013..bc2dd37 100644
+--- a/services/memory-manager.js
++++ b/services/memory-manager.js
+@@ -1,6 +1,9 @@
+ // --- IMPORTS ---
+ import { state, debugPostRemoval } from '../main.js';
+-import { dropPost } from '../ui.js';
++// DYNAMIC UI IMPORT
++const isNodeEnv = typeof process !== 'undefined' && process.versions && process.versions.node;
++const { dropPost } = isNodeEnv ? await import('../ui-headless.js') : await import('../ui.js');
++
+ import { HierarchicalBloomFilter, BloomFilter, isReply } from '../utils.js';
+ 
+ 
+@@ -166,12 +169,12 @@ export class MemoryManager {
+     }
+   
+   startMonitoring() {
+-    
+-    // More frequent checks during high activity
+-    document.addEventListener('visibilitychange', () => {
+-      if (!document.hidden) {
+-        this.checkMemory();
+-      }
+-    });
++    if (!isNodeEnv) {
++      document.addEventListener('visibilitychange', () => {
++        if (!document.hidden) {
++          this.checkMemory();
++        }
++      });
++    }
+   }
+ }
+diff --git a/services/nsfw-detector.js b/services/nsfw-detector.js
+new file mode 100644
+index 0000000..4b29e87
+--- /dev/null
++++ b/services/nsfw-detector.js
+@@ -0,0 +1,80 @@
++// services/nsfw-detector.js - Alternative version
++
++const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
++
++class NSFWDetector {
++    constructor() {
++        this.model = null;
++        this.initialized = false;
++        this.tf = null;
++    }
++
++    async initialize() {
++        if (this.initialized) return;
++
++        try {
++            if (isNode) {
++                // Use createRequire for better CommonJS compatibility
++                const { createRequire } = await import('module');
++                const require = createRequire(import.meta.url);
++                
++                // Load modules using require
++                this.tf = require('@tensorflow/tfjs-node');
++                const nsfwjs = require('nsfwjs');
++                
++                // Set tf globally
++                global.tf = this.tf;
++                
++                // Load the model
++                this.model = await nsfwjs.load();
++            } else {
++                // Browser implementation
++                const nsfwjsModule = await import('nsfwjs');
++                const nsfwjs = nsfwjsModule.default || nsfwjsModule;
++                this.model = await nsfwjs.load();
++            }
++            
++            this.initialized = true;
++            console.log('NSFW detector initialized successfully');
++        } catch (error) {
++            console.error('Failed to initialize NSFW detector:', error);
++            throw error;
++        }
++    }
++
++    async classify(imageData) {
++        if (!this.model) {
++            throw new Error('NSFW detector not initialized');
++        }
++
++        if (isNode) {
++            if (!this.tf) {
++                throw new Error('TensorFlow not initialized');
++            }
++            
++            // Convert base64 to buffer
++            const base64Data = imageData.replace(/^data:image\/\w+;base64,/, '');
++            const buffer = Buffer.from(base64Data, 'base64');
++            
++            // Decode image using tfjs-node
++            const image = await this.tf.node.decodeImage(buffer, 3);
++            
++            try {
++                const predictions = await this.model.classify(image);
++                image.dispose();
++                return predictions;
++            } catch (error) {
++                image.dispose();
++                throw error;
++            }
++        } else {
++            // Browser implementation
++            const img = new Image();
++            img.src = imageData;
++            await new Promise((resolve) => img.onload = resolve);
++            return await this.model.classify(img);
++        }
++    }
++}
++
++export const nsfwDetector = new NSFWDetector();
+diff --git a/services/peer-manager.js b/services/peer-manager.js
+index 411ca07..0d47a6c 100644
+--- a/services/peer-manager.js
++++ b/services/peer-manager.js
+@@ -1,4 +1,5 @@
+ import { state } from '../main.js';
++import { getSyncedTime } from './time-sync.js';
+ 
+ export class PeerManager {
+   constructor() {
+@@ -43,8 +44,8 @@ export class PeerManager {
+         falseAttestations: 0,
+         
+         // Connection metrics
+-        firstSeen: Date.now(),
+-        uptime: Date.now(),
++        firstSeen: getSyncedTime(),
++        uptime: getSyncedTime(),
+         disconnections: 0,
+         
+         // Quality metrics
+@@ -61,7 +62,7 @@ export class PeerManager {
+     
+     switch(action) {
+       case 'connection':
+-        data.uptime = Date.now();
++        data.uptime = getSyncedTime();
+         data.reputationScore += this.ACTION_WEIGHTS.CONNECTION * value;
+         break;
+         
+@@ -128,9 +129,9 @@ export class PeerManager {
+     const data = this.getPeerData(peerId);
+     
+     // Recalculate if needed (cached for 1 minute)
+-    if (Date.now() - data.lastCalculated > 60000) {
++    if (getSyncedTime() - data.lastCalculated > 60000) {
+       // Calculate uptime bonus
+-      const ageHours = (Date.now() - data.firstSeen) / (1000 * 60 * 60);
++      const ageHours = (getSyncedTime() - data.firstSeen) / (1000 * 60 * 60);
+       const uptimeBonus = ageHours * this.ACTION_WEIGHTS.UPTIME_HOUR;
+       
+       // Calculate attestation accuracy
+@@ -152,7 +153,7 @@ export class PeerManager {
+       
+       // Cache the calculated score
+       data.calculatedScore = Math.max(0, finalScore);
+-      data.lastCalculated = Date.now();
++      data.lastCalculated = getSyncedTime();
+       
+       console.log(`[PeerManager] Calculated reputation for ${peerId}:`, {
+         baseScore: baseScore.toFixed(2),
+diff --git a/services/routing-manager.js b/services/routing-manager.js
+index 9051600..b5e4b56 100644
+--- a/services/routing-manager.js
++++ b/services/routing-manager.js
+@@ -116,7 +116,7 @@ export class RoutingManager {
+       handle: state.myIdentity.handle,
+       nodeId: arrayBufferToBase64(state.myIdentity.nodeId),
+       peerId: peerId,
+-      timestamp: Date.now(),
++      timestamp: getSyncedTime(),
+       publicKey: state.myIdentity.publicKey
+     };
+     
+@@ -144,7 +144,7 @@ export class RoutingManager {
+     const heartbeat = {
+       type: 'routing_heartbeat',
+       handle: state.myIdentity.handle,
+-      timestamp: Date.now()
++      timestamp: getSyncedTime()
+     };
+     
+     // Send to a subset of peers
+diff --git a/services/time-sync.js b/services/time-sync.js
+new file mode 100644
+index 0000000..a35d721
+--- /dev/null
++++ b/services/time-sync.js
+@@ -0,0 +1,95 @@
++// services/time-sync.js
++// Establishes a synchronized clock, a heartbeat for the network's integrity.
++
++import { state } from '../main.js';
++import { sendPeer } from '../p2p/network-manager.js';
++
++class TimeSync {
++    constructor() {
++        this.timeOffset = 0; // ms offset from our local clock to the network clock
++        this.probes = new Map(); // Tracks ongoing time requests
++        this.offsets = []; // Stores recent offset calculations
++        this.syncInterval = null;
++    }
++
++    start() {
++        if (this.syncInterval) return;
++        console.log('[TimeSync] Starting network time synchronization.');
++        // Sync every 5 minutes
++        this.syncInterval = setInterval(() => this.performSync(), 300000);
++        // Perform an initial sync
++        setTimeout(() => this.performSync(), 5000);
++    }
++
++    stop() {
++        if (this.syncInterval) {
++            clearInterval(this.syncInterval);
++            this.syncInterval = null;
++        }
++    }
++
++    // Get the synchronized network time
++    now() {
++        return Date.now() + this.timeOffset;
++    }
++
++    async performSync() {
++        if (state.peers.size === 0) return;
++
++        this.offsets = []; // Clear previous offsets
++        const peers = Array.from(state.peers.values());
++        // Probe up to 5 random peers
++        for (let i = 0; i < Math.min(5, peers.length); i++) {
++            const peer = peers[Math.floor(Math.random() * peers.length)];
++            if (peer.wire && !peer.wire.destroyed) {
++                const probeId = crypto.randomUUID();
++                this.probes.set(probeId, { t1: Date.now() });
++                sendPeer(peer.wire, { type: 'time_sync_ping', probeId });
++            }
++        }
++
++        // Wait a few seconds for responses
++        await new Promise(resolve => setTimeout(resolve, 3000));
++        this.calculateAverageOffset();
++    }
++
++    handlePing(probeId, fromWire) {
++        sendPeer(fromWire, {
++            type: 'time_sync_pong',
++            probeId,
++            serverTime: Date.now()
++        });
++    }
++
++    handlePong(probeId, serverTime) {
++        if (!this.probes.has(probeId)) return;
++
++        const t4 = Date.now();
++        const { t1 } = this.probes.get(probeId);
++        this.probes.delete(probeId);
++
++        // Simplified NTP-like calculation
++        // For this to be accurate, we assume peer processing time is negligible
++        const roundTripTime = t4 - t1;
++        const offset = serverTime - (t1 + roundTripTime / 2);
++        
++        this.offsets.push(offset);
++    }
++
++    calculateAverageOffset() {
++        if (this.offsets.length === 0) return;
++
++        // Simple average for now; a more robust solution would discard outliers
++        const sum = this.offsets.reduce((acc, val) => acc + val, 0);
++        this.timeOffset = Math.round(sum / this.offsets.length);
++        
++        console.log(`[TimeSync] Synchronization complete. Time offset is now ${this.timeOffset}ms.`);
++    }
++}
++
++export const timeSync = new TimeSync();
++
++// The globally usable function
++export function getSyncedTime() {
++    return timeSync.now();
++}
+diff --git a/stateless-manager.js b/stateless-manager.js
+deleted file mode 100644
+index e3112d4..0000000
+--- a/stateless-manager.js
++++ /dev/null
+@@ -1,110 +0,0 @@
+-// stateless-manager.js
+-// A 'stub' that conforms to the StateManager interface but is stateless.
+-
+-export class StatelessManager {
+-  constructor() {
+-    this.dbName = 'EmberNetwork-Headless';
+-    this.version = 2;
+-    this.db = null;
+-  }
+-
+-  async init() {
+-    console.log("[StateManager] Initialized in stateless mode.");
+-    return Promise.resolve();
+-  }
+-
+-  async clearLocalData() {
+-    console.log("[StateManager] Clear data requested (no-op in headless mode)");
+-    return Promise.resolve();
+-  }
+-
+-  // Post management
+-  async savePosts() { 
+-    console.log("[StateManager] Skipping post save in stateless mode");
+-    return Promise.resolve(); 
+-  }
+-  
+-  async loadPosts() { 
+-    console.log("[StateManager] No posts to load in stateless mode");
+-    return Promise.resolve(0); 
+-  }
+-
+-  // User state management
+-  async saveUserState() { 
+-    console.log("[StateManager] Skipping user state save in stateless mode");
+-    return Promise.resolve(); 
+-  }
+-  
+-  async loadUserState() { 
+-    console.log("[StateManager] No user state to load in stateless mode");
+-    return Promise.resolve(); 
+-  }
+-
+-  // Peer management
+-  async savePeerScores() { 
+-    console.log("[StateManager] Skipping peer scores save in stateless mode");
+-    return Promise.resolve(); 
+-  }
+-  
+-  async loadPeerScores() { 
+-    console.log("[StateManager] No peer scores to load in stateless mode");
+-    return Promise.resolve(); 
+-  }
+-
+-  // Image management
+-  async saveImageChunks() { 
+-    console.log("[StateManager] Skipping image chunks save in stateless mode");
+-    return Promise.resolve(); 
+-  }
+-  
+-  async loadImageChunks() { 
+-    console.log("[StateManager] No image chunks to load in stateless mode");
+-    return Promise.resolve(); 
+-  }
+-
+-  // DHT state management
+-  async saveDHTState() { 
+-    console.log("[StateManager] Skipping DHT state save in stateless mode"); 
+-    return Promise.resolve(); 
+-  }
+-  
+-  async loadDHTState() { 
+-    console.log("[StateManager] Starting with a fresh DHT state in stateless mode"); 
+-    return Promise.resolve(); 
+-  }
+-
+-  // Message management stubs
+-  async storePendingMessage(recipientHandle, messageText, senderHandle, encrypted = null) {
+-    console.log(`[StateManager] Would store pending message for ${recipientHandle} (stateless mode)`);
+-    return Promise.resolve(null);
+-  }
+-
+-  async getPendingMessagesFor(recipientHandle) {
+-    return Promise.resolve([]);
+-  }
+-
+-  async getPendingMessagesFrom(senderHandle) {
+-    return Promise.resolve([]);
+-  }
+-
+-  async markMessageDelivered(messageId) {
+-    console.log(`[StateManager] Would mark message ${messageId} as delivered (stateless mode)`);
+-    return Promise.resolve();
+-  }
+-
+-  async updateMessageAttempt(messageId) {
+-    console.log(`[StateManager] Would update attempt for message ${messageId} (stateless mode)`);
+-    return Promise.resolve();
+-  }
+-
+-  async cleanupOldMessages() {
+-    console.log("[StateManager] No old messages to cleanup in stateless mode");
+-    return Promise.resolve();
+-  }
+-
+-  // Cleanup
+-  async cleanup() { 
+-    console.log("[StateManager] Cleanup completed (stateless mode)");
+-    return Promise.resolve(); 
+-  }
+-}
+diff --git a/storage.js b/storage.js
+index 9f4ead7..efee0a0 100644
+--- a/storage.js
++++ b/storage.js
+@@ -2,7 +2,20 @@ import { generateId } from './utils.js';
+ import { state, imageStore } from './main.js'; 
+ import { Post } from './models/post.js';
+ import { peerManager } from './main.js';
+-import { renderPost } from './ui.js'; 
++// --- DYNAMIC UI IMPORT ---
++// This ensures that the browser-only renderPost function is not imported in a Node.js environment.
++const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
++let renderPost;
++if (!isNode) {
++    // Dynamically import from ui.js only in the browser
++    import('./ui.js').then(uiModule => {
++        renderPost = uiModule.renderPost;
++    });
++} else {
++    // In Node.js, provide a no-op function so calls don't crash
++    renderPost = () => {};
++}
++// --- END DYNAMIC UI IMPORT ---
+ 
+ export class StateManager {
+   constructor() {
+diff --git a/ui-headless.js b/ui-headless.js
+new file mode 100644
+index 0000000..1711ca8
+--- /dev/null
++++ b/ui-headless.js
+@@ -0,0 +1,92 @@
++/**
++ * @fileoverview Headless UI Stub
++ * @version 1.0.0
++ *
++ * This module provides a complete, headless-safe substitute for the browser-specific
++ * `ui.js` module. It exports the same functions and variables, but their implementations
++ * are replaced with no-ops or console logs, preventing crashes in a Node.js environment.
++ */
++
++// --- UI STATE STUBS ---
++export let currentDMRecipient = null;
++export const bonfireUpdateTimeout = null;
++export const showAllShards = true;
++export const animationObserver = null; // The source of the original error
++
++// --- CORE LOGGING & NOTIFICATION FUNCTIONS ---
++
++/**
++ * Logs a notification message to the console.
++ * @param {string} msg - The message to log.
++ * @param {number} [dur=3000] - Duration (ignored in headless mode).
++ * @param {function|null} [onClick=null] - Click handler (ignored in headless mode).
++ */
++export function notify(msg, dur, onClick) {
++  console.log(`[UI NOTIFY] ${msg}`);
++}
++
++/**
++ * Logs a connection status update to the console.
++ * @param {string} message - The status message.
++ * @param {string} [type='info'] - The type of message (e.g., 'info', 'error').
++ */
++export function updateConnectionStatus(message, type = 'info') {
++  console.log(`[UI STATUS] ${type.toUpperCase()}: ${message}`);
++}
++
++/**
++ * Logs a general loading message to the console.
++ * @param {string} message - The loading message.
++ */
++export function updateLoadingMessage(message) {
++  console.log(`[UI LOADING] ${message}`);
++}
++
++// --- NO-OP (NO OPERATION) FUNCTIONS ---
++// These functions correspond to UI interactions that have no meaning
++// in a headless context, so they do nothing.
++
++export function updateStatus() {}
++export function renderPost(p) {}
++export function refreshPost(p) {}
++export function dropPost(id) {}
++export function applyTheme(theme) {}
++export function setupThemeToggle() {}
++export function showConnectScreen(loadedPostCount) {}
++export function updateAges() {}
++export function updateTopicStats() {}
++export function handleImageSelect(input) {}
++export function removeImage() {}
++export function toggleReplyForm(postId) {}
++export function discoverAndFilterTopic(topic) {}
++export function filterByTopic() {}
++export function setFeedMode(mode) {}
++export function completeTopicSuggestion(topic) {}
++export function scrollToPost(postId) {}
++export function subscribeToTopic() {}
++export function handleReplyImageSelect(input, postId) {}
++export function removeReplyImage(postId) {}
++export function storeDMLocallyAndUpdateUI(otherHandle, messageText, direction) {}
++export function updateDMInbox() {}
++export function updateUnreadBadge() {}
++export function toggleThread(postId) {}
++export function addMessageToConversation(handle, messageText, direction, timestamp) {}
++export function openDMPanel(handle) {}
++export function closeDMPanel() {}
++export function loadDMConversation(handle) {}
++export async function sendDM() {}
++export function switchDrawer(drawerId) {}
++export function updateInner(el, p) {}
++export function getHeatLevel(count) { return ''; }
++export function getThreadSize(id) { return 0; }
++export function updateBonfire() {}
++export function addTopicToUI(topic) {}
++export function toggleTopic(topic) {}
++export function updateTopicFilter() {}
++export function applyTopicFilter() {}
++export function filterToTopic(topic) {}
++export function saveTopicSubscriptions() {}
++export function loadTopicSubscriptions() {}
++export function showTopicSuggestions(partial) {}
++export function hideTopicSuggestions() {}
++export async function handleImageUpload(file) { return null; }
+diff --git a/ui.js b/ui.js
+index 0193286..7e27b14 100644
+--- a/ui.js
++++ b/ui.js
+@@ -1,9 +1,11 @@
+ // ui.js
+ // This module contains all functions and variables responsible for
+ // interacting with the DOM, rendering content, and handling UI events.
++if (typeof window === 'undefined') throw new Error("DEBUG: ui.js was imported in a Node.js environment");
++
+ 
+ // --- IMPORTS ---
+-import { state, imageStore, toggleCarry, createReply, createPostWithTopics, findRootPost, isImageToxic, isToxic,sendDirectMessage } from './main.js';
++import { state, imageStore, toggleCarry, createReply, createPostWithTopics, findRootPost, isImageToxic, isToxic,sendDirectMessage, copyPostLink } from './main.js';
+ import { sanitize, sanitizeDM } from './utils.js';
+ import { CONFIG } from './config.js';
+ 
+@@ -253,7 +255,10 @@ el.innerHTML = `
+             </button>
+             <button class="reply-button" onclick="toggleReplyForm('${p.id}')">💬</button>
+             ${!isAuthor ? `<button class="dm-button" onclick="openDMPanel('${p.author}')">📨</button>` : ''}
+-            ${hasReplies ? `<span class="collapse-thread" onclick="toggleThread('${p.id}')">[${el.classList.contains('collapsed') ? '+' : '-'}]</span>` : ''}
++            <button class="share-button" title="Copy link to post" onclick="copyPostLink('${p.id}')">🔗</button>
++            ${hasReplies ?`<span class="collapse-thread" onclick="toggleThread('${p.id}')">[${el.classList.contains('collapsed') ? '+' : '-'}]</span>` : ''}
++        
++            
+         </div>
+     </div>
+     <div id="reply-form-${p.id}" class="reply-compose" style="display: none;">
+diff --git a/vdf-wrapper.js b/vdf-wrapper.js
+index 660f272..aa884a2 100644
+--- a/vdf-wrapper.js
++++ b/vdf-wrapper.js
+@@ -4,14 +4,7 @@ import init, { VDFComputer, VDFProof } from './wasm/vdf_wasm.js';
+ // Detect if we're in Node.js
+ const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
+ 
+-// Node.js specific imports - only declare these in Node context
+-let nodeWorker, parentPort, workerData;
+-if (isNode) {
+-    const workerThreads = await import('worker_threads');
+-    nodeWorker = workerThreads.Worker;
+-    parentPort = workerThreads.parentPort;
+-    workerData = workerThreads.workerData;
+-}
++
+ 
+ class WasmVDF {
+     constructor() {
+@@ -127,10 +120,10 @@ class WasmVDF {
+                 
+                 // Convert WASM result to plain object
+                 return {
+-                    y: result.y(),
+-                    pi: result.pi(),
+-                    l: result.l(),
+-                    r: result.r(),
++                    y: result.y,
++                    pi: result.pi,
++                    l: result.l,
++                    r: result.r,
+                     iterations: iterations.toString()
+                 };
+             } catch (error) {
+diff --git a/vite.config.js b/vite.config.js
+index f2367a7..3c249a3 100644
+--- a/vite.config.js
++++ b/vite.config.js
+@@ -10,6 +10,6 @@ export default defineConfig({
+   // Add this build configuration
+   build: {
+     target: 'esnext',
+-    outDir: 'docs', // Output build files to 'docs' instead of 'dist'
++    outDir: 'dist', 
+   },
+ });
