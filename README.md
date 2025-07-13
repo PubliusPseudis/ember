@@ -163,8 +163,9 @@ npm run build
 Support the network by running a headless relay:
 
 ```bash
-# Create identity in browser first, export to headless-identity.json
-node headless.js
+# just npm install in the dir, then run: 
+node --experimental-specifier-resolution=node headless.js
+# all headless nodes will identify as "bob", for now.
 ```
 
 Relay nodes strengthen the network by:

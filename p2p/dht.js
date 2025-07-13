@@ -358,11 +358,12 @@ export class KademliaDHT {
         }
       }
       
-      // Store with metadata
+      // Store with CONSISTENT format - wrap the value
       const storageEntry = {
-        ...value,
+        value: value,  // ← Wrap the value consistently
         timestamp: Date.now(),
-        size: valueStr.length
+        size: valueStr.length,
+        storedBy: senderId
       };
       
       this.storage.set(key, storageEntry);
@@ -565,7 +566,7 @@ async get(key) {
   const localValue = this.storage.get(key);
   if (localValue) {
     console.log(`[DHT] Found ${key} in local storage`);
-    return localValue.value || localValue; // Handle both old and new format
+    return localValue.value; // Always return the wrapped value
   }
   
   const keyId = await this.hashToNodeId(key);
@@ -586,17 +587,18 @@ async get(key) {
       try {
         const result = await this.sendRPC(peer, 'FIND_VALUE', { key });
         
-        if (result.found) {
-          // Store locally for caching
-          this.storage.set(key, {
-            value: result.value,
-            timestamp: Date.now(),
-            cached: true,
-            cachedFrom: peerId
-          });
-          
-          return result.value;
-        }
+      // When storing values from remote peers:
+      if (result.found) {
+        // Store locally for caching with consistent format
+        this.storage.set(key, {
+          value: result.value,  // ← Ensure consistent wrapping
+          timestamp: Date.now(),
+          cached: true,
+          cachedFrom: peerId
+        });
+        
+        return result.value; // Return unwrapped value
+      }
         
         // Add returned peers to shortlist
         if (result.peers) {

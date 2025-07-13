@@ -392,28 +392,89 @@ export class ContentSafetySystem {
   }
   
 compilePatterns() {
+  console.log('[ContentSafety] Starting pattern compilation...');
   const compiled = new Map();
   
-  // First compile standard patterns
+  // First, verify harmPatterns exists
+  if (!this.harmPatterns) {
+    console.error('[ContentSafety] ERROR: harmPatterns is undefined!');
+    return compiled;
+  }
+  
   for (const [severity, categories] of Object.entries(this.harmPatterns)) {
+    console.log(`[ContentSafety] Compiling severity: ${severity}`);
     compiled.set(severity, new Map());
     
+    if (!categories || typeof categories !== 'object') {
+      console.error(`[ContentSafety] Invalid categories for ${severity}:`, categories);
+      continue;
+    }
+    
     for (const [category, config] of Object.entries(categories)) {
-      const patterns = config.patterns.map(pattern => {
-        if (pattern instanceof RegExp) {
-          // FINAL FIX: Remove word boundaries from all regexes by default.
-          const source = pattern.source.replace(/\\b/g, '');
-          return new RegExp(source, pattern.flags.includes('u') ? pattern.flags : pattern.flags + 'u');
+      console.log(`[ContentSafety]   Compiling category: ${category}`);
+      
+      if (!config) {
+        console.error(`[ContentSafety] Config is undefined for ${severity}.${category}`);
+        continue;
+      }
+      
+      if (!config.patterns) {
+        console.error(`[ContentSafety] No patterns array for ${severity}.${category}`);
+        compiled.get(severity).set(category, {
+          patterns: [],
+          contextRules: config.contextRules || {}
+        });
+        continue;
+      }
+      
+      if (!Array.isArray(config.patterns)) {
+        console.error(`[ContentSafety] Patterns is not an array for ${severity}.${category}:`, config.patterns);
+        continue;
+      }
+      
+      const compiledPatterns = [];
+      
+      for (let i = 0; i < config.patterns.length; i++) {
+        const pattern = config.patterns[i];
+        
+        if (!pattern) {
+          console.error(`[ContentSafety] Pattern ${i} is undefined in ${severity}.${category}`);
+          continue;
         }
-        return pattern;
-      });
+        
+        if (!(pattern instanceof RegExp)) {
+          console.error(`[ContentSafety] Pattern ${i} is not a RegExp in ${severity}.${category}:`, pattern, typeof pattern);
+          continue;
+        }
+        
+        if (!pattern.source) {
+          console.error(`[ContentSafety] Pattern ${i} has no source in ${severity}.${category}:`, pattern);
+          continue;
+        }
+        
+        try {
+          const source = pattern.source.replace(/\\b/g, '');
+          const flags = pattern.flags || '';
+          const newPattern = new RegExp(source, flags.includes('u') ? flags : flags + 'u');
+          compiledPatterns.push(newPattern);
+        } catch (e) {
+          console.error(`[ContentSafety] Failed to compile pattern ${i} in ${severity}.${category}:`, e, pattern);
+          // Add the original pattern as fallback
+          compiledPatterns.push(pattern);
+        }
+      }
+      
+      console.log(`[ContentSafety]   Compiled ${compiledPatterns.length} patterns for ${category}`);
       
       compiled.get(severity).set(category, {
-        patterns,
-        contextRules: config.contextRules
+        patterns: compiledPatterns,
+        contextRules: config.contextRules || {}
       });
     }
   }
+  
+  console.log('[ContentSafety] Pattern compilation complete');
+  console.log('[ContentSafety] Compiled structure:', compiled);
   
   return compiled;
 }
@@ -984,6 +1045,12 @@ checkNgramSimilarity(text) {
   getNormalizedVariants(text) {
     const variants = [];
     
+      // Ensure text is a string
+  if (!text || typeof text !== 'string') {
+    return [{ text: '', method: 'original' }];
+  }
+  
+    
     // Original text
     variants.push({ text: text, method: 'original' });
     
@@ -1020,15 +1087,18 @@ checkNgramSimilarity(text) {
     return variants;
   }
   
-  basicNormalize(text) {
-    return text
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '')
-      .trim();
-  }
+basicNormalize(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+}
   
   
   unicodeNormalize(text) {
+        if (!text || typeof text !== 'string') return '';
+
     let normalized = '';
 
     // 1. Iterate character by character and replace using the map.
@@ -1111,6 +1181,8 @@ checkNgramSimilarity(text) {
       return violations;
     }
   aggressiveNormalize(text) {
+        if (!text || typeof text !== 'string') return '';
+
     let normalized = this.unicodeNormalize(text);
     
     // Remove all non-alphanumeric except spaces
@@ -1126,6 +1198,8 @@ checkNgramSimilarity(text) {
   }
   
   phoneticNormalize(text) {
+        if (!text || typeof text !== 'string') return '';
+
     let normalized = this.basicNormalize(text);
     
     // Common phonetic substitutions
@@ -1152,24 +1226,44 @@ checkNgramSimilarity(text) {
     return normalized;
   }
   
-// Paste this updated function into your file
 checkPatterns(normalizedText, originalText, normalizationMethod) {
   const violations = [];
+  
+  console.log('[ContentSafety] checkPatterns called with:', {
+    normalizedTextLength: normalizedText?.length,
+    normalizationMethod,
+    compiledPatternsSize: this.compiledPatterns?.size
+  });
+  
+  if (!normalizedText || typeof normalizedText !== 'string') {
+    console.warn('[ContentSafety] Invalid normalizedText:', normalizedText);
+    return violations;
+  }
+  
+  if (!this.compiledPatterns || this.compiledPatterns.size === 0) {
+    console.error('[ContentSafety] No compiled patterns available!');
+    return violations;
+  }
+  
   const paddedText = ` ${normalizedText} `;
-
-  // Strip accents/diacritics and re-test “threat” patterns on the clean text.
-  const asciiText = this.unicodeNormalize(originalText);
-  if (asciiText !== originalText) {
-    const threatConfig = this.compiledPatterns.get('high').get('threats');
-    for (const pattern of threatConfig.patterns) {
-      if (pattern.test(asciiText)) {
-        return [{
-          type: 'threats',
-          severity: 'high',
-          pattern: pattern.source,
-          normalizationMethod: 'unicode',
-          confidence: 0.9
-        }];
+  
+  // Ensure originalText is valid before using it
+  if (originalText && typeof originalText === 'string') {
+    const asciiText = this.unicodeNormalize(originalText);
+    if (asciiText !== originalText) {
+      const threatConfig = this.compiledPatterns.get('high')?.get('threats');
+      if (threatConfig && threatConfig.patterns) {
+        for (const pattern of threatConfig.patterns) {
+          if (pattern && pattern.test && pattern.test(asciiText)) {
+            return [{
+              type: 'threats',
+              severity: 'high',
+              pattern: pattern.source,
+              normalizationMethod: 'unicode',
+              confidence: 0.9
+            }];
+          }
+        }
       }
     }
   }
@@ -1178,22 +1272,51 @@ checkPatterns(normalizedText, originalText, normalizationMethod) {
   const legitimateContext = this.checkLegitimateContext(originalText);
   
   for (const [severity, categories] of this.compiledPatterns) {
+    console.log(`[ContentSafety] Checking severity: ${severity}`);
+    
+    if (!categories || !(categories instanceof Map)) {
+      console.error(`[ContentSafety] Invalid categories for ${severity}:`, categories);
+      continue;
+    }
+    
     for (const [category, config] of categories) {
-      // Skip certain checks entirely in legitimate contexts
-      if (legitimateContext.isLegitimate && this.shouldSkipInContext(category, legitimateContext, originalText)) {
+      console.log(`[ContentSafety]   Checking category: ${category}`);
+      
+      if (!config || !config.patterns || !Array.isArray(config.patterns)) {
+        console.error(`[ContentSafety] Invalid config for ${severity}.${category}:`, config);
         continue;
       }
       
-      for (const pattern of config.patterns) {
+      for (let i = 0; i < config.patterns.length; i++) {
+        const pattern = config.patterns[i];
+        
+        if (!pattern) {
+          console.error(`[ContentSafety] Pattern ${i} is undefined in ${severity}.${category}`);
+          continue;
+        }
+        
+        if (typeof pattern.test !== 'function') {
+          console.error(`[ContentSafety] Pattern ${i} has no test method in ${severity}.${category}:`, pattern);
+          continue;
+        }
+        
         let patternToTest = pattern;
-
-        // ** START OF THE FIX **
-        // If we're checking the space-removed variant, use a version of the 
-        // pattern that doesn't rely on word boundaries (\b).
+        
+        // The problematic part - add more checks
         if (normalizationMethod !== 'original') {
-          const newSource = pattern.source.replace(/\\b/g, '');
-          if (newSource !== pattern.source) {
-            patternToTest = new RegExp(newSource, pattern.flags);
+          if (pattern.source === undefined) {
+            console.error(`[ContentSafety] Pattern ${i} has undefined source in ${severity}.${category}:`, pattern);
+            continue;
+          }
+          
+          try {
+            const newSource = pattern.source.replace(/\\b/g, '');
+            if (newSource !== pattern.source) {
+              patternToTest = new RegExp(newSource, pattern.flags || '');
+            }
+          } catch (e) {
+            console.error(`[ContentSafety] Error processing pattern ${i} in ${severity}.${category}:`, e);
+            continue;
           }
         }
         // ** END OF THE FIX **

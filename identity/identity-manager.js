@@ -62,8 +62,9 @@ async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
 
   // Store the secondary mapping from handle -> pubkey
   const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
-  const handleResult = await this.dht.store(handleAddress, { publicKey: publicKeyB64 }, identityOptions);
-  
+  //const handleResult = await this.dht.store(handleAddress, { publicKey: publicKeyB64 }, identityOptions);
+  const handleResult = await this.dht.store(handleAddress, publicKeyB64, identityOptions);
+
   if (handleResult.replicas < 3) {
     console.warn(`[Identity] Low replication for handle mapping: ${handleResult.replicas} replicas`);
   }
@@ -75,85 +76,76 @@ async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
   // --- STEP 2: Main lookup function ---
   // Now, to look up a user, we first find their pubkey, then get their full data.
 async lookupHandle(handle) {
-    const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
-    console.log(`[DM] Looking up handle: ${handle} at DHT address: ${handleAddress}`);
-    
-    const mapping = await this.dht.get(handleAddress);
-    if (!mapping || !mapping.publicKey) {
-        console.warn(`[DM] No public key found for handle ${handle}.`);
-        return null;
-    }
-    
-    const publicKeyB64 = mapping.publicKey;
-    const pubkeyAddress = `pubkey:${publicKeyB64}`;
-    console.log(`[DM] Found public key. Fetching full claim from: ${pubkeyAddress}`);
-    
-    const claim = await this.dht.get(pubkeyAddress);
-    if (!claim) {
-        console.warn(`[DM] Found pubkey for ${handle}, but the full claim is missing from the DHT.`);
-        return null;
-    }
+  const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
+  console.log(`[DM] Looking up handle: ${handle} at DHT address: ${handleAddress}`);
 
-    // Handle wrapped values from DHT storage
-    const actualClaim = claim.value || claim;
+  // Get the public key from DHT
+  const publicKeyB64 = await this.dht.get(handleAddress);
+  if (!publicKeyB64 || typeof publicKeyB64 !== 'string') {
+    console.warn(`[DM] No valid mapping found for handle ${handle}.`);
+    return null;
+  }
 
-    // DEBUG: Log the claim structure
-    console.log(`[DM] Retrieved claim structure:`, Object.keys(actualClaim));
-    console.log(`[DM] Claim has encryptionPublicKey: ${!!actualClaim.encryptionPublicKey}`);
+  // Fetch the full claim
+  const pubkeyAddress = `pubkey:${publicKeyB64}`;
+  const actualClaim = await this.dht.get(pubkeyAddress);
+  
+  if (!actualClaim) {
+    console.warn(`[DM] Found pubkey for ${handle}, but the full claim is missing.`);
+    return null;
+  }
 
-    // Always verify the integrity of the claim.
-    try {
-        const isValid = await this.verifyClaim(actualClaim);
-        if (isValid) {
-            console.log(`[DM] Claim for ${handle} is verified.`);
-            return actualClaim;
-        } else {
-            console.warn(`[DM] Claim verification failed for ${handle}.`);
-            return null;
-        }
-    } catch (error) {
-        console.error(`[DM] Error verifying claim for ${handle}:`, error);
-        return null;
+  // Verify the claim
+  try {
+    const isValid = await this.verifyClaim(actualClaim);
+    if (isValid) {
+      console.log(`[DM] Claim for ${handle} is verified.`);
+      return actualClaim;
+    } else {
+      console.warn(`[DM] Claim verification failed for ${handle}.`);
+      return null;
     }
+  } catch (error) {
+    console.error(`[DM] Error verifying claim for ${handle}:`, error);
+    return null;
+  }
 }
+
+
+
   
   // --- STEP 3: Verification Logic (mostly unchanged, but still important) ---
 async verifyClaim(claim) {
     try {
         console.log("[Identity] Starting claim verification for handle:", claim.handle);
         
-        const claimData = JSON.stringify(claim);
-        const publicKey = base64ToArrayBuffer(claim.publicKey);
-        
-        // Remove the signature from the data before verifying
-        const dataToVerify = {
-            handle: claim.handle,
-            publicKey: claim.publicKey,
-            encryptionPublicKey: claim.encryptionPublicKey,
-            vdfProof: claim.vdfProof,
-            vdfInput: claim.vdfInput,
-            claimedAt: claim.claimedAt,
-            nodeId: claim.nodeId
-        };
+        // Create a copy of the claim without the signature for verification
+        const { signature, ...dataToVerify } = claim;
         const signedString = JSON.stringify(dataToVerify);
         
-        const signature = base64ToArrayBuffer(claim.signature);
+        // Get the public key and signature as buffers
+        const publicKey = base64ToArrayBuffer(claim.publicKey);
+        const signatureBuffer = base64ToArrayBuffer(signature);
         
         console.log("[Identity] Verifying signature...");
-        const verifiedMessage = nacl.sign.open(signature, publicKey);
+        const verifiedMessage = nacl.sign.open(signatureBuffer, publicKey);
+        
         if (!verifiedMessage) {
-             console.warn("[Identity] nacl.sign.open returned null. Invalid signature.");
-             return false;
+            console.warn("[Identity] nacl.sign.open returned null. Invalid signature.");
+            return false;
         }
 
         const decodedMessage = new TextDecoder().decode(verifiedMessage);
         if (decodedMessage !== signedString) {
             console.warn("[Identity] Signature is valid, but message content does not match.");
+            console.log("[Identity] Expected:", signedString.substring(0, 100) + "...");
+            console.log("[Identity] Got:", decodedMessage.substring(0, 100) + "...");
             return false;
         }
         
         console.log("[Identity] Signature verified, checking VDF proof...");
-        // VDF verification logic remains the same...
+        
+        // VDF verification
         if (!claim.vdfProof || !claim.vdfInput) {
             console.warn("[Identity] Missing VDF proof or input");
             return false;
@@ -168,7 +160,7 @@ async verifyClaim(claim) {
         return vdfValid;
 
     } catch (e) {
-        console.error("Identity claim verification failed:", e);
+        console.error("[Identity] Claim verification failed:", e);
         return false;
     }
 }
