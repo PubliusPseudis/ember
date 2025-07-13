@@ -1,8 +1,7 @@
 // services/content-safety.js
 /**
  * Enterprise-grade Content Safety System
- * 
- * Features:
+ * * Features:
  * - Multi-layered pattern matching with complexity analysis
  * - Advanced obfuscation detection (leetspeak, unicode, spacing, etc.)
  * - Context-aware analysis with sliding windows
@@ -11,10 +10,11 @@
  * - Performance optimized with caching and early exits
  * - Comprehensive logging and metrics
  * - Configurable severity thresholds
- * 
- * @version 2.0.0
+ * * @version 2.5.0
  * @license GPL
  */
+
+import { NaiveBayesClassifier } from './naive-bayes-classifier.js';
 
 export class ContentSafetySystem {
   constructor(config = {}) {
@@ -31,7 +31,9 @@ export class ContentSafetySystem {
         medium: 0.6,
         low: 0.4,
         ...config.severityThresholds
-      }
+      },
+       // If the model is >90% sure something is not_safe, it can influence the decision.
+      nbcBlockThreshold: config.nbcBlockThreshold || 0.90
     };
     
     // Performance cache
@@ -53,7 +55,11 @@ export class ContentSafetySystem {
     
     // Pre-compile all regex patterns for performance
     this.compiledPatterns = this.compilePatterns();
-    
+
+   // Initialize and load the pre-trained Naive Bayes Classifier model.
+    this.classifier = new NaiveBayesClassifier();
+    this.classifier.loadModel();
+
     // Initialize normalizers
     this.initializeNormalizers();
   }
@@ -65,13 +71,13 @@ export class ContentSafetySystem {
         // Child safety - highest priority
         csam: {
           patterns: [
-            /\b(cp|csam|csa|child[\s_-]*(porn|sex|abuse|exploitation)|child\s*sexual\s*abuse)\b/i,
-            /\b(pedo|paedo|p3do|ped0|map|nop)|pthc\b/i,
-            /\b(loli|shota|cub|toddlercon|babycon|prete?en|under[-\s]*age|jail\s*bait)\b/i,
-            /\b(minor|kid|child)[\s\S]{0,25}(sex|nude|porn|pics?|vids?|naked|rape|abuse)\b/i,
-            /\b\d{1,2}\s*(yo|yrs?|year[-\s]*old)[\s\S]{0,25}(nudes?|sex|porn|pics?|vids?)\b/i,
-            /\b(toddler|infant|baby)[\s\S]{0,25}(sex|abuse|rape|molest)\b/i,
-            /\b(she|he|they)\s*(is|are)\s*(a|an)?\s*(underage|minor|child|kid)\s*(girl|boy|child)?\b/i
+            /(cp|csam|csa|child[\s_-]*(porn|sex|abuse|exploitation)|child\s*sexual\s*abuse)/i,
+            /(pedo|paedo|p3do|ped0|map|nop)|pthc/i,
+            /(lo+l+i+|shota|cub|toddlercon|babycon|prete?en|under[-\s]*age|jail\s*bait)/i,
+            /(minor|kid|child)[\s\S]{0,25}(sex|nude|porn|pics?|vids?|naked|rape|abuse)/i,
+            /\d{1,2}\s*(yo|yrs?|year[-\s]*old)[\s\S]{0,25}(nudes?|sex|porn|pics?|vids?)/i,
+            /(toddler|infant|baby)[\s\S]{0,25}(sex|abuse|rape|molest)/i,
+            /(she|he|they)\s*(is|are)\s*(a|an)?\s*(underage|minor|child|kid)\s*(girl|boy|child)?/i
           ],
           contextRules: {
             requiresContext: false,
@@ -82,15 +88,15 @@ export class ContentSafetySystem {
         // Imminent violence/terrorism
         terrorism: {
           patterns: [
-            /\b(make|build|assemble|cook|mix|prepare)[\s\S]{0,30}(bomb|ied|pipe[\s_-]*bomb|molotov|napalm|explosive|device|detonator)\b/i,
-            /\b(terror|terrorist|extremist|jihad)[\s\S]{0,25}(attack|plan|manual|guide|training|recruit|cell)\b/i,
-            /\b(isis|daesh|al[-\s]*qaeda|taliban|al[-\s]*shabaab|hamas|hezbollah)[\s\S]{0,25}(join|contact|pledge|bayat|support)\b/i,
-            /\b(suicide|mass|school|car|truck|church|synagogue)[\s\S]{0,20}(bomb|attack|shoot(?:ing)?|massacre)\b/i,
-            /\b(how\s*to|guide|tutorial|recipe)[\s\S]{0,25}(make|build|synthesize)[\s\S]{0,25}(ricin|sarin|anthrax|chloroform|tnt|black\s*powder|nitro(?:glycerin)?)\b/i,
-            /\bhow\s+to.{0,20}(bomb|poison|kill\s+many)/i,
-            /\b(?:how\s*to\s*)?(?:make|build|create|construct)\s*(?:a\s*)?b[o0]m[b8]/i,
-            /\b(ricin|sarin|anthrax).{0,20}(make|create|obtain)/i,
-            /\b(blueprint|schematic|formula)[\s\S]{0,25}(bomb|weapon|explosive)\b/i
+            /(make|build|assemble|cook|mix|prepare)[\s\S]{0,30}(bomb|ied|pipe[\s_-]*bomb|molotov|napalm|explosive|device|detonator)/i,
+            /(terror|terrorist|extremist|jihad)[\s\S]{0,25}(attack|plan|manual|guide|training|recruit|cell)/i,
+            /(isis|daesh|al[-\s]*qaeda|taliban|al[-\s]*shabaab|hamas|hezbollah)[\s\S]{0,25}(join|contact|pledge|bayat|support)/i,
+            /(suicide|mass|school|car|truck|church|synagogue)[\s\S]{0,20}(bomb|attack|shoot(?:ing)?|massacre)/i,
+            /(how\s*to|guide|tutorial|recipe)[\s\S]{0,25}(make|build|synthesize)[\s\S]{0,25}(ricin|sarin|anthrax|chloroform|tnt|black\s*powder|nitro(?:glycerin)?)/i,
+            /how\s+to.{0,20}(bomb|poison|kill\s+many)/i,
+            /(?:how\s*to\s*)?(?:make|build|create|construct)\s*(?:a\s*)?b[o0]m[b8]/i,
+            /(ricin|sarin|anthrax).{0,20}(make|create|obtain)/i,
+            /(blueprint|schematic|formula)[\s\S]{0,25}(bomb|weapon|explosive)/i
           ],
           contextRules: {
             requiresContext: true,
@@ -101,19 +107,19 @@ export class ContentSafetySystem {
         // Doxxing/Privacy violations
         doxxing: {
           patterns: [
-            /\b(dox+x?ing?|swat(?:ting)?|drop(?:pin[g]?|ping)?\s*docs?)\b/i,
-            /\b(real|home|personal|private|current|exact)\s*(address|add\.?|location|loc|coords?)\b/i,
-            /\b(leak(?:ed)?|reveal(?:ed)?|expose(?:d)?|publish(?:ed)?)[\s\S]{0,20}(address|phone|number|email|info|docs?)\b/i,
-            /\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/, // SSN
-            /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i, // Email
-            /\b\d{1,5}\s+[\w\s]{1,50}\s+(street|st|avenue|ave|road|rd|lane|ln|drive|dr|court|ct|plaza|blvd)\b/i,
-            /\b(apt|apartment|unit|suite|#)\s*\d+/i,
-            /\b\d{5}(-\d{4})?\b/, // ZIP code with context
-            /\b(lat|latitude|long|longitude)\s*:?\s*-?\d+\.\d+/i
+            /(dox+x?ing?|swat(?:ting)?|drop(?:pin[g]?|ping)?\s*docs?)/i,
+            /(real|home|personal|private|current|exact)\s*(address|add\.?|location|loc|coords?)/i,
+            /(leak(?:ed)?|reveal(?:ed)?|expose(?:d)?|publish(?:ed)?)[\s\S]{0,20}(address|phone|number|email|info|docs?)/i,
+            /\d{3}[-.\s]?\d{2}[-.\s]?\d{4}/, // SSN
+            /(?:\+?1\s*[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/, // Phone Number
+            /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i, // Email
+            /\d{1,5}\s+[\w\s]{1,50}\s+(street|st|avenue|ave|road|rd|lane|ln|drive|dr|court|ct|plaza|blvd)/i,
+            /(apt|apartment|unit|suite|#)\s*\d+/i,
+            /\d{5}(-\d{4})?/, // ZIP code with context
+            /(lat|latitude|long|longitude)\s*:?\s*-?\d+\.\d+/i
           ],
           contextRules: {
-            requiresContext: true,
-            mustInclude: ['live', 'home', 'find', 'location', 'address']
+            requiresContext: false
           }
         }
       },
@@ -122,32 +128,32 @@ export class ContentSafetySystem {
         // Direct threats
         threats: {
           patterns: [
-            /\b(kill|murder|slaughter|eliminate|erase|shoot|stab|strangle|decapitate|behead|burn|torch).{0,25}(you|u|ur|ya|your|family|kin|kids)\b/i,
-            /\b(i['’]m\s*going\s*to|i\s*will|gonna|about\s*to|fixin(?:g)?\s*to).{0,25}(kill|hurt|beat|break|mess\s*you\s*up|ruin|destroy|shoot)\b/i,
-            /\b(you['’]ll|you\s*will|you['’]re\s*going\s*to).{0,25}(die|bleed|suffer|pay|regret)\b/i,
-            /\b(find|track|hunt|locate|trace).{0,25}(you|u|ya).{0,25}(down|irl|soon|tonight)\b/i,
-            /\bwatch.{0,20}(your|ur).{0,20}back/i,
-            /\b(burn|firebomb).{0,25}(house|home|car)\b/i,
-            /\b(fuck|rape|sexual(?:ly)?\sassault).{0,25}(you|ya|ur|your)\b/i
+            /(k[i!ι1]ll|khyll|murder|slaughter|eliminate|erase|shoot|stab|strangle|decapitate|behead|burn|torch).{0,25}(you|u|ur|ya|your|family|kin|kids)/i,
+            /(i['’]m\s*going\s*to|i\s*will|gonna|about\s*to|fixin(?:g)?\s*to).{0,25}(kill|hurt|beat|break|mess\s*you\s*up|ruin|destroy|shoot)/i,
+            /(you['’]ll|you\s*will|you['’]re\s*going\s*to).{0,25}(die|bleed|suffer|pay|regret)/i,
+            /(find|track|hunt|locate|trace).{0,25}(you|u|ya).{0,25}(down|irl|soon|tonight)/i,
+            /watch.{0,20}(your|ur).{0,20}back/i,
+            /(burn|firebomb).{0,25}(house|home|car)/i,
+            /(fuck|rape|sexual(?:ly)?\sassault).{0,25}(you|ya|ur|your)/i
           ],
           contextRules: {
             intensifiers: ['definitely', 'literally', 'actually', 'really'],
             mitigators: ['game', 'movie', 'book', 'joke', 'meme'],
-                    neverMitigate: true
+            neverMitigate: true
           }
         },
         
         // Self-harm
         selfharm: {
           patterns: [
-            /\b(kill|end|take).{0,20}(myself|my\s*life|own\s*life)/i,
-            /\b(cut|harm|hurt).{0,20}(myself|self)/i,
-            /\bsuicid(e|al)/i,
-            /\b(want|going|planning).{0,20}die\b/i,
-            /\b(method|way|how).{0,20}(suicide|kill\s*myself)/i,
-            /\b(bridge|cliff|building).{0,20}(jump|leap)/i,
-            /\b(overdose|od|pills).{0,20}(take|swallow)/i,
-            /\b(kys|kill\s*yourself|end\s*yourself)/i, 
+            /(kill|end|take).{0,20}(myself|my\s*life|own\s*life)/i,
+            /(cut|harm|hurt).{0,20}(myself|self)/i,
+            /suicid(e|al)/i,
+            /(want|going|planning).{0,20}die/i,
+            /(method|way|how).{0,20}(suicide|kill\s*myself)/i,
+            /(bridge|cliff|building).{0,20}(jump|leap)/i,
+            /(overdose|od|pills).{0,20}(take|swallow)/i,
+            /(kys|kill\s*yourself|end\s*yourself)/i, 
           ],
           contextRules: {
             supportPhrases: ['help', 'hotline', 'support', 'prevention'],
@@ -158,13 +164,13 @@ export class ContentSafetySystem {
         // Illegal markets
         illegal_trade: {
           patterns: [
-            /\b(sell|buy|deal).{0,20}(meth|cocaine|heroin|fentanyl|mdma|lsd)/i,
-            /\b(drug|narcotics).{0,20}(dealer|supplier|plug)/i,
-            /\b(weapon|gun|firearm).{0,20}(sell|buy|illegal)/i,
-            /\b(fake|forged).{0,20}(passport|id|document)/i,
-            /\b(credit\s*card|cc).{0,20}(dump|fullz|cvv)/i,
-            /\b(hitman|assassin|killer).{0,20}(hire|need|contact)/i,
-            /\bdark\s*web.{0,20}(market|vendor|link)/i
+            /(sell|buy|deal).{0,20}(meth|cocaine|heroin|fentanyl|mdma|lsd)/i,
+            /(drug|narcotics).{0,20}(dealer|supplier|plug)/i,
+            /(weapon|gun|firearm).{0,20}(sell|buy|illegal)/i,
+            /(fake|forged).{0,20}(passport|id|document)/i,
+            /(credit\s*card|cc).{0,20}(dump|fullz|cvv)/i,
+            /(hitman|assassin|killer).{0,20}(hire|need|contact)/i,
+            /dark\s*web.{0,20}(market|vendor|link)/i
           ],
           contextRules: {
             transactionWords: ['bitcoin', 'crypto', 'payment', 'escrow', 'ship']
@@ -173,12 +179,12 @@ export class ContentSafetySystem {
         
         financial_scams: {
           patterns: [
-            /\b(wire|send|transfer)\s*(money|funds|bitcoin|crypto)/i,
-            /\b(nigerian?\s*prince|inheritance|lottery\s*win)/i,
-            /\byour\s*(account|card)\s*(has\s*been|was)\s*(compromised|hacked)/i,
-            /\bclick\s*here\s*to\s*(verify|confirm|secure)/i,
-            /\b(irs|tax)\s*(fraud|evasion|warrant)/i,
-            /\bgift\s*card\s*(payment|number|code)/i
+            /(wire|send|transfer)\s*(money|funds|bitcoin|crypto)/i,
+            /(nigerian?\s*prince|inheritance|lottery\s*win)/i,
+            /your\s*(account|card)\s*(has\s*been|was)\s*(compromised|hacked)/i,
+            /click\s*here\s*to\s*(verify|confirm|secure)/i,
+            /(irs|tax)\s*(fraud|evasion|warrant)/i,
+            /gift\s*card\s*(payment|number|code)/i
           ],
           contextRules: {
             requiresContext: true,
@@ -188,11 +194,11 @@ export class ContentSafetySystem {
 
         sextortion: {
           patterns: [
-            /\bi\s*have\s*(your|compromising)\s*(video|photos?|pictures?)/i,
-            /\b(pay|send)\s*(me|bitcoin|money)\s*or\s*i['ll\s]*(share|post|send)/i,
-            /\byour\s*(webcam|camera)\s*was\s*(hacked|compromised)/i,
-            /\bi\s*know\s*your\s*password/i,
-            /\b(share|send)\s*this\s*to\s*(your|all)\s*(contacts|friends|family)/i
+            /i\s*have\s*(your|compromising)\s*(video|photos?|pictures?)/i,
+            /(pay|send)\s*(me|bitcoin|money)\s*or\s*i['ll\s]*(share|post|send)/i,
+            /your\s*(webcam|camera)\s*was\s*(hacked|compromised)/i,
+            /i\s*know\s*your\s*password/i,
+            /(share|send)\s*this\s*to\s*(your|all)\s*(contacts|friends|family)/i
           ],
           contextRules: {
             requiresContext: true,
@@ -206,29 +212,28 @@ export class ContentSafetySystem {
         // Hate speech with context
         hate_speech: {
           patterns: [
-            /\b(nigger|nigga|faggot|fag|kike|spic|chink|gook|wetback|towelhead|tranny|slut|whore|bitch|cunt|skag|skank|nigg|niggs|nigs|poof|poofter|poofta)/i,
-            /\b(all|every).{0,20}(blacks|whites|jews|muslims|christians|gays|hindus|indians|africans).{0,20}(should|must|need)/i,
-            /\b(holocaust|slavery).{0,20}(good|deserved|fake|hoax)/i,
-            /\b(hitler|nazi).{0,20}(right|correct|good)/i,
-            /\b(jews|jew|jewish).{0,20}(right|correct|good)/i,
-            /\b(arab|arabs|muslims|islam).{0,20}(right|correct|good)/i,
-            /\b(gas|burn|lynch).{0,20}(whites|browns|arabs|muslims|christians|straights|bisexuals|jews|blacks|gays|hindus)/i
+            /(nigger|nigga|n\*{4}r|faggot|fag|kike|spic|chink|gook|wetback|towelhead|tranny|slut|whore|bitch|cunt|skag|skank|nigg|niggs|nigs|poof|poofter|poofta)/i,
+            /(all|every).{0,20}(blacks|whites|jews|muslims|christians|gays|hindus|indians|africans).{0,20}(should|must|need)/i,
+            /(holocaust|slavery).{0,20}(good|deserved|fake|hoax)/i,
+            /(hitler|nazi).{0,20}(right|correct|good)/i,
+            /(jews|jew|jewish).{0,20}(right|correct|good)/i,
+            /(arab|arabs|muslims|islam).{0,20}(right|correct|good)/i,
+            /(gas|burn|lynch).{0,20}(whites|browns|arabs|muslims|christians|straights|bisexuals|jews|blacks|gays|hindus)/i
           ],
           contextRules: {
             educationalContext: ['history', 'education', 'documentary', 'quoting'],
-            reclamation: ['self-identify', 'reclaim', 'our word']
           }
         },
         
         // Targeted harassment
         harassment: {
           patterns: [
-            /\b(kys|kill\s*yourself|end\s*yourself)/i,
-            /\b(retard|retarded|autist|autistic).{0,20}(you|u\s*r|dumb)/i,
-            /\b(ugly|fat|disgusting).{0,20}(bitch|whore|slut)/i,
-            /\b(rope|neck|hang).{0,20}yourself/i,
-            /\bno\s*one.{0,20}(likes|loves|wants).{0,20}you/i,
-            /\b(worthless|useless|waste).{0,20}(life|space|person)/i
+            /(kys|kill\s*yourself|end\s*yourself)/i,
+            /(retard|retarded|autist|autistic).{0,20}(you|u\s*r|dumb)/i,
+            /(ugly|fat|disgusting).{0,20}(bitch|whore|slut)/i,
+            /(rope|neck|hang).{0,20}yourself/i,
+            /no\s*one.{0,20}(likes|loves|wants).{0,20}you/i,
+            /(worthless|useless|waste).{0,20}(life|space|person)/i
           ],
           contextRules: {
             targetRequired: true,
@@ -241,13 +246,13 @@ export class ContentSafetySystem {
         // Spam patterns
         spam: {
           patterns: [
-            /\b(click|visit|check\s*out).{0,20}(link|site|here)/i,
-            /\b(earn|make).{0,20}\$\d+.{0,20}(day|hour|week)/i,
-            /\b(viagra|cialis|pills).{0,20}(cheap|discount|sale)/i,
-            /\b(crypto|bitcoin|nft).{0,20}(pump|moon|10x)/i,
+            /(click|visit|check\s*out).{0,20}(link|site|here)/i,
+            /(earn|make).{0,20}\$\d+.{0,20}(day|hour|week)/i,
+            /(viagra|cialis|pills).{0,20}(cheap|discount|sale)/i,
+            /(crypto|bitcoin|nft).{0,20}(pump|moon|10x)/i,
             /(.)\1{10,}/, // Character spam
             /[A-Z\s]{20,}/, // CAPS spam
-            /\b(\w{4,})\b(?=.*?\b\1\b.*?\b\1\b.*?\b\1\b)/i, // A word of 4+ chars repeated at least 4 times
+            /(\w{4,})(?=.*?\1.*?\1.*?\1)/i, // A word of 4+ chars repeated at least 4 times
           ],
           contextRules: {
             urlDensity: 0.05, // More than 5% URLs
@@ -283,9 +288,9 @@ export class ContentSafetySystem {
       },
       
       reversal: {
-        check: (text) => {
+        check: async (text) => {
           const reversed = text.split('').reverse().join('');
-          return this.checkContentInternal(reversed, { skipCache: true });
+          return await this.checkContent(reversed, { skipCache: true, skipReversal: true });
         }
       },
       
@@ -338,13 +343,13 @@ export class ContentSafetySystem {
     addMapping('f', 'ḟ', 'ƒ', 'ᵮ', 'ᶂ', 'ᶠ', 'φ', 'ф');
     addMapping('g', 'ĝ', 'ğ', 'ġ', 'ģ', 'ǧ', 'ǵ', 'ɠ', 'ɡ', 'ᵍ', 'ᶃ', 'ᶢ', 'г', 'ґ');
     addMapping('h', 'ĥ', 'ħ', 'ḣ', 'ḥ', 'ḧ', 'ḩ', 'ḫ', 'ɦ', 'ɧ', 'ᴴ', 'ʰ', 'ᶣ', 'н');
-    addMapping('i', 'ì', 'í', 'î', 'ï', 'ĩ', 'ī', 'ĭ', 'į', 'ı', 'ǐ', 'ɨ', 'ɩ', 'ɪ', 'ι', 'і', 'ї');
+    addMapping('i', 'ì', 'í', 'î', 'ï', 'ĩ', 'ī', 'ĭ', 'į', 'ı', 'ǐ', 'ɨ', 'ɩ', 'ɪ', 'ι', 'і', 'ї', 'y','ι'); 
     addMapping('j', 'ĵ', 'ǰ', 'ɉ', 'ʝ', 'ⱼ', 'ᶡ', 'ᶨ', 'й', 'ј');
     addMapping('k', 'ķ', 'ĸ', 'ǩ', 'ḱ', 'ḳ', 'ḵ', 'ƙ', 'ⱪ', 'ᵏ', 'ᶄ', 'κ', 'к');
     addMapping('l', 'ĺ', 'ļ', 'ľ', 'ŀ', 'ł', 'ḷ', 'ḹ', 'ḻ', 'ḽ', 'ℓ', 'ʟ', 'ˡ', 'ᴸ', 'ᶫ', 'л');
     addMapping('m', 'ḿ', 'ṁ', 'ṃ', 'ɱ', 'ᵐ', 'ᴹ', 'ᶬ', 'м', 'μ');
     addMapping('n', 'ñ', 'ń', 'ņ', 'ň', 'ŋ', 'ṅ', 'ṇ', 'ṉ', 'ṋ', 'ɲ', 'ɳ', 'ᴺ', 'ⁿ', 'ᶮ', 'ᶯ', 'ᶰ', 'н', 'η', 'ν');
-    addMapping('o', 'ò', 'ó', 'ô', 'õ', 'ö', 'ø', 'ō', 'ŏ', 'ő', 'ǒ', 'ǫ', 'ǭ', 'ɵ', 'ο', 'о', 'ө', 'ᵒ', 'ᴼ', 'ᶱ');
+    addMapping('o', 'ò', 'ó', 'ô', 'õ', 'ö', 'ø', 'ō', 'ŏ', 'ő', 'ǒ', 'ǫ', 'ǭ', 'ɵ', 'ο', 'о', 'ө', 'ᵒ', 'ᴼ', 'ᶱ','ο');
     addMapping('p', 'ṕ', 'ṗ', 'ƥ', 'ᵖ', 'ᴾ', 'ᵽ', 'ᶈ', 'π', 'п', 'ρ');
     addMapping('q', 'ɋ', 'ʠ', 'ᵠ', 'ᶐ', 'ԛ');
     addMapping('r', 'ŕ', 'ŗ', 'ř', 'ṙ', 'ṛ', 'ṝ', 'ṟ', 'ȑ', 'ȓ', 'ɍ', 'ɹ', 'ɻ', 'ʳ', 'ᴿ', 'ᵣ', 'ᶉ', 'г', 'я');
@@ -396,7 +401,9 @@ compilePatterns() {
     for (const [category, config] of Object.entries(categories)) {
       const patterns = config.patterns.map(pattern => {
         if (pattern instanceof RegExp) {
-          return new RegExp(pattern.source, pattern.flags.includes('u') ? pattern.flags : pattern.flags + 'u');
+          // FINAL FIX: Remove word boundaries from all regexes by default.
+          const source = pattern.source.replace(/\\b/g, '');
+          return new RegExp(source, pattern.flags.includes('u') ? pattern.flags : pattern.flags + 'u');
         }
         return pattern;
       });
@@ -436,6 +443,13 @@ compilePatterns() {
       };
     }
     
+    if (!options.skipReversal && this.evasionPatterns.reversal.check) {
+        const reversedResult = await this.evasionPatterns.reversal.check(text);
+        if (reversedResult && reversedResult.shouldBlock) {
+            return reversedResult;
+        }
+    }
+
     // Cache check
     const cacheKey = this.generateCacheKey(text);
     if (!options.skipCache && this.cache.has(cacheKey)) {
@@ -506,7 +520,7 @@ compilePatterns() {
         const fictionIndicators = [
             /\b(chapter|scene|act)\s*\d+/i,
             /\b(character|protagonist|antagonist)\b/i,
-            /\b(novel|story|book|script|screenplay)\b/i,
+            /\b(novel|story|book|script|screenplay|plot)\b/i,
             /"[^"]+"\s*(said|asked|replied|shouted)/i,
             /\b(fiction|fantasy|sci-fi|thriller)\b/i
         ];
@@ -556,10 +570,13 @@ compilePatterns() {
     
     return Math.max(0, Math.min(1, score));
 }
+
+
 async performComprehensiveCheck(text, options) {
+
   const violations = [];
   let contextAnalysis = null;
-  
+
   // 1. Quick evasion check FIRST
   const quickEvasions = this.quickEvasionCheck(text);
   violations.push(...quickEvasions);
@@ -624,164 +641,171 @@ if (obfuscation.score > 0.5) {
   }
   
   // 7. Context analysis (your existing code)
-if (this.config.enableContextAnalysis && violations.length > 0) {
-    contextAnalysis = this.analyzeContext(text, violations);
-    
-    for (const violation of violations) {
-        // CRITICAL: Only allow context mitigation for specific types
-        const CONTEXT_ALLOWED_TYPES = ['terrorism', 'hate_speech'];
+    if (this.config.enableContextAnalysis && violations.length > 0) {
+        contextAnalysis = this.analyzeContext(text, violations);
         
-        // Direct threats, CSAM, self-harm should NEVER be mitigated
-        const NEVER_MITIGATE = ['threats', 'csam', 'doxxing', 'grooming_behavior', 'selfharm'];
-        
-        if (NEVER_MITIGATE.includes(violation.type)) {
-            continue; // Skip context mitigation entirely
-        }
-        
-        if (!CONTEXT_ALLOWED_TYPES.includes(violation.type)) {
-            continue; // Only specific types can be mitigated
-        }
-        
-        // Check if context is legitimate
-        const contextScore = this.evaluateContextLegitimacy(text, contextAnalysis.mitigatingFactors);
-        
-        if (contextScore > 0.7) { // High confidence it's legitimate context
-            const rules = this.harmPatterns[violation.severity]?.[violation.type]?.contextRules;
-            if (rules?.exceptions) {
-                for (const factor of contextAnalysis.mitigatingFactors) {
-                    const exceptionMap = {
-                        educational: 'history',
-                        news: 'news',
-                        fiction: 'fiction'
-                    };
-                    if (exceptionMap[factor] && rules.exceptions.includes(exceptionMap[factor])) {
-                        violation.contextMitigation = true;
-                        violation.mitigationConfidence = contextScore;
-                        break;
+        for (const violation of violations) {
+            // CRITICAL: Only allow context mitigation for specific types
+            const CONTEXT_ALLOWED_TYPES = ['terrorism', 'hate_speech'];
+            
+            // Direct threats, CSAM, self-harm should NEVER be mitigated
+            const NEVER_MITIGATE = ['threats', 'csam', 'doxxing', 'grooming_behavior', 'selfharm'];
+            
+            if (NEVER_MITIGATE.includes(violation.type)) {
+                continue; // Skip context mitigation entirely
+            }
+            
+            if (!CONTEXT_ALLOWED_TYPES.includes(violation.type)) {
+                continue; // Only specific types can be mitigated
+            }
+            
+            // Check if context is legitimate
+            const contextScore = this.evaluateContextLegitimacy(text, contextAnalysis.mitigatingFactors);
+            
+            if (contextScore > 0.7) { // High confidence it's legitimate context
+                const rules = this.harmPatterns[violation.severity]?.[violation.type]?.contextRules;
+                if (rules?.exceptions) {
+                    for (const factor of contextAnalysis.mitigatingFactors) {
+                        const exceptionMap = {
+                            educational: 'history',
+                            news: 'news',
+                            fiction: 'fiction'
+                        };
+                        if (exceptionMap[factor] && rules.exceptions.includes(exceptionMap[factor])) {
+                            violation.contextMitigation = true;
+                            violation.mitigationConfidence = contextScore;
+                            break;
+                        }
                     }
                 }
             }
         }
+        
+        violations.push(...contextAnalysis.additionalViolations);
     }
-    
-    violations.push(...contextAnalysis.additionalViolations);
-}
   
   // 8. Behavioral analysis
   const behavioral = this.analyzeBehavior(text, violations);
   violations.push(...behavioral);
   
-  // 9. Remove duplicates and determine final verdict
-  const uniqueViolations = this.deduplicateViolations(violations);
-  const finalVerdict = this.calculateVerdict(uniqueViolations);
-  
-  return {
-    safe: finalVerdict.safe,
-    violations: uniqueViolations,
-    shouldBlock: finalVerdict.shouldBlock,
-    confidence: finalVerdict.confidence,
-    metadata: {
-      obfuscationScore: obfuscation.score,
-      normalizationMethods: normalizations.map(n => n.method),
-      contextualFactors: this.config.enableContextAnalysis ? contextAnalysis : null
+    // --- Machine Learning Check ---
+    // The NBC now acts as just another rule in the system.
+    const nbcResult = this.classifier.predict(text);
+    if (nbcResult.label === 'not_safe' && nbcResult.probability > this.config.nbcBlockThreshold) {
+        violations.push({
+            type: 'ml_flagged',
+            severity: 'medium', // Downgraded to medium to act as a strong signal, not a final verdict.
+            confidence: nbcResult.probability,
+            method: 'nbc'
+        });
     }
-  };
-}
+  
+    const uniqueViolations = this.deduplicateViolations(violations);
+    const finalVerdict = this.calculateVerdict(uniqueViolations);
+
+    return {
+      safe: finalVerdict.safe,
+      violations: uniqueViolations,
+      shouldBlock: finalVerdict.shouldBlock,
+      confidence: finalVerdict.confidence,
+      metadata: {
+        nbcScore: nbcResult.label === 'not_safe' ? nbcResult.probability : 1 - nbcResult.probability,
+        nbcLabel: nbcResult.label
+      }
+    };
+  }
+
 
 checkNgramSimilarity(text) {
   const violations = [];
-  
-  // Only process first 500 chars for n-gram analysis
-  const processText = text.slice(0, 500).toLowerCase();
-  
-  // Skip if text is too short
-  if (processText.length < 10) return violations;
-  
-  // Generate trigrams more carefully
+  const processText = text.slice(0, 500);
+
+  if (processText.length < 3) return violations;
+
   const generateTrigrams = (str) => {
     const trigrams = new Set();
-    // Only use alphanumeric to avoid false matches
-    const cleaned = str.replace(/[^a-z0-9]/g, '');
-    for (let i = 0; i <= cleaned.length - 3; i++) {
-      trigrams.add(cleaned.slice(i, i + 3));
+    
+    // 1. Sanitize: Replace all non-alphanumeric characters (except spaces) 
+    // with a space, then collapse multiple spaces to one.
+    const sanitizedStr = str.toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ');
+
+    // 2. Split the sanitized string into words.
+    const words = sanitizedStr.split(' ');
+
+    // 3. Iterate over each word to generate its trigrams.
+    for (const word of words) {
+      if (word.length < 3) continue;
+
+      for (let i = 0; i <= word.length - 3; i++) {
+        trigrams.add(word.slice(i, i + 3));
+      }
     }
     return trigrams;
   };
-  
-  // Harmful trigram signatures
-const harmfulSignatures = {
-  // Terrorism/Explosives
-  'bom': { word: 'bomb', type: 'terrorism', severity: 'critical' },
-  'omb': { word: 'bomb', type: 'terrorism', severity: 'critical' },
-  'exp': { word: 'explosive', type: 'terrorism', severity: 'critical' },
-  'plo': { word: 'explosive', type: 'terrorism', severity: 'critical' },
-  'det': { word: 'detonate', type: 'terrorism', severity: 'critical' },
-  'ton': { word: 'detonate', type: 'terrorism', severity: 'critical' },
-  'ric': { word: 'ricin', type: 'terrorism', severity: 'critical' },
-  'sar': { word: 'sarin', type: 'terrorism', severity: 'critical' },
-  'thr': { word: 'anthrax', type: 'terrorism', severity: 'critical' },
-  
-  // Violence/Threats
-  'kil': { word: 'kill', type: 'threats', severity: 'high' },
-  'ill': { word: 'kill', type: 'threats', severity: 'high' },
-  'mur': { word: 'murder', type: 'threats', severity: 'high' },
-  'urd': { word: 'murder', type: 'threats', severity: 'high' },
-  'der': { word: 'murder', type: 'threats', severity: 'high' },
-  'sho': { word: 'shoot', type: 'threats', severity: 'high' },
-  'oot': { word: 'shoot', type: 'threats', severity: 'high' },
-  'sta': { word: 'stab', type: 'threats', severity: 'high' },
-  'tab': { word: 'stab', type: 'threats', severity: 'high' },
-  'str': { word: 'strangle', type: 'threats', severity: 'high' },
-  'ang': { word: 'strangle', type: 'threats', severity: 'high' },
-  'rap': { word: 'rape', type: 'threats', severity: 'high' },
-  'ape': { word: 'rape', type: 'threats', severity: 'high' },
-  
-  // Self-harm
-  'sui': { word: 'suicide', type: 'selfharm', severity: 'high' },
-  'uic': { word: 'suicide', type: 'selfharm', severity: 'high' },
-  'ici': { word: 'suicide', type: 'selfharm', severity: 'high' },
-  'cid': { word: 'suicide', type: 'selfharm', severity: 'high' },
-  'ide': { word: 'suicide', type: 'selfharm', severity: 'high' },
-  'ove': { word: 'overdose', type: 'selfharm', severity: 'high' },
-  'ver': { word: 'overdose', type: 'selfharm', severity: 'high' },
-  'dos': { word: 'overdose', type: 'selfharm', severity: 'high' },
-  
-  // CSAM
-  'mol': { word: 'molest', type: 'csam', severity: 'critical' },
-  'les': { word: 'molest', type: 'csam', severity: 'critical' },
-  'ped': { word: 'pedo', type: 'csam', severity: 'critical' },
-  'edo': { word: 'pedo', type: 'csam', severity: 'critical' },
-  'lol': { word: 'loli', type: 'csam', severity: 'critical' },
-  'oli': { word: 'loli', type: 'csam', severity: 'critical' },
-  'csa': { word: 'csam', type: 'csam', severity: 'critical' },
-  'sam': { word: 'csam', type: 'csam', severity: 'critical' },
-  
-  // Drugs
-  'coc': { word: 'cocaine', type: 'illegal_trade', severity: 'high' },
-  'oca': { word: 'cocaine', type: 'illegal_trade', severity: 'high' },
-  'ain': { word: 'cocaine', type: 'illegal_trade', severity: 'high' },
-  'her': { word: 'heroin', type: 'illegal_trade', severity: 'high' },
-  'ero': { word: 'heroin', type: 'illegal_trade', severity: 'high' },
-  'fen': { word: 'fentanyl', type: 'illegal_trade', severity: 'high' },
-  'ent': { word: 'fentanyl', type: 'illegal_trade', severity: 'high' },
-  'nyl': { word: 'fentanyl', type: 'illegal_trade', severity: 'high' },
-  'met': { word: 'meth', type: 'illegal_trade', severity: 'high' },
-  'eth': { word: 'meth', type: 'illegal_trade', severity: 'high' },
-  
-  // Doxxing
-  'dox': { word: 'doxx', type: 'doxxing', severity: 'high' },
-  'oxx': { word: 'doxx', type: 'doxxing', severity: 'high' },
-  'swa': { word: 'swat', type: 'doxxing', severity: 'critical' },
-  'wat': { word: 'swat', type: 'doxxing', severity: 'critical' },
-  'add': { word: 'address', type: 'doxxing', severity: 'high' },
-  'ddr': { word: 'address', type: 'doxxing', severity: 'high' },
-  'res': { word: 'address', type: 'doxxing', severity: 'high' }
-};
+
+  const harmfulSignatures = {
+    'bom': { word: 'bomb', type: 'terrorism', severity: 'critical' },
+    'omb': { word: 'bomb', type: 'terrorism', severity: 'critical' },
+    'exp': { word: 'explosive', type: 'terrorism', severity: 'critical' },
+    'plo': { word: 'explosive', type: 'terrorism', severity: 'critical' },
+    'det': { word: 'detonate', type: 'terrorism', severity: 'critical' },
+    'ton': { word: 'detonate', type: 'terrorism', severity: 'critical' },
+    'ric': { word: 'ricin', type: 'terrorism', severity: 'critical' },
+    'sar': { word: 'sarin', type: 'terrorism', severity: 'critical' },
+    'thr': { word: 'anthrax', type: 'terrorism', severity: 'critical' },
+    'kil': { word: 'kill', type: 'threats', severity: 'high' },
+    'ill': { word: 'kill', type: 'threats', severity: 'high' },
+    'mur': { word: 'murder', type: 'threats', severity: 'high' },
+    'urd': { word: 'murder', type: 'threats', severity: 'high' },
+    'der': { word: 'murder', type: 'threats', severity: 'high' },
+    'sho': { word: 'shoot', type: 'threats', severity: 'high' },
+    'oot': { word: 'shoot', type: 'threats', severity: 'high' },
+    'sta': { word: 'stab', type: 'threats', severity: 'high' },
+    'tab': { word: 'stab', type: 'threats', severity: 'high' },
+    'str': { word: 'strangle', type: 'threats', severity: 'high' },
+    'ang': { word: 'strangle', type: 'threats', severity: 'high' },
+    'rap': { word: 'rape', type: 'threats', severity: 'high' },
+    'ape': { word: 'rape', type: 'threats', severity: 'high' },
+    'sui': { word: 'suicide', type: 'selfharm', severity: 'high' },
+    'uic': { word: 'suicide', type: 'selfharm', severity: 'high' },
+    'ici': { word: 'suicide', type: 'selfharm', severity: 'high' },
+    'cid': { word: 'suicide', type: 'selfharm', severity: 'high' },
+    'ide': { word: 'suicide', type: 'selfharm', severity: 'high' },
+    'ove': { word: 'overdose', type: 'selfharm', severity: 'high' },
+    'ver': { word: 'overdose', type: 'selfharm', severity: 'high' },
+    'dos': { word: 'overdose', type: 'selfharm', severity: 'high' },
+    'mol': { word: 'molest', type: 'csam', severity: 'critical' },
+    'les': { word: 'molest', type: 'csam', severity: 'critical' },
+    'ped': { word: 'pedo', type: 'csam', severity: 'critical' },
+    'edo': { word: 'pedo', type: 'csam', severity: 'critical' },
+    'lol': { word: 'loli', type: 'csam', severity: 'critical' },
+    'oli': { word: 'loli', type: 'csam', severity: 'critical' },
+    'csa': { word: 'csam', type: 'csam', severity: 'critical' },
+    'sam': { word: 'csam', type: 'csam', severity: 'critical' },
+    'coc': { word: 'cocaine', type: 'illegal_trade', severity: 'high' },
+    'oca': { word: 'cocaine', type: 'illegal_trade', severity: 'high' },
+    'ain': { word: 'cocaine', type: 'illegal_trade', severity: 'high' },
+    'her': { word: 'heroin', type: 'illegal_trade', severity: 'high' },
+    'ero': { word: 'heroin', type: 'illegal_trade', severity: 'high' },
+    'fen': { word: 'fentanyl', type: 'illegal_trade', severity: 'high' },
+    'ent': { word: 'fentanyl', type: 'illegal_trade', severity: 'high' },
+    'nyl': { word: 'fentanyl', type: 'illegal_trade', severity: 'high' },
+    'met': { word: 'meth', type: 'illegal_trade', severity: 'high' },
+    'eth': { word: 'meth', type: 'illegal_trade', severity: 'high' },
+    'dox': { word: 'doxx', type: 'doxxing', severity: 'high' },
+    'oxx': { word: 'doxx', type: 'doxxing', severity: 'high' },
+    'swa': { word: 'swat', type: 'doxxing', severity: 'critical' },
+    'wat': { word: 'swat', type: 'doxxing', severity: 'critical' },
+    'add': { word: 'address', type: 'doxxing', severity: 'high' },
+    'ddr': { word: 'address', type: 'doxxing', severity: 'high' },
+    'res': { word: 'address', type: 'doxxing', severity: 'high' }
+  };
   
   const textTrigrams = generateTrigrams(processText);
   const wordMatches = new Map();
   
-  // KEY CHANGE: Only check exact trigram matches, NO Levenshtein distance
   for (const trigram of textTrigrams) {
     if (harmfulSignatures[trigram]) {
       const config = harmfulSignatures[trigram];
@@ -790,7 +814,6 @@ const harmfulSignatures = {
     }
   }
   
-  // KEY CHANGE: Require at least 2 matching trigrams 
   for (const [word, count] of wordMatches) {
     if (count >= 2) {
       const config = Object.values(harmfulSignatures).find(h => h.word === word);
@@ -798,7 +821,7 @@ const harmfulSignatures = {
         violations.push({
           type: config.type,
           severity: config.severity,
-          confidence: Math.min(count * 0.1, 0.8), // Reduced confidence
+          confidence: Math.min(count * 0.1, 0.8),
           method: 'ngram_analysis',
           match: word
         });
@@ -1000,8 +1023,7 @@ const harmfulSignatures = {
   basicNormalize(text) {
     return text
       .toLowerCase()
-      .replace(/[._\-*\/\\|]/g, ' ')
-      .replace(/\s+/g, ' ')
+      .replace(/[^a-z0-9]/g, '')
       .trim();
   }
   
@@ -1010,7 +1032,6 @@ const harmfulSignatures = {
     let normalized = '';
 
     // 1. Iterate character by character and replace using the map.
-    // This is more reliable than chained regex replacements.
     for (const char of text) {
       normalized += this.unicodeMap.get(char.toLowerCase()) || char;
     }
@@ -1032,7 +1053,7 @@ const harmfulSignatures = {
     normalized = normalized.normalize('NFKD');
 
     // 6. Clean up any remaining non-word characters and extra spaces.
-    normalized = normalized.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    normalized = normalized.replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 
     return normalized;
 }
@@ -1096,7 +1117,7 @@ const harmfulSignatures = {
     normalized = normalized.replace(/[^a-z0-9\s]/g, '');
     
     // Collapse repeated characters
-    normalized = normalized.replace(/(.)\1{2,}/g, '$1$1');
+    normalized = normalized.replace(/(.)\1+/g, '$1');
     
     // Remove single characters between words
     normalized = normalized.replace(/\b\w\b/g, '');
@@ -1109,6 +1130,8 @@ const harmfulSignatures = {
     
     // Common phonetic substitutions
     const phonetic = {
+      'kh': 'k',
+      'yoo': 'you',
       'ph': 'f',
       'ck': 'k',
       'kn': 'n',
@@ -1129,6 +1152,7 @@ const harmfulSignatures = {
     return normalized;
   }
   
+// Paste this updated function into your file
 checkPatterns(normalizedText, originalText, normalizationMethod) {
   const violations = [];
   const paddedText = ` ${normalizedText} `;
@@ -1142,7 +1166,7 @@ checkPatterns(normalizedText, originalText, normalizationMethod) {
         return [{
           type: 'threats',
           severity: 'high',
-          pattern,
+          pattern: pattern.source,
           normalizationMethod: 'unicode',
           confidence: 0.9
         }];
@@ -1156,12 +1180,25 @@ checkPatterns(normalizedText, originalText, normalizationMethod) {
   for (const [severity, categories] of this.compiledPatterns) {
     for (const [category, config] of categories) {
       // Skip certain checks entirely in legitimate contexts
-      if (legitimateContext.isLegitimate && this.shouldSkipInContext(category, legitimateContext)) {
+      if (legitimateContext.isLegitimate && this.shouldSkipInContext(category, legitimateContext, originalText)) {
         continue;
       }
       
       for (const pattern of config.patterns) {
-        const matches = normalizedText.match(pattern) || paddedText.match(pattern);
+        let patternToTest = pattern;
+
+        // ** START OF THE FIX **
+        // If we're checking the space-removed variant, use a version of the 
+        // pattern that doesn't rely on word boundaries (\b).
+        if (normalizationMethod !== 'original') {
+          const newSource = pattern.source.replace(/\\b/g, '');
+          if (newSource !== pattern.source) {
+            patternToTest = new RegExp(newSource, pattern.flags);
+          }
+        }
+        // ** END OF THE FIX **
+
+        const matches = normalizedText.match(patternToTest) || paddedText.match(patternToTest);
         
         if (matches) {
           // Check context rules
@@ -1192,7 +1229,7 @@ checkPatterns(normalizedText, originalText, normalizationMethod) {
             type: category,
             severity: severity,
             confidence: this.calculateConfidence(matches, normalizedText, normalizationMethod),
-            pattern: pattern.source,
+            pattern: pattern.source, // Log the original pattern
             match: matches[0],
             normalizationMethod: normalizationMethod
           });
@@ -1264,8 +1301,7 @@ isLegitimateNewsContext(text) {
     if (pattern.test(text)) matches++;
   }
   
-  // Need at least 3 news indicators for legitimate context
-  return matches >= 3;
+  return matches >= 2;
 }
 
 isLegitimateEducationalContext(text) {
@@ -1285,7 +1321,7 @@ isLegitimateEducationalContext(text) {
     if (pattern.test(text)) matches++;
   }
   
-  return matches >= 3;
+  return matches >= 2;
 }
 
 isLegitimateCreativeContext(text) {
@@ -1308,7 +1344,7 @@ isLegitimateCreativeContext(text) {
     matches += 2;
   }
   
-  return matches >= 3 && text.length > 50;
+  return matches >= 2 && text.length > 50;
 }
 
 isLegitimateSupportContext(text) {
@@ -1330,19 +1366,31 @@ isLegitimateSupportContext(text) {
   return matches >= 2;
 }
 
-shouldSkipInContext(category, context) {
+shouldSkipInContext(category, context, text) {
+  // NEVER skip critical threats even in fiction
+  if (this.harmPatterns.critical[category] || this.harmPatterns.high[category]) {
+      // For threats in fiction, check if it's a direct threat
+      if (category === 'threats' && context.type === 'creative') {
+          // Look for first-person threats even in fiction
+          const firstPersonThreat = /\b(i\s*(will|am\s*going\s*to)|gonna)\s*\w*\s*(kill|murder|hurt|shoot)\b/i;
+          if (firstPersonThreat.test(text)) {
+              return false; // Don't skip - this is still a threat
+          }
+      }
+      return false;
+  }
+
+
   const contextExemptions = {
     news: ['terrorism', 'hate_speech', 'threats', 'illegal_trade'],
     educational: ['terrorism', 'hate_speech', 'illegal_trade'],
     creative: ['threats', 'illegal_trade'],
-    support: ['selfharm'] // This allows suicide discussion in support contexts
+    support: ['selfharm'] 
   };
   
-  // For gaming contexts, be more specific
   if (context.type === 'creative' && category === 'threats') {
-    // Check if it's actually about in-game violence
     const gameViolencePattern = /\b(game|gaming|player|character|enemy|mission)\b/i;
-    if (gameViolencePattern.test(context.type)) {
+    if (gameViolencePattern.test(text)) {
       return true;
     }
   }
@@ -1522,17 +1570,33 @@ analyzeContext(text, violations) {
       'heroin': { severity: 'high', type: 'illegal_trade' },
       'fentanyl': { severity: 'high', type: 'illegal_trade' },
       'meth': { severity: 'high', type: 'illegal_trade' },
+      'ice' :  { severity: 'high', type: 'illegal_trade' },
       
       // Doxxing
       'address': { severity: 'high', type: 'doxxing' },
       'doxx': { severity: 'high', type: 'doxxing' },
       'swat': { severity: 'critical', type: 'doxxing' }
     };
+    //slur words
+      const slurWords = {
+        'nigger': { severity: 'medium', type: 'hate_speech' },
+        'faggot': { severity: 'medium', type: 'hate_speech' },
+        'kike': { severity: 'medium', type: 'hate_speech' },
+        'tranny': { severity: 'medium', type: 'hate_speech' },
+        'dyke' : { severity: 'medium', type: 'hate_speech' },
+        'poofter': { severity: 'medium', type: 'hate_speech' },
+        'coon':  { severity: 'medium', type: 'hate_speech' },
+        'chink':  { severity: 'medium', type: 'hate_speech' },
+        'slut':  { severity: 'medium', type: 'hate_speech' },
+        'whore':  { severity: 'medium', type: 'hate_speech' },
+        'skag' :  { severity: 'medium', type: 'hate_speech' },
+      };
+    
         const normalized = this.unicodeNormalize(text);
 
   // Check if we're in a context where fuzzy matching should be more lenient
   const context = this.checkLegitimateContext(text);
-  const threshold = context.isLegitimate ? 0.85 : 0.70; // Higher threshold for legitimate contexts
+  const threshold = context.isLegitimate ? 0.80 : 0.75;
   
   // Add more stop words
   const STOP_WORDS = new Set([
@@ -1546,12 +1610,13 @@ analyzeContext(text, violations) {
     .filter(w => w.length > 2 && !STOP_WORDS.has(w))
       
       for (const word of words) {
+        const dedupedWord = word.replace(/(.)\1+/g, '$1');
+
         for (const [harmfulWord, config] of Object.entries(criticalWords)) {
-          const distance = this.levenshteinDistance(word, harmfulWord);
-          const similarity = 1 - (distance / Math.max(word.length, harmfulWord.length));
+          const distance = this.levenshteinDistance(dedupedWord, harmfulWord);
+          const similarity = 1 - (distance / Math.max(dedupedWord.length, harmfulWord.length));
           
-          // If similarity is above 0.80, flag it
-          if (similarity >= 0.80) {
+          if (similarity >= threshold) {
             violations.push({
               type: config.type,
               severity: config.severity,

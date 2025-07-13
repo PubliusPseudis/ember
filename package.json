@@ -4,6 +4,10 @@
   "description": "Headless Ember relay node for strengthening the network",
   "type": "module",
   "main": "headless.js",
+    "imports": {
+    "buffer": "buffer/index.js",
+    "buffer/": "buffer/"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -19,6 +23,7 @@
   "license": "ISC",
   "dependencies": {
     "dompurify": "^3.2.6",
+    "fs": "^0.0.1-security",
     "http-server": "^14.1.1",
     "nsfwjs": "^4.2.1",
     "process": "^0.11.10",
@@ -26,6 +31,10 @@
     "webtorrent": "^2.6.10"
   },
   "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/preset-env": "^7.28.0",
+    "babel-jest": "^30.0.4",
+    "jest": "^30.0.4",
     "vite": "^5.3.1",
     "vite-plugin-node-polyfills": "^0.23.0"
   }
