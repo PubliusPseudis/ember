@@ -4,10 +4,10 @@
 // interacting with the DOM, rendering content, and handling UI events.
 
 // --- IMPORTS ---
-import { state, imageStore, toggleCarry, createReply, createPostWithTopics, findRootPost, isImageToxic, isToxic, sendDirectMessage, broadcastProfileUpdate, subscribeToProfile, unsubscribeFromProfile } from './main.js';
+import { state, imageStore, toggleCarry, createReply, createPostWithTopics, findRootPost, isImageToxic, isToxic, sendDirectMessage, broadcastProfileUpdate, subscribeToProfile, unsubscribeFromProfile, handleProfileUpdate } from './main.js';
 import { sanitize, sanitizeDM } from './utils.js';
 import { CONFIG } from './config.js';
-
+import { sendPeer } from './p2p/network-manager.js';
 
 // --- LOCAL HELPERS ---
 // Small helper functions that are only used by the UI.
@@ -67,6 +67,28 @@ function notify(msg, dur = 3000, onClick = null) {
   }, dur);
 }
 
+export function initializeUserProfileSection() {
+  if (!state.myIdentity) return;
+  
+  const section = document.getElementById('user-profile-section');
+  const handleEl = document.getElementById('user-profile-handle');
+  const picContainer = document.getElementById('user-profile-pic');
+  
+  if (section && handleEl) {
+    section.style.display = 'block';
+    handleEl.textContent = state.myIdentity.handle;
+    
+    // Update profile picture if available
+    if (state.myIdentity.profile && state.myIdentity.profile.profilePictureHash) {
+      imageStore.retrieveImage(state.myIdentity.profile.profilePictureHash).then(imageData => {
+        if (imageData) {
+          picContainer.innerHTML = `<img src="${imageData}" alt="Your profile" />`;
+        }
+      });
+    }
+  }
+}
+
 async function renderPost(p, container = null) {
   if (document.getElementById("post-" + p.id)) return;
 
@@ -104,6 +126,25 @@ async function renderPost(p, container = null) {
   updateStatus();
 }
 
+// Function to update profile pictures when they arrive
+export function updateProfilePicturesInPosts() {
+  // Check all placeholder profile pics periodically
+  const placeholders = document.querySelectorAll('.author-profile-placeholder[data-hash]');
+  
+  placeholders.forEach(async (placeholder) => {
+    const hash = placeholder.dataset.hash;
+    const imageData = await imageStore.retrieveImage(hash);
+    
+    if (imageData) {
+      const img = document.createElement('img');
+      img.src = imageData;
+      img.className = 'author-profile-pic';
+      img.alt = "Profile picture";
+      placeholder.replaceWith(img);
+    }
+  });
+}
+
 function getHeatLevel(carrierCount) {
   if (carrierCount >= 20) return "🔥 Inferno";
   if (carrierCount >= 15) return "🔥 Blazing";
@@ -132,6 +173,31 @@ async function updateInner(el, p) {
   const hasReplies = p.replies.size > 0;
   // verification indicator
   let verificationBadge = '';
+  
+  // Add profile picture logic
+  let authorProfilePic = '';
+  const cachedProfile = state.profileCache.get(p.author);
+  
+  if (cachedProfile && cachedProfile.profilePictureHash) {
+    const imageData = await imageStore.retrieveImage(cachedProfile.profilePictureHash);
+    if (imageData) {
+      authorProfilePic = `<img src="${imageData}" class="author-profile-pic" alt="${p.author}'s profile" />`;
+    } else {
+      // Request the image if not found
+      const peers = Array.from(state.peers.values()).slice(0, 3);
+      for (const peer of peers) {
+        if (peer.wire && !peer.wire.destroyed) {
+          sendPeer(peer.wire, { type: "request_image", imageHash: cachedProfile.profilePictureHash });
+        }
+      }
+      authorProfilePic = `<div class="author-profile-pic author-profile-placeholder" data-hash="${cachedProfile.profilePictureHash}">👤</div>`;
+    }
+  } else {
+    // No profile cached, show placeholder
+    authorProfilePic = '<div class="author-profile-pic author-profile-placeholder">👤</div>';
+  }
+  
+  
   if (p.verified) {
     const identityVerified = state.identityRegistry?.verifiedIdentities.has(p.author);
     if (identityVerified) {
@@ -216,7 +282,10 @@ async function updateInner(el, p) {
   const existingRepliesContainer = el.querySelector('.replies-container');
 
 el.innerHTML = `
-    <div class="author clickable-author" data-handle="${p.author}">${p.author} ${verificationBadge}</div>
+    <div class="author-section">
+      ${authorProfilePic}
+      <div class="author clickable-author" data-handle="${p.author}">${p.author} ${verificationBadge}</div>
+    </div>
     <div class="content">${(p.content)}</div>
     ${imageHtml}
     ${topicsHtml}
@@ -285,16 +354,16 @@ el.innerHTML = `
   });
   
   // Add click handler for author
-  const authorEl = el.querySelector('.clickable-author');
-  if (authorEl) {
-    authorEl.addEventListener('click', (event) => {
-      event.stopPropagation();
-      const handle = event.target.dataset.handle;
-      if (handle) {
-        openProfileForHandle(handle);
-      }
-    });
-  }
+    const authorSection = el.querySelector('.author-section');
+    if (authorSection) {
+      authorSection.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const handle = el.querySelector('.clickable-author').dataset.handle;
+        if (handle) {
+          openProfileForHandle(handle);
+        }
+      });
+    }
 
   // *** FIX: Re-attach the existing replies container if it existed ***
   if (existingRepliesContainer) {
@@ -471,12 +540,35 @@ async function openProfileForHandle(handle) {
     return;
   }
   
-  // For other users, check cache first, then subscribe.
-  const cached = state.profileCache.get(handle);
-  if (cached) {
-    renderProfile(cached);
+  // Step 1: Try DHT first for fast initial load
+  const dhtKey = `profile:${handle}`;
+  console.log(`[Profile] Attempting to get profile from DHT with key: ${dhtKey}`);
+  
+  try {
+    // Step 2: DHT Get
+    const dhtProfile = await state.dht.get(dhtKey);
+    
+    // Step 3: Conditional Render
+    if (dhtProfile) {
+      console.log(`[Profile] Found profile in DHT for ${handle}`);
+      // The DHT stores the complete message object with signature
+      handleProfileUpdate(dhtProfile, null);
+      // Profile will be rendered by handleProfileUpdate if signature is valid
+    } else {
+      console.log(`[Profile] No profile found in DHT for ${handle}, waiting for Scribe`);
+      // Profile not in DHT, continue showing loading state
+      // Check local cache as fallback
+      const cached = state.profileCache.get(handle);
+      if (cached) {
+        renderProfile(cached);
+      }
+    }
+  } catch (error) {
+    console.error(`[Profile] DHT lookup failed for ${handle}:`, error);
+    // Continue with Scribe subscription even if DHT fails
   }
   
+  // Step 4: Always subscribe to Scribe for live updates
   await subscribeToProfile(handle);
 }
 
@@ -507,6 +599,35 @@ async function renderProfile(profileData) {
     const imageData = await imageStore.retrieveImage(profileData.profilePictureHash);
     if (imageData) {
       profilePicHtml = `<img src="${imageData}" class="profile-picture" alt="${profileData.handle}'s profile picture" />`;
+    } else {
+      // ADDED: Request image from peers if not found locally
+      console.log(`[Profile] Profile picture not found locally, requesting from peers: ${profileData.profilePictureHash}`);
+      const peers = Array.from(state.peers.values()).slice(0, 3);
+      for (const peer of peers) {
+        if (peer.wire && !peer.wire.destroyed) {
+          sendPeer(peer.wire, { type: "request_image", imageHash: profileData.profilePictureHash });
+        }
+      }
+      
+      // Set up a placeholder that can be updated when image arrives
+      profilePicHtml = `<div id="profile-pic-${profileData.profilePictureHash}" class="profile-picture-placeholder">
+        <div class="spinner" style="width: 20px; height: 20px;"></div>
+      </div>`;
+      
+      // Set up a listener for when the image arrives
+      const checkInterval = setInterval(async () => {
+        const imageData = await imageStore.retrieveImage(profileData.profilePictureHash);
+        if (imageData) {
+          clearInterval(checkInterval);
+          const placeholder = document.getElementById(`profile-pic-${profileData.profilePictureHash}`);
+          if (placeholder && state.viewingProfile === profileData.handle) {
+            placeholder.outerHTML = `<img src="${imageData}" class="profile-picture" alt="${profileData.handle}'s profile picture" />`;
+          }
+        }
+      }, 1000);
+      
+      // Clear interval after 30 seconds to prevent memory leak
+      setTimeout(() => clearInterval(checkInterval), 30000);
     }
   }
   
@@ -688,7 +809,16 @@ window.saveProfile = async function() {
   await broadcastProfileUpdate(updatedProfile);
   
   renderProfile(updatedProfile);
-  
+
+  // Update the profile section in control panel
+  const picContainer = document.getElementById('user-profile-pic');
+  if (picContainer && profilePictureHash) {
+    const imageData = await imageStore.retrieveImage(profilePictureHash);
+    if (imageData) {
+      picContainer.innerHTML = `<img src="${imageData}" alt="Your profile" />`;
+    }
+  }
+
   notify('Profile updated successfully!');
 };
 

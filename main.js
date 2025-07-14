@@ -23,7 +23,7 @@ import {
     discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, 
     scrollToPost, subscribeToTopic, handleReplyImageSelect, removeReplyImage, 
     storeDMLocallyAndUpdateUI, updateDMInbox, updateUnreadBadge, toggleThread,
-    openProfileForHandle, renderProfile, closeProfile // Ensure profile functions are imported
+    openProfileForHandle, renderProfile, closeProfile, updateProfilePicturesInPosts
 } from './ui.js';
 import { StateManager } from './storage.js';
 import { MemoryManager } from './services/memory-manager.js';
@@ -189,6 +189,28 @@ export async function handleNewPost(data, fromWire) {
 
   // Continue broadcasting
   broadcast({ type: "new_post", post: postData }, fromWire);
+}
+
+export function initializeUserProfileSection() {
+  if (!state.myIdentity) return;
+  
+  const section = document.getElementById('user-profile-section');
+  const handleEl = document.getElementById('user-profile-handle');
+  const picContainer = document.getElementById('user-profile-pic');
+  
+  if (section && handleEl) {
+    section.style.display = 'block';
+    handleEl.textContent = state.myIdentity.handle;
+    
+    // Update profile picture if available
+    if (state.myIdentity.profile && state.myIdentity.profile.profilePictureHash) {
+      imageStore.retrieveImage(state.myIdentity.profile.profilePictureHash).then(imageData => {
+        if (imageData) {
+          picContainer.innerHTML = `<img src="${imageData}" alt="Your profile" />`;
+        }
+      });
+    }
+  }
 }
 
 export function findRootPost(postId) {
@@ -1154,10 +1176,22 @@ export async function broadcastProfileUpdate(profileData = null) {
     type: 'PROFILE_UPDATE',
     profile: profile,
     signature: arrayBufferToBase64(signature),
-    publicKey: state.myIdentity.publicKey
+    publicKey: arrayBufferToBase64(state.myIdentity.publicKey)
   };
   
   try {
+    // ADDED: Store in DHT
+    const dhtKey = `profile:${profile.handle}`;
+    console.log(`[Profile] Storing profile in DHT with key: ${dhtKey}`);
+    
+    try {
+      await state.dht.store(dhtKey, message);
+      console.log('[Profile] Profile successfully stored in DHT');
+    } catch (dhtError) {
+      console.error('[Profile] Failed to store profile in DHT:', dhtError);
+    }
+    
+    // Original Scribe multicast
     await state.scribe.multicast(topic, message);
     console.log('[Profile] Profile update broadcast successful');
   } catch (error) {
@@ -1225,6 +1259,17 @@ export function handleProfileUpdate(msg, fromWire) {
   // Cache the profile
   state.profileCache.set(profile.handle, profile);
   
+  // ADDED: Cache verified profile into local DHT
+  const dhtKey = `profile:${profile.handle}`;
+  console.log(`[Profile] Caching verified profile to DHT with key: ${dhtKey}`);
+  
+  // Store the complete message object (with signature and publicKey) in DHT
+  state.dht.store(dhtKey, msg).then(() => {
+    console.log(`[Profile] Successfully cached ${profile.handle}'s profile to DHT`);
+  }).catch(error => {
+    console.error(`[Profile] Failed to cache profile to DHT:`, error);
+  });
+  
   // If this is the profile we're currently viewing, update the UI
   if (state.viewingProfile === profile.handle) {
     renderProfile(profile);
@@ -1279,6 +1324,14 @@ export function startMaintenanceLoop() {
       updateAges();
       noiseGenerator.generateNoise();
     }
+    
+    if (tick % 10 === 0) {
+      updateAges();
+      noiseGenerator.generateNoise();
+      //Update profile pictures
+      updateProfilePicturesInPosts();
+    }
+    
     if (tick % 30 === 0) {
       memoryManager.checkMemory();
       garbageCollect();
@@ -1573,7 +1626,8 @@ async function init() {
         }).catch(err => {
             console.error("[Identity] Failed to re-publish identity:", err);
         });       
-        
+          // Initialize profile section
+        initializeUserProfileSection();
         notify(`Welcome back, ${storedIdentity.handle}!`);
         // Announce our routing info after a short delay
         setTimeout(async () => {
@@ -1896,7 +1950,9 @@ if (typeof window !== 'undefined') {
   window.setRulePackPath = setRulePackPath;   // choose a new JSON file
   window.reloadRulePack  = reloadRulePack;    // refresh the current file
   window.ratePost = ratePost;
-  
+  window.state = state;
+window.openProfileForHandle = openProfileForHandle;
+
   // FIX: Expose profile functions to the global scope
   window.closeProfile = closeProfile;
 

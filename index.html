@@ -66,6 +66,19 @@
      
         <h1>🔥 Ember</h1>
         <p class="tagline">Fan the flames or watch them die</p>
+        
+          <!-- User Profile Section -->
+          <div id="user-profile-section" class="user-profile-section" style="display: none;">
+            <div class="user-profile-header" onclick="window.openProfileForHandle(window.state.myIdentity.handle)">
+              <div id="user-profile-pic" class="user-profile-pic">
+                <div class="profile-picture-placeholder-small">👤</div>
+              </div>
+              <div class="user-profile-info">
+                <div id="user-profile-handle" class="user-profile-handle"></div>
+                <div class="user-profile-hint">View profile</div>
+              </div>
+            </div>
+          </div>
               <div id="controls-footer">
         <button id="theme-toggle-button" class="secondary-button">☀️ Light Mode</button>
       </div>

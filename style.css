@@ -2414,3 +2414,160 @@ body.light-mode .rate-down:hover {
   justify-content: flex-end;
   gap: 10px;
 }
+
+/* User Profile Section in Control Panel */
+.user-profile-section {
+  margin: 20px 0;
+  padding: 15px;
+  background: var(--background-compose-area);
+  border-radius: 12px;
+  border: 1px solid var(--border-color-light);
+  transition: all 0.3s ease;
+}
+
+.user-profile-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.user-profile-header:hover {
+  transform: translateX(5px);
+}
+
+.user-profile-pic {
+  flex-shrink: 0;
+  position: relative;
+}
+
+.user-profile-pic img,
+.profile-picture-placeholder-small {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid var(--border-color-accent);
+  object-fit: cover;
+  transition: all 0.2s ease;
+}
+
+.profile-picture-placeholder-small {
+  background: var(--background-bonfire-item);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+}
+
+.user-profile-header:hover .user-profile-pic img,
+.user-profile-header:hover .profile-picture-placeholder-small {
+  border-color: var(--text-accent-hot);
+  box-shadow: 0 0 20px var(--shadow-color-accent);
+}
+
+.user-profile-info {
+  flex-grow: 1;
+  min-width: 0; /* Prevent overflow */
+}
+
+.user-profile-handle {
+  font-weight: bold;
+  color: var(--text-accent);
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.user-profile-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.user-profile-header:hover .user-profile-hint {
+  opacity: 1;
+}
+
+/* Ember effect on hover */
+.user-profile-section::before {
+  content: '🔥';
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 16px;
+  opacity: 0;
+  transition: all 0.3s ease;
+  animation: flicker 2s ease-in-out infinite;
+}
+
+.user-profile-section:hover::before {
+  opacity: 0.6;
+}
+
+/* Light mode adjustments */
+body.light-mode .user-profile-section {
+  background: var(--background-compose-area);
+  border-color: var(--border-color-topic-section);
+}
+
+body.light-mode .profile-picture-placeholder-small {
+  background: var(--background-bonfire-item);
+}
+
+body.light-mode .user-profile-header:hover .user-profile-pic img,
+body.light-mode .user-profile-header:hover .profile-picture-placeholder-small {
+  box-shadow: 0 0 15px rgba(255, 140, 66, 0.3);
+}
+
+/* Author section with profile pic */
+.author-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.author-profile-pic {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--border-color-accent);
+  object-fit: cover;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.author-profile-placeholder {
+  background: var(--background-bonfire-item);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: var(--text-secondary);
+}
+
+/* Hover effect on author section */
+.author-section:hover .author-profile-pic {
+  border-color: var(--text-accent-hot);
+  box-shadow: 0 0 15px var(--shadow-color-accent);
+  transform: scale(1.1);
+}
+
+/* Make the whole author section clickable */
+.author-section {
+  cursor: pointer;
+}
+
+/* Adjust existing author styles */
+.author-section .author {
+  margin-bottom: 0; /* Remove the margin since it's now in author-section */
+}
+
+/* Light mode adjustments */
+body.light-mode .author-profile-placeholder {
+  background: var(--background-topic-tag);
+}
