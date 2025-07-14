@@ -213,7 +213,7 @@ export async function createNewIdentity() {
         const encryptionKeyPair = nacl.box.keyPair(); // NEW: encryption keys
         const nodeId = new Uint8Array(await crypto.subtle.digest('SHA-1', keyPair.publicKey));
         
-        // Create identity object
+        // Create identity object with default profile
         state.myIdentity = {
             handle: handle,
             publicKey: arrayBufferToBase64(keyPair.publicKey),
@@ -228,6 +228,17 @@ export async function createNewIdentity() {
                 iterationsPerMs: iterationsPerMs,
                 calibrationTime: calibrationTime,
                 targetIterations: Number(targetIterations)
+            },
+            profile: {
+                handle: handle,
+                bio: '',
+                profilePictureHash: null,
+                theme: {
+                    backgroundColor: '#000000',
+                    fontColor: '#ffffff',
+                    accentColor: '#ff1493'
+                },
+                updatedAt: Date.now()
             }
         };
         
@@ -277,7 +288,8 @@ export async function createNewIdentity() {
             encryptionSecretKey: Array.from(encryptionKeyPair.secretKey), 
             vdfProof: state.myIdentity.vdfProof,
             deviceCalibration: state.myIdentity.deviceCalibration,
-            nodeId: Array.from(state.myIdentity.nodeId)
+            nodeId: Array.from(state.myIdentity.nodeId),
+            profile: state.myIdentity.profile
         };
         localStorage.setItem("ephemeral-id", JSONStringifyWithBigInt(serializableIdentity));
         

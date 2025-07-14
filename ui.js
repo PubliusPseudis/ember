@@ -1,9 +1,10 @@
+// FILE: ui.js
 // ui.js
 // This module contains all functions and variables responsible for
 // interacting with the DOM, rendering content, and handling UI events.
 
 // --- IMPORTS ---
-import { state, imageStore, toggleCarry, createReply, createPostWithTopics, findRootPost, isImageToxic, isToxic,sendDirectMessage } from './main.js';
+import { state, imageStore, toggleCarry, createReply, createPostWithTopics, findRootPost, isImageToxic, isToxic, sendDirectMessage, broadcastProfileUpdate, subscribeToProfile, unsubscribeFromProfile } from './main.js';
 import { sanitize, sanitizeDM } from './utils.js';
 import { CONFIG } from './config.js';
 
@@ -187,7 +188,7 @@ async function updateInner(el, p) {
         scoreDisplay = `${percentage}%`;
         
         // Add emoji based on score
-        if (percentage >= 80) scoreEmoji = '🔥';
+        if (percentage >= 80) scoreEmoji = '�';
         else if (percentage >= 60) scoreEmoji = '✨';
         else if (percentage >= 40) scoreEmoji = '💨';
         else scoreEmoji = '❄️';
@@ -215,7 +216,7 @@ async function updateInner(el, p) {
   const existingRepliesContainer = el.querySelector('.replies-container');
 
 el.innerHTML = `
-    <div class="author">${p.author} ${verificationBadge}</div>
+    <div class="author clickable-author" data-handle="${p.author}">${p.author} ${verificationBadge}</div>
     <div class="content">${(p.content)}</div>
     ${imageHtml}
     ${topicsHtml}
@@ -282,6 +283,18 @@ el.innerHTML = `
       }
     });
   });
+  
+  // Add click handler for author
+  const authorEl = el.querySelector('.clickable-author');
+  if (authorEl) {
+    authorEl.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const handle = event.target.dataset.handle;
+      if (handle) {
+        openProfileForHandle(handle);
+      }
+    });
+  }
 
   // *** FIX: Re-attach the existing replies container if it existed ***
   if (existingRepliesContainer) {
@@ -439,6 +452,250 @@ function scrollToPost(postId) {
     }
 }
 
+// --- PROFILE FUNCTIONS ---
+async function openProfileForHandle(handle) {
+  if (!handle) return;
+  
+  const modal = document.getElementById('profile-modal-overlay');
+  modal.style.display = 'flex';
+  
+  const profileContent = document.getElementById('profile-content');
+  profileContent.innerHTML = '<div class="spinner"></div><div>Loading profile...</div>';
+  
+  state.viewingProfile = handle;
+  
+  // FIX: If viewing our own profile, render immediately from local state.
+  if (handle === state.myIdentity.handle) {
+    renderProfile(state.myIdentity.profile);
+    // We don't need to subscribe to our own profile updates via the network in this case.
+    return;
+  }
+  
+  // For other users, check cache first, then subscribe.
+  const cached = state.profileCache.get(handle);
+  if (cached) {
+    renderProfile(cached);
+  }
+  
+  await subscribeToProfile(handle);
+}
+
+function closeProfile() {
+  const modal = document.getElementById('profile-modal-overlay');
+  modal.style.display = 'none';
+  
+  if (state.viewingProfile && state.viewingProfile !== state.myIdentity.handle) {
+    unsubscribeFromProfile(state.viewingProfile);
+  }
+  state.viewingProfile = null;
+}
+
+async function renderProfile(profileData) {
+  const content = document.getElementById('profile-content');
+  const isOwnProfile = profileData.handle === state.myIdentity.handle;
+  
+  // Apply theme if set
+  const modal = document.getElementById('profile-modal');
+  if (profileData.theme && modal) {
+    modal.style.setProperty('--profile-bg', profileData.theme.backgroundColor);
+    modal.style.setProperty('--profile-text', profileData.theme.fontColor);
+    modal.style.setProperty('--profile-accent', profileData.theme.accentColor);
+  }
+  
+  let profilePicHtml = '<div class="profile-picture-placeholder">👤</div>';
+  if (profileData.profilePictureHash) {
+    const imageData = await imageStore.retrieveImage(profileData.profilePictureHash);
+    if (imageData) {
+      profilePicHtml = `<img src="${imageData}" class="profile-picture" alt="${profileData.handle}'s profile picture" />`;
+    }
+  }
+  
+  const userPosts = Array.from(state.posts.values())
+    .filter(post => post.author === profileData.handle)
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 20);
+  
+  const postsHtml = userPosts.length > 0 ? 
+    userPosts.map(post => `
+      <div class="profile-post-item" onclick="scrollToPost('${post.id}'); closeProfile();">
+        <div class="profile-post-content">${sanitize(post.content.substring(0, 100))}${post.content.length > 100 ? '...' : ''}</div>
+        <div class="profile-post-meta">
+          <span>${new Date(post.timestamp).toLocaleDateString()}</span>
+          <span>${post.carriers.size} 🔥</span>
+        </div>
+      </div>
+    `).join('') : 
+    '<div class="empty-state">No posts yet</div>';
+  
+  content.innerHTML = `
+    <div class="profile-header">
+      <div class="profile-picture-container">
+        ${profilePicHtml}
+      </div>
+      <div class="profile-info">
+        <h2 class="profile-handle">${profileData.handle}</h2>
+        <div class="profile-bio">${profileData.bio || 'No bio yet'}</div>
+        ${isOwnProfile ? '<button class="edit-profile-button" onclick="openProfileEditor()">Edit Profile</button>' : ''}
+      </div>
+    </div>
+    <div class="profile-posts">
+      <h3>Recent Posts</h3>
+      <div class="profile-posts-list">
+        ${postsHtml}
+      </div>
+    </div>
+  `;
+}
+
+window.openProfileEditor = async function() {
+  const profile = state.myIdentity.profile || {
+    handle: state.myIdentity.handle,
+    bio: '',
+    profilePictureHash: null,
+    theme: {
+      backgroundColor: '#000000',
+      fontColor: '#ffffff',
+      accentColor: '#ff1493'
+    },
+    updatedAt: Date.now()
+  };
+  
+  const content = document.getElementById('profile-content');
+  
+  let currentPicHtml = '<div class="profile-picture-placeholder">👤</div>';
+  if (profile.profilePictureHash) {
+    const imageData = await imageStore.retrieveImage(profile.profilePictureHash);
+    if (imageData) {
+      currentPicHtml = `<img src="${imageData}" class="profile-picture" alt="Current profile picture" />`;
+    }
+  }
+  
+  content.innerHTML = `
+    <div class="profile-editor">
+      <h2>Edit Profile</h2>
+      
+      <div class="profile-editor-section">
+        <label>Profile Picture</label>
+        <div class="profile-picture-editor">
+          <div class="current-picture">
+            ${currentPicHtml}
+          </div>
+          <input type="file" id="profile-picture-input" accept="image/*" style="display:none;" />
+          <button onclick="document.getElementById('profile-picture-input').click()">Change Picture</button>
+        </div>
+        <div id="profile-picture-preview" style="display:none;">
+          <img id="profile-preview-img" />
+          <button onclick="clearProfilePicture()">Remove</button>
+        </div>
+      </div>
+      
+      <div class="profile-editor-section">
+        <label for="profile-bio">Bio (250 chars max)</label>
+        <textarea id="profile-bio" maxlength="250" placeholder="Tell us about yourself...">${profile.bio || ''}</textarea>
+        <span class="char-count"><span id="bio-char-count">${(profile.bio || '').length}</span>/250</span>
+      </div>
+      
+      <div class="profile-editor-section">
+        <label>Theme Colors</label>
+        <div class="color-inputs">
+          <div class="color-input-group">
+            <label for="bg-color">Background</label>
+            <input type="color" id="bg-color" value="${profile.theme.backgroundColor}" />
+          </div>
+          <div class="color-input-group">
+            <label for="text-color">Text</label>
+            <input type="color" id="text-color" value="${profile.theme.fontColor}" />
+          </div>
+          <div class="color-input-group">
+            <label for="accent-color">Accent</label>
+            <input type="color" id="accent-color" value="${profile.theme.accentColor}" />
+          </div>
+        </div>
+      </div>
+      
+      <div class="profile-editor-actions">
+        <button onclick="saveProfile()" class="primary-button">Save Profile</button>
+        <button onclick="cancelProfileEdit()">Cancel</button>
+      </div>
+    </div>
+  `;
+  
+  document.getElementById('profile-bio').addEventListener('input', (e) => {
+    document.getElementById('bio-char-count').textContent = e.target.value.length;
+  });
+  
+  document.getElementById('profile-picture-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    try {
+      const base64 = await handleImageUpload(file);
+      const toxic = await isImageToxic(base64);
+      if (toxic) {
+        notify(`Image appears to contain ${toxic.toLowerCase()} content`);
+        e.target.value = '';
+        return;
+      }
+      
+      document.getElementById('profile-preview-img').src = base64;
+      document.getElementById('profile-picture-preview').style.display = 'block';
+      document.getElementById('profile-picture-preview').dataset.imageData = base64;
+    } catch (error) {
+      notify(error.message);
+    }
+  });
+};
+
+window.clearProfilePicture = function() {
+  document.getElementById('profile-picture-preview').style.display = 'none';
+  document.getElementById('profile-picture-preview').dataset.imageData = '';
+  document.getElementById('profile-picture-input').value = '';
+};
+
+window.saveProfile = async function() {
+  const bio = document.getElementById('profile-bio').value.trim();
+  const bgColor = document.getElementById('bg-color').value;
+  const textColor = document.getElementById('text-color').value;
+  const accentColor = document.getElementById('accent-color').value;
+  
+  if (bio && await isToxic(bio)) {
+    notify('Your bio may contain inappropriate content. Please revise.');
+    return;
+  }
+  
+  let profilePictureHash = state.myIdentity.profile?.profilePictureHash || null;
+  const previewDiv = document.getElementById('profile-picture-preview');
+  if (previewDiv.style.display !== 'none' && previewDiv.dataset.imageData) {
+    const result = await imageStore.storeImage(previewDiv.dataset.imageData);
+    profilePictureHash = result.hash;
+  }
+  
+  const updatedProfile = {
+    handle: state.myIdentity.handle,
+    bio: bio,
+    profilePictureHash: profilePictureHash,
+    theme: {
+      backgroundColor: bgColor,
+      fontColor: textColor,
+      accentColor: accentColor
+    },
+    updatedAt: Date.now()
+  };
+  
+  state.myIdentity.profile = updatedProfile;
+  
+  // This function is in main.js, but we call it from the window scope
+  await broadcastProfileUpdate(updatedProfile);
+  
+  renderProfile(updatedProfile);
+  
+  notify('Profile updated successfully!');
+};
+
+window.cancelProfileEdit = function() {
+  renderProfile(state.myIdentity.profile);
+};
+
 // --- TOPIC AND FEED MANAGEMENT ---
 
 async function subscribeToTopic() {
@@ -461,25 +718,16 @@ async function subscribeToTopic() {
     return;
   }
 
-  // --- FIX: UI and State updates now happen immediately ---
-  // 1. Add to the local state.
   state.subscribedTopics.add(topic);
-  
-  // 2. Update the UI components.
   addTopicToUI(topic);
   updateTopicFilter();
-  
-  // 3. Persist the change and clear the input.
   saveTopicSubscriptions();
   input.value = '';
   notify(`Subscribed to ${topic}`);
 
-  // --- Network action happens when possible ---
-  // 4. Tell the P2P network to join the topic.
   if (state.scribe) {
     await state.scribe.subscribe(topic);
   } else {
-    // This warning is for developers; the user experience is already handled.
     console.warn("Scribe not ready, but UI has been updated. Network will join topic upon initialization.");
   }
 }
@@ -1390,5 +1638,8 @@ export {
     updateLoadingMessage,
     showConnectScreen,
     handleReplyImageSelect, 
-    removeReplyImage
+    removeReplyImage,
+    openProfileForHandle,
+    renderProfile,
+    closeProfile
 };

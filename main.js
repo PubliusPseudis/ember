@@ -1,3 +1,4 @@
+// FILE: main.js
 // main.js
 // This is the main entry point and orchestrator for the entire application.
 // It initializes all modules, manages the global state, and wires up event handlers.
@@ -13,7 +14,17 @@ import { CONFIG } from './config.js';
 import { Post } from './models/post.js';
 import { VerificationQueue } from './verification-queue.js';
 import { KademliaDHT } from './p2p/dht.js';
-import {currentDMRecipient,addMessageToConversation, applyTheme, setupThemeToggle, showConnectScreen, updateLoadingMessage, renderPost, refreshPost, dropPost, updateStatus, notify, loadTopicSubscriptions, updateTopicFilter, addTopicToUI, updateAges, updateTopicStats, handleImageSelect, removeImage, toggleReplyForm, discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, scrollToPost , subscribeToTopic,handleReplyImageSelect,removeReplyImage,storeDMLocallyAndUpdateUI , updateDMInbox, updateUnreadBadge, toggleThread} from './ui.js';
+// Correctly import all necessary functions from ui.js
+import {
+    currentDMRecipient, addMessageToConversation, applyTheme, setupThemeToggle, 
+    showConnectScreen, updateLoadingMessage, renderPost, refreshPost, dropPost, 
+    updateStatus, notify, loadTopicSubscriptions, updateTopicFilter, addTopicToUI, 
+    updateAges, updateTopicStats, handleImageSelect, removeImage, toggleReplyForm, 
+    discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, 
+    scrollToPost, subscribeToTopic, handleReplyImageSelect, removeReplyImage, 
+    storeDMLocallyAndUpdateUI, updateDMInbox, updateUnreadBadge, toggleThread,
+    openProfileForHandle, renderProfile, closeProfile // Ensure profile functions are imported
+} from './ui.js';
 import { StateManager } from './storage.js';
 import { MemoryManager } from './services/memory-manager.js';
 import { PeerManager } from './services/peer-manager.js';
@@ -56,6 +67,8 @@ export const state = {
   topicFilter: '',
   feedMode: 'all',
   pendingVerification: new Map(),
+  viewingProfile: null, // Currently viewed profile handle
+  profileCache: new Map(), // Cache for received profiles
 };
 
 // Trust evaluation system for incoming posts
@@ -330,9 +343,6 @@ export async function generateAndBroadcastAttestation(post) {
   broadcast(attestationMsg);
 }
 
-
-
-
 export function evaluatePostTrust(postId) {
   const post = state.pendingVerification.get(postId);
   if (!post) {
@@ -443,9 +453,6 @@ export function scheduleTrustEvaluation(post) {
   // Do an immediate check
   evaluatePostTrust(postId);
 }
-
-
-
 
 export async function handleProvisionalClaim(claim) {
     if (!claim || !claim.handle || !claim.vdfProof || !claim.signature) {
@@ -716,7 +723,6 @@ export async function ratePost(postId, vote) {
     }
 }
 
-
 export async function createReply(parentId) {
     const input = document.getElementById(`reply-input-${parentId}`);
     if (!input) return;
@@ -926,34 +932,11 @@ async function storePendingMessage(recipientHandle, messageText, status = 'queue
   }
 }
 
-
-// Direct Message Functions
-/**
- * Asynchronously sends an end-to-end encrypted direct message to another user.
- *
- * The delivery strategy is prioritized for robustness and efficiency:
- * 1. **Identity Lookup**: First, finds the recipient's identity claim, which is
- * necessary for their public encryption key. Retries several times.
- * 2. **Direct Delivery**: Checks for an active, direct connection to the recipient.
- * If found, the message is sent immediately. This is the fastest and most
- * reliable method.
- * 3. **DHT-Routed Delivery**: If no direct connection exists, it queries the DHT
- * for the recipient's last known network location and attempts to route the
- * message through the network.
- * 4. **Offline Storage**: If both direct and routed delivery methods fail, the
- * message is stored locally and will be sent when the recipient comes online.
- *
- * @param {string} recipientHandle - The handle of the user to send the message to.
- * @param {string} messageText - The plain text content of the message.
- * @returns {Promise<boolean>} A promise that resolves to true if the message was
- * successfully sent or queued, and false if a critical error occurred.
- */
 export async function sendDirectMessage(recipientHandle, messageText) {
   console.log(`[DM] Initializing DM to ${recipientHandle}...`);
 
   try {
     // --- Step 1: Find and Validate Recipient's Identity ---
-    // This is a prerequisite. We can't do anything without their public key.
     let recipientClaim = null;
     const maxAttempts = 3;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -974,7 +957,6 @@ export async function sendDirectMessage(recipientHandle, messageText) {
     }
 
     // --- Step 2: Prepare the Encrypted Packet ---
-    // Encrypt the message once upfront for efficiency.
     const nonce = nacl.randomBytes(24);
     const messageBytes = new TextEncoder().encode(messageText);
     const recipientPublicKey = base64ToArrayBuffer(recipientClaim.encryptionPublicKey);
@@ -991,7 +973,6 @@ export async function sendDirectMessage(recipientHandle, messageText) {
     };
 
     // --- Step 3: Attempt Direct Delivery (Highest Priority) ---
-    // The most reliable "online" check is an active, direct connection.
     const directPeer = await findPeerByHandle(recipientHandle);
     if (directPeer) {
       console.log(`[DM] Direct connection found. Sending message to ${recipientHandle}.`);
@@ -1003,7 +984,6 @@ export async function sendDirectMessage(recipientHandle, messageText) {
     }
 
     // --- Step 4: Fallback to DHT-based Routing ---
-    // If no direct connection, check the DHT for their last known location.
     const routingInfo = await state.identityRegistry.lookupPeerLocation(recipientHandle);
     if (routingInfo) {
       console.log(`[DM] No direct connection. Forwarding message to ${recipientHandle} via DHT.`);
@@ -1021,7 +1001,6 @@ export async function sendDirectMessage(recipientHandle, messageText) {
     }
 
     // --- Step 5: Last Resort - Store for Offline Delivery ---
-    // If both direct and DHT lookups fail, the user is unreachable.
     console.log(`[DM] User ${recipientHandle} is unreachable. Storing message for later delivery.`);
     await storePendingMessage(recipientHandle, messageText, 'queued');
     notify(`${recipientHandle} appears to be offline. Your message has been saved.`);
@@ -1154,7 +1133,121 @@ export async function handleDirectMessage(msg, fromWire) {
   }
 }
 
+// Profile Functions
+export async function broadcastProfileUpdate(profileData = null) {
+  if (!state.myIdentity || !state.scribe) return;
+  
+  const profile = profileData || state.myIdentity.profile;
+  if (!profile) return;
+  
+  const topic = '@' + state.myIdentity.handle;
+  console.log(`[Profile] Broadcasting profile update to topic: ${topic}`);
+  
+  // Sign the profile data
+  const profileStr = JSON.stringify(profile);
+  const signature = nacl.sign(
+    new TextEncoder().encode(profileStr),
+    state.myIdentity.secretKey
+  );
+  
+  const message = {
+    type: 'PROFILE_UPDATE',
+    profile: profile,
+    signature: arrayBufferToBase64(signature),
+    publicKey: state.myIdentity.publicKey
+  };
+  
+  try {
+    await state.scribe.multicast(topic, message);
+    console.log('[Profile] Profile update broadcast successful');
+  } catch (error) {
+    console.error('[Profile] Failed to broadcast profile update:', error);
+  }
+}
 
+export async function subscribeToProfile(handle) {
+  if (!state.scribe) return;
+  
+  const topic = '@' + handle;
+  console.log(`[Profile] Subscribing to profile topic: ${topic}`);
+  
+  try {
+    await state.scribe.subscribe(topic);
+    console.log(`[Profile] Successfully subscribed to ${handle}'s profile`);
+  } catch (error) {
+    console.error(`[Profile] Failed to subscribe to ${handle}'s profile:`, error);
+  }
+}
+
+export async function unsubscribeFromProfile(handle) {
+  if (!state.scribe || !handle) return;
+  
+  const topic = '@' + handle;
+  console.log(`[Profile] Unsubscribing from profile topic: ${topic}`);
+  
+  try {
+    state.scribe.unsubscribe(topic);
+    console.log(`[Profile] Successfully unsubscribed from ${handle}'s profile`);
+  } catch (error) {
+    console.error(`[Profile] Failed to unsubscribe from ${handle}'s profile:`, error);
+  }
+}
+
+export function handleProfileUpdate(msg, fromWire) {
+  if (!msg.profile || !msg.signature || !msg.publicKey) return;
+  
+  const { profile, signature, publicKey } = msg;
+  
+  // Verify signature
+  try {
+    const profileStr = JSON.stringify(profile);
+    const publicKeyBytes = typeof publicKey === 'string' ? 
+      base64ToArrayBuffer(publicKey) : publicKey;
+    const signatureBytes = base64ToArrayBuffer(signature);
+    
+    const verified = nacl.sign.open(signatureBytes, publicKeyBytes);
+    if (!verified) {
+      console.warn('[Profile] Invalid signature on profile update');
+      return;
+    }
+    
+    // Additional check: verify the data matches
+    const decodedData = new TextDecoder().decode(verified);
+    if (decodedData !== profileStr) {
+      console.warn('[Profile] Profile data mismatch');
+      return;
+    }
+  } catch (error) {
+    console.error('[Profile] Failed to verify profile signature:', error);
+    return;
+  }
+  
+  // Cache the profile
+  state.profileCache.set(profile.handle, profile);
+  
+  // If this is the profile we're currently viewing, update the UI
+  if (state.viewingProfile === profile.handle) {
+    renderProfile(profile);
+  }
+  
+  console.log(`[Profile] Received and verified profile update for ${profile.handle}`);
+}
+
+export async function handleScribeMessage(msg, fromWire) {
+  if (!state.scribe) return;
+  
+  // Check if this is a profile update
+  if (msg.subtype === 'MULTICAST' && msg.message) {
+    const innerMsg = msg.message;
+    if (innerMsg.type === 'PROFILE_UPDATE') {
+      handleProfileUpdate(innerMsg, fromWire);
+      return;
+    }
+  }
+  
+  // Pass to regular Scribe handler
+  state.scribe.handleMessage(msg, fromWire);
+}
 
 async function initTopics() {
     loadTopicSubscriptions();
@@ -1269,7 +1362,12 @@ export function startMaintenanceLoop() {
       // Clean up expired DHT routing entries
       if (state.identityRegistry) {
         state.identityRegistry.removeExpiredRouting();
-      }        
+      }
+      
+      // Re-broadcast profile every 5 minutes
+      if (state.myIdentity && state.myIdentity.profile) {
+        broadcastProfileUpdate();
+      }
     }
     
     if (tick % 600 === 0) { // Every 10 minutes
@@ -1390,6 +1488,22 @@ async function init() {
             identity.vdfProof.iterations = BigInt(identity.vdfProof.iterations);
           }
         }
+        
+        // Initialize default profile if not present
+        if (!identity.profile) {
+          identity.profile = {
+            handle: identity.handle,
+            bio: '',
+            profilePictureHash: null,
+            theme: {
+              backgroundColor: '#000000',
+              fontColor: '#ffffff',
+              accentColor: '#ff1493'
+            },
+            updatedAt: Date.now()
+          };
+        }
+        
         storedIdentity = identity;
       } catch (e) {
         console.error("Failed to parse stored identity:", e);
@@ -1619,7 +1733,6 @@ export async function handlePostRating(msg, fromWire) {
     }
 }
 
-
 export function initializeP2PProtocols() {
   if (!state.myIdentity) {
     console.error("Cannot initialize P2P protocols without an identity.");
@@ -1639,6 +1752,8 @@ export function initializeP2PProtocols() {
       if (message.type === 'new_post' && message.post) {
         if (message.post.author === state.myIdentity.handle) return;
         handleNewPost(message.post, null);
+      } else if (message.type === 'PROFILE_UPDATE') {
+        handleProfileUpdate(message, null);
       }
     };
   } catch (e) {
@@ -1778,27 +1893,29 @@ if (typeof window !== 'undefined') {
   window.sendDM = sendDM;
   window.toggleThread = toggleThread;
   window.switchDrawer = switchDrawer; // If this exists
-    window.setRulePackPath = setRulePackPath;   // choose a new JSON file
-    window.reloadRulePack  = reloadRulePack;    // refresh the current file
-window.ratePost = ratePost;
-
-
-window.toggleDMMinimize = function() {
-  const panel = document.getElementById('dm-panel');
-  panel.classList.toggle('minimized');
+  window.setRulePackPath = setRulePackPath;   // choose a new JSON file
+  window.reloadRulePack  = reloadRulePack;    // refresh the current file
+  window.ratePost = ratePost;
   
-  // If minimized, clicking header should restore
-  if (panel.classList.contains('minimized')) {
-    panel.querySelector('.dm-header').onclick = () => toggleDMMinimize();
-  } else {
-    panel.querySelector('.dm-header').onclick = null;
-  }
-};
+  // FIX: Expose profile functions to the global scope
+  window.closeProfile = closeProfile;
 
-window.autoResizeDMInput = function(textarea) {
-  textarea.style.height = 'auto';
-  textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
-};
+  window.toggleDMMinimize = function() {
+    const panel = document.getElementById('dm-panel');
+    panel.classList.toggle('minimized');
+    
+    // If minimized, clicking header should restore
+    if (panel.classList.contains('minimized')) {
+      panel.querySelector('.dm-header').onclick = () => toggleDMMinimize();
+    } else {
+      panel.querySelector('.dm-header').onclick = null;
+    }
+  };
+
+  window.autoResizeDMInput = function(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+  };
 
 
   // Debugging interface
@@ -1891,4 +2008,4 @@ window.autoResizeDMInput = function(textarea) {
 
   // Start the application initialization process once the page is loaded.
   window.addEventListener("load", init);
-} 
+}

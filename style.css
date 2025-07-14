@@ -1,3 +1,4 @@
+/* FILE: style.css */
 /*
   ==========================================================================
   THEME VARIABLES
@@ -82,6 +83,11 @@
   --border-color-topic-tree-node: var(--text-accent); /* Use the main accent color */
   --border-color-topic-tree-parent: #4CAF50; /* Green */
   --border-color-topic-tree-child: #2196F3;  /* Blue */
+
+  /* NEW: Profile Theme Variables */
+  --profile-bg: #1a1a1a;
+  --profile-text: #e0e0e0;
+  --profile-accent: #ff1493;
 }
 
 
@@ -163,6 +169,11 @@ body.light-mode {
   --border-color-topic-tree-node: var(--text-accent); /* This already adapts to light mode */
   --border-color-topic-tree-parent: #45a049; /* A slightly darker green for better contrast on white */
   --border-color-topic-tree-child: #1e88e5; /* A slightly darker blue for better contrast on white */
+  
+  /* NEW: Light mode profile variables */
+  --profile-bg: #fafafa;
+  --profile-text: #1a1a1a;
+  --profile-accent: #d9006c;
 }
 
 
@@ -373,7 +384,7 @@ button:disabled { opacity: .5; cursor: not-allowed; background: var(--background
   position: absolute;
   top: -20px; left: 0; right: 0;
   height: 20px;
-  background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"><circle cx="10" cy="10" r="1" fill="%23ff8c42" opacity="0.6"><animate attributeName="cy" from="20" to="-10" dur="3s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.6" to="0" dur="3s" repeatCount="indefinite"/></circle><circle cx="50" cy="15" r="1.5" fill="%23ff6b4a" opacity="0.7"><animate attributeName="cy" from="20" to="-10" dur="2.5s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.7" to="0" dur="2.5s" repeatCount="indefinite"/></circle><circle cx="80" cy="5" r="1" fill="%23fff5e6" opacity="0.5"><animate attributeName="cy" from="20" to="-10" dur="3.5s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.5" to="0" dur="3.5s" repeatCount="indefinite"/></circle></svg>') repeat-x;
+  background: url('data:image/svg+xml;utf8,<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" viewBox="0 0 100 20"><circle cx="10" cy="10" r="1" fill="%23ff8c42" opacity="0.6"><animate attributeName="cy" from="20" to="-10" dur="3s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.6" to="0" dur="3s" repeatCount="indefinite"/></circle><circle cx="50" cy="15" r="1.5" fill="%23ff6b4a" opacity="0.7"><animate attributeName="cy" from="20" to="-10" dur="2.5s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.7" to="0" dur="2.5s" repeatCount="indefinite"/></circle><circle cx="80" cy="5" r="1" fill="%23fff5e6" opacity="0.5"><animate attributeName="cy" from="20" to="-10" dur="3.5s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.5" to="0" dur="3.5s" repeatCount="indefinite"/></circle></svg>') repeat-x;
   opacity: var(--heat-opacity, 0.6);
   pointer-events: none;
   transition: opacity 1.5s;
@@ -401,7 +412,7 @@ button:disabled { opacity: .5; cursor: not-allowed; background: var(--background
   content: '';
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
-  background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="20" cy="80" r="2" fill="%23333"><animate attributeName="cy" from="80" to="120" dur="1s" fill="freeze"/><animate attributeName="opacity" from="0.8" to="0" dur="1s" fill="freeze"/></circle><circle cx="50" cy="80" r="1.5" fill="%23444"><animate attributeName="cy" from="80" to="120" dur="1.2s" fill="freeze"/><animate attributeName="opacity" from="0.7" to="0" dur="1.2s" fill="freeze"/></circle><circle cx="80" cy="80" r="2" fill="%23333"><animate attributeName="cy" from="80" to="120" dur="0.8s" fill="freeze"/><animate attributeName="opacity" from="0.8" to="0" dur="0.8s" fill="freeze"/></circle></svg>');
+  background: url('data:image/svg+xml;utf8,<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" viewBox="0 0 100 100"><circle cx="20" cy="80" r="2" fill="%23333"><animate attributeName="cy" from="80" to="120" dur="1s" fill="freeze"/><animate attributeName="opacity" from="0.8" to="0" dur="1s" fill="freeze"/></circle><circle cx="50" cy="80" r="1.5" fill="%23444"><animate attributeName="cy" from="80" to="120" dur="1.2s" fill="freeze"/><animate attributeName="opacity" from="0.7" to="0" dur="1.2s" fill="freeze"/></circle><circle cx="80" cy="80" r="2" fill="%23333"><animate attributeName="cy" from="80" to="120" dur="0.8s" fill="freeze"/><animate attributeName="opacity" from="0.8" to="0" dur="0.8s" fill="freeze"/></circle></svg>');
   pointer-events: none;
 }
 
@@ -2187,4 +2198,219 @@ body.light-mode .rate-up:hover {
 
 body.light-mode .rate-down:hover {
     background: rgba(244, 67, 54, 0.05);
+}
+
+/*
+  ==========================================================================
+  NEW: PROFILE MODAL STYLES
+  ==========================================================================
+*/
+.clickable-author {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 140, 66, 0.5);
+  transition: color 0.2s, text-decoration-color 0.2s;
+}
+.clickable-author:hover {
+  color: var(--text-accent-hot);
+  text-decoration-color: var(--text-accent-hot);
+}
+
+#profile-modal-overlay {
+  z-index: 2500; /* Above loading, below identity */
+  backdrop-filter: blur(5px);
+}
+
+#profile-modal {
+  width: 90vw;
+  max-width: 700px;
+  height: 80vh;
+  max-height: 800px;
+  background: var(--profile-bg, #1a1a1a);
+  color: var(--profile-text, #e0e0e0);
+  border-radius: 16px;
+  border: 2px solid var(--profile-accent, #ff1493);
+  box-shadow: 0 0 50px rgba(0,0,0,0.5), 0 0 30px var(--profile-accent, #ff1493);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  transition: background 0.5s, color 0.5s, border-color 0.5s;
+}
+
+.close-profile-button {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background: rgba(0,0,0,0.5);
+  color: white;
+  border: 1px solid white;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 10;
+}
+
+#profile-content {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-header {
+  display: flex;
+  gap: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--profile-accent, #ff1493);
+  margin-bottom: 20px;
+}
+
+.profile-picture-container {
+  flex-shrink: 0;
+}
+
+.profile-picture {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 4px solid var(--profile-accent, #ff1493);
+  object-fit: cover;
+}
+
+.profile-picture-placeholder {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 50px;
+  border: 4px solid var(--profile-accent, #ff1493);
+}
+
+.profile-info {
+  flex-grow: 1;
+}
+
+.profile-handle {
+  font-size: 28px;
+  font-weight: bold;
+  color: var(--profile-accent, #ff1493);
+  margin-bottom: 10px;
+}
+
+.profile-bio {
+  font-size: 16px;
+  margin-bottom: 15px;
+  font-style: italic;
+  color: var(--profile-text, #e0e0e0);
+}
+
+.edit-profile-button {
+  background: transparent;
+  border: 1px solid var(--profile-accent, #ff1493);
+  color: var(--profile-accent, #ff1493);
+}
+
+.profile-posts {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-posts h3 {
+  color: var(--profile-accent, #ff1493);
+  border-bottom: 1px solid var(--profile-accent, #ff1493);
+  padding-bottom: 5px;
+  margin-bottom: 10px;
+}
+
+.profile-posts-list {
+  overflow-y: auto;
+  flex-grow: 1;
+}
+
+.profile-post-item {
+  background: rgba(255,255,255,0.05);
+  padding: 10px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.profile-post-item:hover {
+  background: rgba(255,255,255,0.1);
+}
+.profile-post-content {
+  margin-bottom: 5px;
+}
+.profile-post-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+}
+
+/* Profile Editor Styles */
+.profile-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.profile-editor-section {
+  background: rgba(255,255,255,0.05);
+  padding: 15px;
+  border-radius: 8px;
+}
+.profile-editor label {
+  display: block;
+  margin-bottom: 10px;
+  font-weight: bold;
+  color: var(--profile-accent, #ff1493);
+}
+.profile-editor textarea {
+  width: 100%;
+  min-height: 80px;
+  background: var(--background-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color-light);
+  border-radius: 4px;
+  padding: 8px;
+}
+.profile-picture-editor {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.current-picture img, .current-picture .profile-picture-placeholder {
+  width: 80px;
+  height: 80px;
+}
+#profile-picture-preview {
+  margin-top: 10px;
+}
+#profile-picture-preview img {
+  max-width: 150px;
+  border-radius: 8px;
+}
+.color-inputs {
+  display: flex;
+  gap: 20px;
+}
+.color-input-group input[type="color"] {
+  width: 50px;
+  height: 50px;
+  border: none;
+  padding: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.profile-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }

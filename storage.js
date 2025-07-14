@@ -244,7 +244,7 @@ export class StateManager {
     const transaction = this.db.transaction(['userState'], 'readwrite');
     const store = transaction.objectStore('userState');
     
-    // Save identity
+    // Save identity (including profile)
     store.put({ 
       key: 'identity', 
       value: state.myIdentity 
