@@ -8,6 +8,7 @@ import { state, imageStore, toggleCarry, createReply, createPostWithTopics, find
 import { sanitize, sanitizeDM } from './utils.js';
 import { CONFIG } from './config.js';
 import { sendPeer } from './p2p/network-manager.js';
+import DOMPurify from 'dompurify'; // <-- ADDED: Import DOMPurify for sanitization
 
 // --- LOCAL HELPERS ---
 // Small helper functions that are only used by the UI.
@@ -263,7 +264,7 @@ async function updateInner(el, p) {
         scoreDisplay = `${percentage}%`;
         
         // Add emoji based on score
-        if (percentage >= 80) scoreEmoji = '�';
+        if (percentage >= 80) scoreEmoji = '🔥';
         else if (percentage >= 60) scoreEmoji = '✨';
         else if (percentage >= 40) scoreEmoji = '💨';
         else scoreEmoji = '❄️';
@@ -295,7 +296,7 @@ el.innerHTML = `
       ${authorProfilePic}
       <div class="author clickable-author" data-handle="${p.author}">${p.author} ${verificationBadge}</div>
     </div>
-    <div class="content">${(p.content)}</div>
+    <div class="content">${DOMPurify.sanitize(p.content)}</div> <!-- FIXED: Sanitize post content -->
     ${imageHtml}
     ${topicsHtml}
     <div class="post-footer">
@@ -664,7 +665,7 @@ async function renderProfile(profileData) {
       </div>
       <div class="profile-info">
         <h2 class="profile-handle">${profileData.handle}</h2>
-        <div class="profile-bio">${profileData.bio || 'No bio yet'}</div>
+        <div class="profile-bio">${DOMPurify.sanitize(profileData.bio || 'No bio yet')}</div> <!-- FIXED: Sanitize profile bio -->
         ${isOwnProfile ? '<button class="edit-profile-button" onclick="openProfileEditor()">Edit Profile</button>' : ''}
       </div>
     </div>
