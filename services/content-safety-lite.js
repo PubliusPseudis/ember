@@ -1719,7 +1719,7 @@ analyzeContext(text, violations) {
 
   // Check if we're in a context where fuzzy matching should be more lenient
   const context = this.checkLegitimateContext(text);
-  const threshold = context.isLegitimate ? 0.80 : 0.75;
+  const threshold = context.isLegitimate ? 0.85 : 0.80;
   
   // Add more stop words
   const STOP_WORDS = new Set([
