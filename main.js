@@ -1632,6 +1632,7 @@ async function init() {
         // We should trust the local identity and assume it's valid.
         console.warn("Could not verify identity on DHT (no peers found), trusting local storage.");
         state.myIdentity = storedIdentity;
+         initializeUserProfileSection();
         notify(`Welcome back, pioneer ${storedIdentity.handle}!`);
       } else {
         // Stored identity is invalid or taken because verification failed and there ARE peers.
