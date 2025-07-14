@@ -1657,10 +1657,12 @@ async function init() {
         // Stored identity is invalid or taken because verification failed and there ARE peers.
         notify("Stored identity is no longer valid. Please create a new one.");
         await createNewIdentity();
+        initializeUserProfileSection();
       }
     } else {
       // No stored identity
       await createNewIdentity();
+      initializeUserProfileSection();
     }
     
     // Continue with rest of initialization
