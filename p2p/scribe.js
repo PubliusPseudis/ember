@@ -26,7 +26,7 @@ export class Scribe {
         const topics = new Set();
         
         // ADDED: Limit content length for regex
-        const maxContentLength = 1000;
+        const maxContentLength = 1125;
         const truncatedContent = content.length > maxContentLength 
             ? content.substring(0, maxContentLength) 
             : content;
@@ -60,8 +60,8 @@ export class Scribe {
             }
         }
         
-        // Always include a default topic
-        if (topics.size < MAX_TOPICS) {
+        // PHASE 2: Only add #general if NO other topics were found.
+        if (topics.size === 0) {
             topics.add('#general');
         }
         

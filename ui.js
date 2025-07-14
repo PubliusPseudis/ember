@@ -889,11 +889,8 @@ function addTopicToUI(topic) {
 async function toggleTopic(topic) {
     const tag = document.querySelector(`[data-topic="${topic}"]`);
 
+    // PHASE 2: Allow unsubscribing from #general to enable true feed curation.
     if (state.subscribedTopics.has(topic)) {
-        if (topic === '#general') {
-            notify("Cannot unsubscribe from #general");
-            return;
-        }
         if (state.scribe) {
             state.scribe.unsubscribe(topic);
         }
