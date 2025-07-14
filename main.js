@@ -23,7 +23,7 @@ import {
     discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, 
     scrollToPost, subscribeToTopic, handleReplyImageSelect, removeReplyImage, 
     storeDMLocallyAndUpdateUI, updateDMInbox, updateUnreadBadge, toggleThread,
-    openProfileForHandle, renderProfile, closeProfile, updateProfilePicturesInPosts
+    openProfileForHandle, renderProfile, closeProfile, updateProfilePicturesInPosts, initializeUserProfileSection
 } from './ui.js';
 import { StateManager } from './storage.js';
 import { MemoryManager } from './services/memory-manager.js';
@@ -191,27 +191,7 @@ export async function handleNewPost(data, fromWire) {
   broadcast({ type: "new_post", post: postData }, fromWire);
 }
 
-export function initializeUserProfileSection() {
-  if (!state.myIdentity) return;
-  
-  const section = document.getElementById('user-profile-section');
-  const handleEl = document.getElementById('user-profile-handle');
-  const picContainer = document.getElementById('user-profile-pic');
-  
-  if (section && handleEl) {
-    section.style.display = 'block';
-    handleEl.textContent = state.myIdentity.handle;
-    
-    // Update profile picture if available
-    if (state.myIdentity.profile && state.myIdentity.profile.profilePictureHash) {
-      imageStore.retrieveImage(state.myIdentity.profile.profilePictureHash).then(imageData => {
-        if (imageData) {
-          picContainer.innerHTML = `<img src="${imageData}" alt="Your profile" />`;
-        }
-      });
-    }
-  }
-}
+
 
 export function findRootPost(postId) {
   let current = postId;
