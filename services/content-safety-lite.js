@@ -10,7 +10,7 @@
  * - Performance optimized with caching and early exits
  * - Comprehensive logging and metrics
  * - Configurable severity thresholds
- * * @version 2.5.0
+ * * @version 2.5.2 (Patched)
  * @license GPL
  */
 
@@ -110,17 +110,18 @@ export class ContentSafetySystem {
             /(dox+x?ing?|swat(?:ting)?|drop(?:pin[g]?|ping)?\s*docs?)/i,
             /(real|home|personal|private|current|exact)\s*(address|add\.?|location|loc|coords?)/i,
             /(leak(?:ed)?|reveal(?:ed)?|expose(?:d)?|publish(?:ed)?)[\s\S]{0,20}(address|phone|number|email|info|docs?)/i,
-            /\d{3}[-.\s]?\d{2}[-.\s]?\d{4}/, // SSN
+            /\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/, // SSN
             /(?:\+?1\s*[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/, // Phone Number
-            /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i, // Email
-            /\d{1,5}\s+[\w\s]{1,50}\s+(street|st|avenue|ave|road|rd|lane|ln|drive|dr|court|ct|plaza|blvd)/i,
-            /(apt|apartment|unit|suite|#)\s*\d+/i,
-            /\d{5}(-\d{4})?/, // ZIP code with context
-            /(lat|latitude|long|longitude)\s*:?\s*-?\d+\.\d+/i
+            /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i, // Email
+            /\b\d{1,5}\s+[\w\s]{1,50}\s+(street|st|avenue|ave|road|rd|lane|ln|drive|dr|court|ct|plaza|blvd)\b/i,
+            /\b(apt|apartment|unit|suite|#)\s*\d+\b/i,
+            /\b\d{5}(?:-\d{4})?\b/, // ZIP code
+            /\b(lat|latitude|long|longitude)\s*:?\s*-?\d+\.\d+\b/i
           ],
-          contextRules: {
-            requiresContext: false
-          }
+           contextRules: {
+             requiresContext: true,
+             mustInclude: ['address', 'street', 'location', 'zip', 'city', 'state', 'phone', 'email', 'ssn', 'coordinates']
+           }
         }
       },
       
@@ -252,7 +253,7 @@ export class ContentSafetySystem {
             /(crypto|bitcoin|nft).{0,20}(pump|moon|10x)/i,
             /(.)\1{10,}/, // Character spam
             /[A-Z\s]{20,}/, // CAPS spam
-            /(\w{4,})(?=.*?\1.*?\1.*?\1)/i, // A word of 4+ chars repeated at least 4 times
+            /(\b\w{4,}\b)(?=.*?\1.*?\1.*?\1)/i, // A word of 4+ chars repeated at least 4 times
           ],
           contextRules: {
             urlDensity: 0.05, // More than 5% URLs
@@ -697,6 +698,10 @@ if (obfuscation.score > 0.5) {
   
   // 6. Check each normalization
   for (const normalized of normalizations) {
+    // FIXED: Do not check patterns on aggressively normalized text that comes from css-like content
+    if (normalized.method === 'aggressive' && text.includes(':') && text.includes(';')) {
+        continue;
+    }
     const patternViolations = this.checkPatterns(normalized.text, text, normalized.method);
     violations.push(...patternViolations);
   }
@@ -816,7 +821,7 @@ checkNgramSimilarity(text) {
     'ric': { word: 'ricin', type: 'terrorism', severity: 'critical' },
     'sar': { word: 'sarin', type: 'terrorism', severity: 'critical' },
     'thr': { word: 'anthrax', type: 'terrorism', severity: 'critical' },
-    'kil': { word: 'kill', type: 'threats', severity: 'high' },
+    'kil': { word: 'kill', type: 'threats', severity: 'high', context: ['you', 'them', 'all', 'me'] }, 
     'ill': { word: 'kill', type: 'threats', severity: 'high' },
     'mur': { word: 'murder', type: 'threats', severity: 'high' },
     'urd': { word: 'murder', type: 'threats', severity: 'high' },
@@ -870,6 +875,11 @@ checkNgramSimilarity(text) {
   for (const trigram of textTrigrams) {
     if (harmfulSignatures[trigram]) {
       const config = harmfulSignatures[trigram];
+      // Context check for sensitive trigrams
+      if (config.context) {
+          const hasContext = config.context.some(ctx => text.toLowerCase().includes(ctx));
+          if (!hasContext) continue; // Skip if required context is missing
+      }
       const currentCount = wordMatches.get(config.word) || 0;
       wordMatches.set(config.word, currentCount + 1);
     }
@@ -1097,7 +1107,12 @@ basicNormalize(text) {
   
   
   unicodeNormalize(text) {
-        if (!text || typeof text !== 'string') return '';
+    if (!text || typeof text !== 'string') return '';
+
+    // FIXED: If the text looks like CSS, don't strip essential characters.
+    if (text.includes(':') && text.includes(';')) {
+        return text.toLowerCase().replace(/\s+/g, ' ');
+    }
 
     let normalized = '';
 
@@ -1137,11 +1152,12 @@ basicNormalize(text) {
       // Common evasion patterns that should trigger immediate flags
       const evasionPhrases = [
         { pattern: /b[0o]m[b8]/i, type: 'terrorism', severity: 'critical' },
-        { pattern: /k[i1!]+l+/i, type: 'threats', severity: 'high' },
+        // FIXED: Make the "kill" check more specific to avoid names
+        { pattern: /\bk[i1!]+ll\b/i, type: 'threats', severity: 'high' },
         { pattern: /k[i1!]ll\s*y[o0]u/i, type: 'threats', severity: 'high' },
         { pattern: /su[i1!]c[i1!]d[e3]/i, type: 'selfharm', severity: 'high' },
         { pattern: /[ck]ill[sz]?\s*[ck]ids?/i, type: 'threats', severity: 'critical' },
-        { pattern: /\d{1,2}\s*y[o0]/i, type: 'csam', severity: 'critical' },
+        { pattern: /\b\d{1,2}\s*y[o0]\b/i, type: 'csam', severity: 'critical' },
         { pattern: /[e3]xpl[o0]s[i1]v[e3]/i, type: 'terrorism', severity: 'critical' },
         { pattern: /d[e3]t[o0]n[a4]t[e3]/i, type: 'terrorism', severity: 'critical' },
         
@@ -1182,6 +1198,11 @@ basicNormalize(text) {
     }
   aggressiveNormalize(text) {
         if (!text || typeof text !== 'string') return '';
+
+    // FIXED: If the text looks like CSS, don't be aggressive.
+    if (text.includes(':') && text.includes(';')) {
+        return this.unicodeNormalize(text);
+    }
 
     let normalized = this.unicodeNormalize(text);
     
@@ -1229,25 +1250,16 @@ basicNormalize(text) {
 checkPatterns(normalizedText, originalText, normalizationMethod) {
   const violations = [];
   
-  console.log('[ContentSafety] checkPatterns called with:', {
-    normalizedTextLength: normalizedText?.length,
-    normalizationMethod,
-    compiledPatternsSize: this.compiledPatterns?.size
-  });
-  
   if (!normalizedText || typeof normalizedText !== 'string') {
-    console.warn('[ContentSafety] Invalid normalizedText:', normalizedText);
     return violations;
   }
   
   if (!this.compiledPatterns || this.compiledPatterns.size === 0) {
-    console.error('[ContentSafety] No compiled patterns available!');
     return violations;
   }
   
   const paddedText = ` ${normalizedText} `;
   
-  // Ensure originalText is valid before using it
   if (originalText && typeof originalText === 'string') {
     const asciiText = this.unicodeNormalize(originalText);
     if (asciiText !== originalText) {
@@ -1268,44 +1280,31 @@ checkPatterns(normalizedText, originalText, normalizationMethod) {
     }
   }
 
-  // First check if we're in a legitimate context that should override most checks
   const legitimateContext = this.checkLegitimateContext(originalText);
   
   for (const [severity, categories] of this.compiledPatterns) {
-    console.log(`[ContentSafety] Checking severity: ${severity}`);
     
     if (!categories || !(categories instanceof Map)) {
-      console.error(`[ContentSafety] Invalid categories for ${severity}:`, categories);
       continue;
     }
     
     for (const [category, config] of categories) {
-      console.log(`[ContentSafety]   Checking category: ${category}`);
       
       if (!config || !config.patterns || !Array.isArray(config.patterns)) {
-        console.error(`[ContentSafety] Invalid config for ${severity}.${category}:`, config);
         continue;
       }
       
       for (let i = 0; i < config.patterns.length; i++) {
         const pattern = config.patterns[i];
         
-        if (!pattern) {
-          console.error(`[ContentSafety] Pattern ${i} is undefined in ${severity}.${category}`);
-          continue;
-        }
-        
-        if (typeof pattern.test !== 'function') {
-          console.error(`[ContentSafety] Pattern ${i} has no test method in ${severity}.${category}:`, pattern);
+        if (!pattern || typeof pattern.test !== 'function') {
           continue;
         }
         
         let patternToTest = pattern;
         
-        // The problematic part - add more checks
         if (normalizationMethod !== 'original') {
           if (pattern.source === undefined) {
-            console.error(`[ContentSafety] Pattern ${i} has undefined source in ${severity}.${category}:`, pattern);
             continue;
           }
           
@@ -1315,31 +1314,22 @@ checkPatterns(normalizedText, originalText, normalizationMethod) {
               patternToTest = new RegExp(newSource, pattern.flags || '');
             }
           } catch (e) {
-            console.error(`[ContentSafety] Error processing pattern ${i} in ${severity}.${category}:`, e);
             continue;
           }
         }
-        // ** END OF THE FIX **
 
         const matches = normalizedText.match(patternToTest) || paddedText.match(patternToTest);
         
         if (matches) {
-          // Check context rules
           if (config.contextRules) {
-          // ——— Pattern-specific context rules ———
-          if (config.contextRules) {
-            // 1) “requiresContext” must pass
             if (config.contextRules.requiresContext) {
               const hasCtx = this.checkRequiredContext(originalText, config.contextRules);
               if (!hasCtx) continue;
             }
-            // 2) if this context is in the “exceptions” list, skip it
             if (config.contextRules.exceptions &&
                 config.contextRules.exceptions.includes(legitimateContext.type)) {
               continue;
             }
-          }
-            
             if (config.contextRules.exceptions) {
               const hasException = config.contextRules.exceptions.some(
                 ex => originalText.toLowerCase().includes(ex)
@@ -1352,12 +1342,12 @@ checkPatterns(normalizedText, originalText, normalizationMethod) {
             type: category,
             severity: severity,
             confidence: this.calculateConfidence(matches, normalizedText, normalizationMethod),
-            pattern: pattern.source, // Log the original pattern
+            pattern: pattern.source, 
             match: matches[0],
             normalizationMethod: normalizationMethod
           });
           
-          break; // One match per category
+          break; 
         }
       }
     }
@@ -1374,6 +1364,8 @@ checkLegitimateContext(text) {
     confidence: 0
   };
   
+  if (!text) return context;
+
   // News context - check for real news structure
   if (this.isLegitimateNewsContext(text)) {
     context.isLegitimate = true;
@@ -1554,6 +1546,8 @@ analyzeContext(text, violations) {
         additionalViolations: []
     };
     
+    if (!text) return analysis;
+
     // Require substantial context, not just a keyword
     const words = text.split(/\s+/).length;
     
