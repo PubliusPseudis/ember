@@ -68,13 +68,19 @@ function notify(msg, dur = 3000, onClick = null) {
 }
 
 export function initializeUserProfileSection() {
-  if (!state.myIdentity) return;
+  console.log('[Debug] initializeUserProfileSection from ui.js has been called.'); // <-- ADD THIS LINE
+
+  if (!state.myIdentity) {
+    console.log('[Debug] Exiting: state.myIdentity is not set.'); // <-- ADD THIS LINE
+    return;
+  }
   
   const section = document.getElementById('user-profile-section');
   const handleEl = document.getElementById('user-profile-handle');
   const picContainer = document.getElementById('user-profile-pic');
   
   if (section && handleEl) {
+    console.log('[Debug] Success: Found elements, setting display to block.'); // <-- ADD THIS LINE
     section.style.display = 'block';
     handleEl.textContent = state.myIdentity.handle;
     
@@ -86,6 +92,9 @@ export function initializeUserProfileSection() {
         }
       });
     }
+  } else {
+    // ADD THIS ELSE BLOCK TO SEE IF ELEMENTS ARE MISSING
+    console.error('[Debug] Failed: Could not find #user-profile-section or #user-profile-handle in the DOM.');
   }
 }
 
