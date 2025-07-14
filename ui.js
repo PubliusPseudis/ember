@@ -68,10 +68,10 @@ function notify(msg, dur = 3000, onClick = null) {
 }
 
 export function initializeUserProfileSection() {
-  console.log('[Debug] initializeUserProfileSection from ui.js has been called.'); // <-- ADD THIS LINE
+  console.log('[Debug] initializeUserProfileSection from ui.js has been called.'); 
 
   if (!state.myIdentity) {
-    console.log('[Debug] Exiting: state.myIdentity is not set.'); // <-- ADD THIS LINE
+    console.log('[Debug] Exiting: state.myIdentity is not set.'); 
     return;
   }
   
@@ -80,7 +80,7 @@ export function initializeUserProfileSection() {
   const picContainer = document.getElementById('user-profile-pic');
   
   if (section && handleEl) {
-    console.log('[Debug] Success: Found elements, setting display to block.'); // <-- ADD THIS LINE
+    console.log('[Debug] Success: Found elements, setting display to block.'); 
     section.style.display = 'block';
     handleEl.textContent = state.myIdentity.handle;
     
@@ -183,7 +183,7 @@ async function updateInner(el, p) {
   // verification indicator
   let verificationBadge = '';
   
-  // Add profile picture logic
+  //  profile picture logic
   let authorProfilePic = '';
   const cachedProfile = state.profileCache.get(p.author);
   
@@ -336,7 +336,7 @@ el.innerHTML = `
         </div>
     </div>
     <div id="reply-form-${p.id}" class="reply-compose" style="display: none;">
-        <textarea id="reply-input-${p.id}" class="reply-input" placeholder="Add to the conversation..." maxlength="300"></textarea>
+        <textarea id="reply-input-${p.id}" class="reply-input" placeholder="Add to the conversation..." maxlength="1125"></textarea>
         <div class="reply-image-preview" id="reply-image-preview-${p.id}" style="display:none;">
             <img id="reply-preview-img-${p.id}" />
             <button onclick="removeReplyImage('${p.id}')">✕</button>
@@ -542,7 +542,7 @@ async function openProfileForHandle(handle) {
   
   state.viewingProfile = handle;
   
-  // FIX: If viewing our own profile, render immediately from local state.
+  // If viewing our own profile, render immediately from local state.
   if (handle === state.myIdentity.handle) {
     renderProfile(state.myIdentity.profile);
     // We don't need to subscribe to our own profile updates via the network in this case.
@@ -720,9 +720,9 @@ window.openProfileEditor = async function() {
       </div>
       
       <div class="profile-editor-section">
-        <label for="profile-bio">Bio (250 chars max)</label>
-        <textarea id="profile-bio" maxlength="250" placeholder="Tell us about yourself...">${profile.bio || ''}</textarea>
-        <span class="char-count"><span id="bio-char-count">${(profile.bio || '').length}</span>/250</span>
+        <label for="profile-bio">Bio (2500 chars max)</label>
+        <textarea id="profile-bio" maxlength="2500" placeholder="Tell us about yourself...">${profile.bio || ''}</textarea>
+        <span class="char-count"><span id="bio-char-count">${(profile.bio || '').length}</span>/2500</span>
       </div>
       
       <div class="profile-editor-section">
