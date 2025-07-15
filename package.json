@@ -3,15 +3,14 @@
   "version": "1.0.0",
   "description": "Headless Ember relay node for strengthening the network",
   "type": "module",
-  "main": "headless.js",
+  "main": "main.js",
     "imports": {
     "buffer": "buffer/index.js",
     "buffer/": "buffer/"
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "start": "node headless.js"
+    "build": "vite build"
   },
   "keywords": [
     "ember",

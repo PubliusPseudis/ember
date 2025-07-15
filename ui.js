@@ -4,11 +4,17 @@
 // interacting with the DOM, rendering content, and handling UI events.
 
 // --- IMPORTS ---
-import { state, imageStore, toggleCarry, createReply, createPostWithTopics, findRootPost, isImageToxic, isToxic, sendDirectMessage, broadcastProfileUpdate, subscribeToProfile, unsubscribeFromProfile, handleProfileUpdate } from './main.js';
+import { getImageStore } from './services/instances.js';
+import { state } from './state.js';
 import { sanitize, sanitizeDM } from './utils.js';
 import { CONFIG } from './config.js';
-import { sendPeer } from './p2p/network-manager.js';
-import DOMPurify from 'dompurify'; // <-- ADDED: Import DOMPurify for sanitization
+import DOMPurify from 'dompurify';
+
+// Dynamic sendPeer injection
+let sendPeerFunction = null;
+export function setSendPeer(fn) {
+  sendPeerFunction = fn;
+}
 
 // --- LOCAL HELPERS ---
 // Small helper functions that are only used by the UI.
@@ -69,8 +75,7 @@ function notify(msg, dur = 3000, onClick = null) {
 }
 
 export function initializeUserProfileSection() {
-  console.log('[Debug] initializeUserProfileSection from ui.js has been called.'); 
-
+  console.log('[Debug] initializeUserProfileSection from ui.js has been called.');
   if (!state.myIdentity) {
     console.log('[Debug] Exiting: state.myIdentity is not set.'); 
     return;
@@ -79,27 +84,33 @@ export function initializeUserProfileSection() {
   const section = document.getElementById('user-profile-section');
   const handleEl = document.getElementById('user-profile-handle');
   const picContainer = document.getElementById('user-profile-pic');
-  
-  if (section && handleEl) {
+
+  if (section && handleEl && picContainer) { // Added picContainer to the check
     console.log('[Debug] Success: Found elements, setting display to block.'); 
     section.style.display = 'block';
     handleEl.textContent = state.myIdentity.handle;
     
     // Update profile picture if available
-    if (state.myIdentity.profile && state.myIdentity.profile.profilePictureHash) {
-      imageStore.retrieveImage(state.myIdentity.profile.profilePictureHash).then(imageData => {
+    const profile = state.myIdentity.profile;
+    if (profile && profile.profilePictureHash) {
+      const hash = profile.profilePictureHash;
+      getImageStore().retrieveImage(hash).then(imageData => {
         if (imageData) {
           picContainer.innerHTML = `<img src="${imageData}" alt="Your profile" />`;
+        } else {
+          // ***  If image isn't ready, create a placeholder ***
+          // This allows the periodic update function to find and fill it later.
+          picContainer.innerHTML = `<div class="profile-picture-placeholder-small" data-hash="${hash}">👤</div>`;
         }
       });
     }
   } else {
-    // ADD THIS ELSE BLOCK TO SEE IF ELEMENTS ARE MISSING
-    console.error('[Debug] Failed: Could not find #user-profile-section or #user-profile-handle in the DOM.');
+    console.error('[Debug] Failed: Could not find #user-profile-section, #user-profile-handle, or #user-profile-pic in the DOM.');
   }
 }
 
 async function renderPost(p, container = null) {
+    console.log("render post called");
   if (document.getElementById("post-" + p.id)) return;
 
   const el = document.createElement("div");
@@ -143,7 +154,7 @@ export function updateProfilePicturesInPosts() {
   
   placeholders.forEach(async (placeholder) => {
     const hash = placeholder.dataset.hash;
-    const imageData = await imageStore.retrieveImage(hash);
+    const imageData = await getImageStore().retrieveImage(hash);
     
     if (imageData) {
       const img = document.createElement('img');
@@ -189,7 +200,7 @@ async function updateInner(el, p) {
   const cachedProfile = state.profileCache.get(p.author);
   
   if (cachedProfile && cachedProfile.profilePictureHash) {
-    const imageData = await imageStore.retrieveImage(cachedProfile.profilePictureHash);
+    const imageData = await getImageStore().retrieveImage(cachedProfile.profilePictureHash);
     if (imageData) {
       authorProfilePic = `<img src="${imageData}" class="author-profile-pic" alt="${p.author}'s profile" />`;
     } else {
@@ -197,7 +208,7 @@ async function updateInner(el, p) {
       const peers = Array.from(state.peers.values()).slice(0, 3);
       for (const peer of peers) {
         if (peer.wire && !peer.wire.destroyed) {
-          sendPeer(peer.wire, { type: "request_image", imageHash: cachedProfile.profilePictureHash });
+          sendPeerFunction(peer.wire, { type: "request_image", imageHash: cachedProfile.profilePictureHash });
         }
       }
       authorProfilePic = `<div class="author-profile-pic author-profile-placeholder" data-hash="${cachedProfile.profilePictureHash}">👤</div>`;
@@ -229,7 +240,7 @@ async function updateInner(el, p) {
             p._imageLoading = true;
             const currentElId = el.id;
 
-            imageStore.retrieveImage(p.imageHash).then(imageData => {
+            getImageStore().retrieveImage(p.imageHash).then(imageData => {
                 p._imageLoading = false;
                 const stillExists = document.getElementById(currentElId);
                 if (stillExists && imageData) {
@@ -477,7 +488,7 @@ function toggleThread(postId) {
         }
     }
 }
-
+/*
 function updateBonfire() {
     const bonfireContentEl = document.getElementById('bonfire-content');
     if (!bonfireContentEl) return;
@@ -519,7 +530,86 @@ function updateBonfire() {
         bonfireContentEl.innerHTML = '<div class="empty-state">No hot threads right now. Start a conversation!</div>';
     }
 }
+*/
+ async function updateHotTopics() {
+    const bonfireContentEl = document.getElementById('bonfire-content');
+    if (!bonfireContentEl) return;
 
+    bonfireContentEl.innerHTML = '<div class="empty-state">Looking for hot topics on the network...</div>';
+
+    if (!state.dht) {
+        bonfireContentEl.innerHTML = '<div class="empty-state">Connect to the network to find topics.</div>';
+        return;
+    }
+
+    try {
+        const data = await state.dht.get('hot-topics:v1');
+        if (!data || !data.topics || data.topics.length === 0) {
+            bonfireContentEl.innerHTML = '<div class="empty-state">No hot topics found yet. Check back soon!</div>';
+            return;
+        }
+
+        const topicsHtml = data.topics.map(([topic, info]) => `
+            <div class="bonfire-item" onclick="renderHotPostsForTopic('${topic}')">
+                <span class="bonfire-heat">${Math.round(info.score)} 📈</span>
+                <span class="bonfire-preview">${topic}</span>
+            </div>
+        `).join('');
+
+        bonfireContentEl.innerHTML = `<div class="bonfire-posts">${topicsHtml}</div>`;
+        document.getElementById('drawer-title').textContent = 'Hot Topics';
+
+    } catch (e) {
+        console.error("Failed to fetch hot topics:", e);
+        bonfireContentEl.innerHTML = '<div class="empty-state">Error fetching topics from the network.</div>';
+    }
+}
+
+function renderHotPostsForTopic(topic) {
+    const bonfireContentEl = document.getElementById('bonfire-content');
+    if (!bonfireContentEl) return;
+
+    document.getElementById('drawer-title').textContent = `Bonfire: ${topic}`;
+
+    const now = Date.now();
+    const topicPosts = Array.from(state.posts.values()).filter(p => {
+        const postTopics = state.scribe ? state.scribe.extractTopics(p.content) : [];
+        return postTopics.includes(topic);
+    });
+
+    if (topicPosts.length === 0) {
+        bonfireContentEl.innerHTML = `
+            <div class="empty-state">
+                No posts found for ${topic} yet.
+                <button class="secondary-button" onclick="updateHotTopics()">Back to Topics</button>
+            </div>`;
+        return;
+    }
+
+    const scoredPosts = topicPosts.map(post => {
+        const ageHours = (now - post.timestamp) / 3600000;
+        const rating = post.getRatingSummary();
+        // Hotness score: carrier count + reply count + weighted rating score, decayed by age.
+        const score = (post.carriers.size + post.replies.size * 2 + rating.weightedTotal * 5) / Math.pow(ageHours + 1, 1.2);
+        return { post, score };
+    });
+
+    const hottest = scoredPosts.sort((a, b) => b.score - a.score).slice(0, 20);
+
+    const postsHtml = hottest.map(({ post, score }) => `
+        <div class="bonfire-item" onclick="scrollToPost('${post.id}')">
+            <span class="bonfire-heat">${Math.round(score)} 🔥</span>
+            <span class="bonfire-preview">${(post.content.substring(0, 60))}...</span>
+        </div>
+    `).join('');
+
+    bonfireContentEl.innerHTML = `
+        <div class="bonfire-header">
+            <button class="secondary-button" onclick="updateHotTopics()">← Back to Topics</button>
+        </div>
+        <div class="bonfire-posts">${postsHtml}</div>
+    `;
+}
 function scrollToPost(postId) {
     const el = document.getElementById(`post-${postId}`);
     if (el) {
@@ -562,7 +652,7 @@ async function openProfileForHandle(handle) {
     if (dhtProfile) {
       console.log(`[Profile] Found profile in DHT for ${handle}`);
       // The DHT stores the complete message object with signature
-      handleProfileUpdate(dhtProfile, null);
+      window.handleProfileUpdate(dhtProfile, null);
       // Profile will be rendered by handleProfileUpdate if signature is valid
     } else {
       console.log(`[Profile] No profile found in DHT for ${handle}, waiting for Scribe`);
@@ -579,7 +669,7 @@ async function openProfileForHandle(handle) {
   }
   
   // Step 4: Always subscribe to Scribe for live updates
-  await subscribeToProfile(handle);
+  await window.subscribeToProfile(handle);
 }
 
 function closeProfile() {
@@ -587,7 +677,7 @@ function closeProfile() {
   modal.style.display = 'none';
   
   if (state.viewingProfile && state.viewingProfile !== state.myIdentity.handle) {
-    unsubscribeFromProfile(state.viewingProfile);
+    window.unsubscribeFromProfile(state.viewingProfile);
   }
   state.viewingProfile = null;
 }
@@ -606,7 +696,7 @@ async function renderProfile(profileData) {
   
   let profilePicHtml = '<div class="profile-picture-placeholder">👤</div>';
   if (profileData.profilePictureHash) {
-    const imageData = await imageStore.retrieveImage(profileData.profilePictureHash);
+    const imageData = await getImageStore().retrieveImage(profileData.profilePictureHash);
     if (imageData) {
       profilePicHtml = `<img src="${imageData}" class="profile-picture" alt="${profileData.handle}'s profile picture" />`;
     } else {
@@ -615,7 +705,7 @@ async function renderProfile(profileData) {
       const peers = Array.from(state.peers.values()).slice(0, 3);
       for (const peer of peers) {
         if (peer.wire && !peer.wire.destroyed) {
-          sendPeer(peer.wire, { type: "request_image", imageHash: profileData.profilePictureHash });
+          sendPeerFunction(peer.wire, { type: "request_image", imageHash: profileData.profilePictureHash });
         }
       }
       
@@ -626,7 +716,7 @@ async function renderProfile(profileData) {
       
       // Set up a listener for when the image arrives
       const checkInterval = setInterval(async () => {
-        const imageData = await imageStore.retrieveImage(profileData.profilePictureHash);
+        const imageData = await getImageStore().retrieveImage(profileData.profilePictureHash);
         if (imageData) {
           clearInterval(checkInterval);
           const placeholder = document.getElementById(`profile-pic-${profileData.profilePictureHash}`);
@@ -695,7 +785,7 @@ window.openProfileEditor = async function() {
   
   let currentPicHtml = '<div class="profile-picture-placeholder">👤</div>';
   if (profile.profilePictureHash) {
-    const imageData = await imageStore.retrieveImage(profile.profilePictureHash);
+    const imageData = await getImageStore().retrieveImage(profile.profilePictureHash);
     if (imageData) {
       currentPicHtml = `<img src="${imageData}" class="profile-picture" alt="Current profile picture" />`;
     }
@@ -761,7 +851,7 @@ window.openProfileEditor = async function() {
     
     try {
       const base64 = await handleImageUpload(file);
-      const toxic = await isImageToxic(base64);
+      const toxic = await window.isImageToxic(base64);
       if (toxic) {
         notify(`Image appears to contain ${toxic.toLowerCase()} content`);
         e.target.value = '';
@@ -789,22 +879,27 @@ window.saveProfile = async function() {
   const textColor = document.getElementById('text-color').value;
   const accentColor = document.getElementById('accent-color').value;
   
-  if (bio && await isToxic(bio)) {
+  if (bio && await window.isToxic(bio)) {
     notify('Your bio may contain inappropriate content. Please revise.');
     return;
   }
   
   let profilePictureHash = state.myIdentity.profile?.profilePictureHash || null;
+  let profilePictureMeta = state.myIdentity.profile?.profilePictureMeta || null; // <-- Get existing meta
+
   const previewDiv = document.getElementById('profile-picture-preview');
   if (previewDiv.style.display !== 'none' && previewDiv.dataset.imageData) {
-    const result = await imageStore.storeImage(previewDiv.dataset.imageData);
+    const result = await getImageStore().storeImage(previewDiv.dataset.imageData);
     profilePictureHash = result.hash;
+    // Get the new metadata from the image store ***
+    profilePictureMeta = getImageStore().images.get(result.hash);
   }
   
   const updatedProfile = {
     handle: state.myIdentity.handle,
     bio: bio,
     profilePictureHash: profilePictureHash,
+    profilePictureMeta: profilePictureMeta, // <-- ADD THIS
     theme: {
       backgroundColor: bgColor,
       fontColor: textColor,
@@ -812,18 +907,23 @@ window.saveProfile = async function() {
     },
     updatedAt: Date.now()
   };
+  state.myIdentity.profile = updatedProfile;
+  
+  // This broadcast will now include the metadata
+  await window.broadcastProfileUpdate(updatedProfile);
+  renderProfile(updatedProfile);
   
   state.myIdentity.profile = updatedProfile;
   
   // This function is in main.js, but we call it from the window scope
-  await broadcastProfileUpdate(updatedProfile);
+  await window.broadcastProfileUpdate(updatedProfile);
   
   renderProfile(updatedProfile);
 
   // Update the profile section in control panel
   const picContainer = document.getElementById('user-profile-pic');
   if (picContainer && profilePictureHash) {
-    const imageData = await imageStore.retrieveImage(profilePictureHash);
+    const imageData = await getImageStore().retrieveImage(profilePictureHash);
     if (imageData) {
       picContainer.innerHTML = `<img src="${imageData}" alt="Your profile" />`;
     }
@@ -1028,6 +1128,15 @@ function loadTopicSubscriptions() {
             console.error('Failed to load saved topics:', e);
         }
     }
+
+    // *** If no topics were loaded from storage, add #general by default ***
+    if (state.subscribedTopics.size === 0) {
+        const defaultTopic = '#general';
+        state.subscribedTopics.add(defaultTopic);
+        addTopicToUI(defaultTopic);
+        saveTopicSubscriptions(); // Save the default so it persists
+        console.log('No saved topics found. Subscribed to #general by default.');
+    }
 }
 
 function updateTopicStats() {
@@ -1134,7 +1243,7 @@ async function handleImageSelect(input) {
 
     try {
         const base64 = await handleImageUpload(file);
-        const toxic = await isImageToxic(base64); // Assumes isImageToxic is globally available or imported
+        const toxic = await window.isImageToxic(base64); // Assumes isImageToxic is globally available or imported
         if (toxic) {
             notify(`Image appears to contain ${toxic.toLowerCase()} content`);
             input.value = '';
@@ -1203,7 +1312,9 @@ function updateStatus() {
 
     clearTimeout(bonfireUpdateTimeout);
     bonfireUpdateTimeout = setTimeout(() => {
-        updateBonfire();
+        if (currentDrawer === 'bonfire') {
+            updateHotTopics();
+        }
     }, 1000);
 }
 
@@ -1282,7 +1393,7 @@ async function handleReplyImageSelect(input, postId) {
 
     try {
         const base64 = await handleImageUpload(file);
-        const toxic = await isImageToxic(base64);
+        const toxic = await window.isImageToxic(base64);
         if (toxic) {
             notify(`Image appears to contain ${toxic.toLowerCase()} content`);
             input.value = '';
@@ -1401,7 +1512,7 @@ export async function sendDM() {
   if (!message || !recipient) return;
 
   // The sendDirectMessage function now handles UI updates on its own.
-  const success = await sendDirectMessage(recipient, message);
+  const success = await window.sendDirectMessage(recipient, message);
 
   if (success) {
     // Just clear the input field.
@@ -1554,6 +1665,8 @@ window.switchDrawer =  function(drawerId) {
   } else if (drawerId === 'inbox') {
     updateDMInbox();
     markAllMessagesAsRead();
+  } else if (drawerId === 'bonfire') {
+    updateHotTopics();
   }
 };
 
@@ -1731,7 +1844,7 @@ document.head.appendChild(style);
 window.openDMPanel = openDMPanel;
 window.closeDMPanel = closeDMPanel;
 window.sendDM = sendDM;
-
+window.renderHotPostsForTopic = renderHotPostsForTopic;
 
 
 // --- EXPORTS ---
@@ -1778,5 +1891,6 @@ export {
     removeReplyImage,
     openProfileForHandle,
     renderProfile,
-    closeProfile
+    closeProfile,
+    updateHotTopics
 };

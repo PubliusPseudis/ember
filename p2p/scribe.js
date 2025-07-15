@@ -1,6 +1,6 @@
 import { sendPeer } from './network-manager.js';
 import { generateId } from '../utils.js';
-
+import { handleNewPost, handleParentUpdate, handleProfileUpdate } from '../main.js';
 
 // --- SCRIBE MULTICAST PROTOCOL ---
 export class Scribe {
@@ -72,6 +72,27 @@ export class Scribe {
   async getRendezvousNode(topic) {
     return await this.dht.hashToNodeId(topic);
   }
+  
+  //track topics    
+    async trackTopicActivity(topic) {
+        if (!this.dht) return;
+        const key = `topic-activity:${topic}`;
+        try {
+            const existing = await this.dht.get(key);
+            const now = Date.now();
+            let score = 1;
+            if (existing) {
+                // Simple decay: reduce score by half every hour
+                const ageHours = (now - existing.lastSeen) / 3600000;
+                const decayFactor = Math.pow(0.5, ageHours);
+                score = (existing.score * decayFactor) + 1;
+            }
+            await this.dht.store(key, { score: score, lastSeen: now });
+        } catch (e) {
+            console.error(`[Scribe] Failed to track activity for topic ${topic}:`, e);
+        }
+      }
+  
   
   // Subscribe to a topic
   async subscribe(topic) {
@@ -163,6 +184,9 @@ export class Scribe {
         break;
     }
   }
+  
+  
+  
   
   // Handle JOIN request
   async handleJoin(msg, fromWire) {
@@ -328,14 +352,32 @@ export class Scribe {
   // Handle multicast message
   handleMulticast(msg, fromWire) {
     const { topic, message, messageId } = msg;
+    this.trackTopicActivity(topic);
     this.disseminateMessage(topic, message, messageId, fromWire);
   }
   
   // Deliver message to local application
-  deliverMessage(topic, message) {
-    // For now, just log it - integrate with post handling later
-    console.log(`[Scribe] Delivered message on topic ${topic}:`, message);
-  }
+deliverMessage(topic, message) {
+    // This function is the endpoint for messages received via Scribe multicast.
+    // It's responsible for handing off the message to the main application logic.
+    if (!message || !message.type) return;
+
+    console.log(`[Scribe] Delivering message of type "${message.type}" on topic ${topic}`);
+
+    try {
+        if (message.type === 'new_post' && message.post) {
+            // Don't process our own posts that have been echoed back to us
+            if (message.post.author === state.myIdentity.handle) return;
+            handleNewPost(message.post, null);
+        } else if (message.type === 'PROFILE_UPDATE') {
+            handleProfileUpdate(message, null);
+        } else if (message.type === 'parent_update') {
+            handleParentUpdate(message);
+        }
+    } catch (e) {
+        console.error(`[Scribe] Error delivering message of type ${message.type}:`, e);
+    }
+}
   
   // Start maintenance tasks
   startMaintenance() {
@@ -423,6 +465,9 @@ export class Scribe {
     return stats;
   }
   
+
+
+      
   // Cleanup on shutdown
   destroy() {
     if (this.maintenanceTimer) {
@@ -433,5 +478,6 @@ export class Scribe {
     Array.from(this.subscribedTopics.keys()).forEach(topic => {
       this.unsubscribe(topic);
     });
-  }
+  }  
+  
 }

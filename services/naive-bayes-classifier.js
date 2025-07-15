@@ -4,7 +4,8 @@
  * * Includes methods to save and load the trained model from a file.
  * * @version 1.2.0-browser
  */
-import PRE_TRAINED_MODEL from './model_weights.json';
+import PRE_TRAINED_MODEL from './model_weights.json' assert { type: 'json' };
+
 
 export class NaiveBayesClassifier {
     constructor() {

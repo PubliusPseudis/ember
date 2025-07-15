@@ -1,5 +1,6 @@
 // --- IMPORTS ---
-import { state, debugPostRemoval } from '../main.js';
+import { state } from '../state.js';
+import { debugPostRemoval } from '../main.js';
 import { dropPost } from '../ui.js';
 import { HierarchicalBloomFilter, BloomFilter, isReply } from '../utils.js';
 

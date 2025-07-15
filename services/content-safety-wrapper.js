@@ -27,7 +27,7 @@ const DEFAULT_RULE_PATH = '/rulepacks/default.json'; // looks in /public
 let   instance   = null;   // the singleton
 let   activePath = null;   // where the current rules came from
 
-// -- 1. Load JSON (browser or Node) ------------------------------------------
+// -- 1. Load JSON  ------------------------------------------
 async function loadJson(path) {
   // Browser / Vite dev server / production
   if (typeof fetch === 'function') {
@@ -39,15 +39,7 @@ async function loadJson(path) {
     return null;
   }
 
-  // Classic Node (headless relay)
-  try {
-    const { readFile } = await import('fs/promises');
-    const txt = await readFile(path, 'utf8');
-    return JSON.parse(txt);
-  } catch (err) {
-    console.warn(`[ContentSafety] fs.readFile failed for ${path}`, err);
-    return null;
-  }
+
 }
 
 // -- 2. Build (or return) the singleton --------------------------------------

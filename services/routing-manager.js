@@ -1,4 +1,4 @@
-import { state } from '../main.js';
+import { state } from '../state.js';
 import { arrayBufferToBase64 } from '../utils.js';
 import { sendPeer } from '../p2p/network-manager.js';
 

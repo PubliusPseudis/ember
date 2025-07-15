@@ -1,5 +1,7 @@
 import nacl from 'tweetnacl'; 
-import { state, imageStore } from '../main.js'; 
+import { state } from '../state.js';
+import { getImageStore } from '../services/instances.js';
+
 import { generateId, sanitize, arrayBufferToBase64, base64ToArrayBuffer } from '../utils.js';
 import { CONFIG } from '../config.js';
 
@@ -81,6 +83,7 @@ export class Post {
 
     async processImage() {
         if (this.imageData && !this.imageHash) {
+            const imageStore = getImageStore();
             const result = await imageStore.storeImage(this.imageData);
             this.imageHash = result.hash;
             // The Merkle root is part of imageStore.images.get(this.imageHash).merkleRoot
@@ -351,7 +354,8 @@ export class Post {
         
         // Get fresh image metadata if available
         let imageMeta = null;
-        if (this.imageHash && imageStore.images.has(this.imageHash)) {
+        const imageStore = getImageStore();
+        if (this.imageHash && imageStore && imageStore.images.has(this.imageHash)) {
             const metadata = imageStore.images.get(this.imageHash);
             imageMeta = {
                 merkleRoot: metadata.merkleRoot,
@@ -456,7 +460,8 @@ export class Post {
 
         // Store image metadata if available
         if (j.imageMeta && j.imageHash) {
-            if (!imageStore.images.has(j.imageHash)) {
+            const imageStore = getImageStore();
+            if (imageStore && !imageStore.images.has(j.imageHash)) {
                 imageStore.images.set(j.imageHash, j.imageMeta);
                 console.log(`[Post.fromJSON] Stored image metadata for ${j.imageHash.substring(0, 8)}...`);
             }

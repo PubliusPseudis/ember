@@ -1,11 +1,12 @@
+import { state } from './state.js';
 import { generateId } from './utils.js';
-import { state, imageStore } from './main.js'; 
 import { Post } from './models/post.js';
-import { peerManager } from './main.js';
-import { renderPost } from './ui.js'; 
 
 export class StateManager {
-  constructor() {
+  constructor(dependencies = {}) {
+    this.imageStore = dependencies.imageStore;
+    this.peerManager = dependencies.peerManager;
+    this.renderPost = dependencies.renderPost;
     this.dbName = 'EmberNetwork';
     this.version = 2;
     this.db = null;
@@ -177,7 +178,9 @@ export class StateManager {
               }
 
               state.posts.set(post.id, post);
-              renderPost(post); // Render the post immediately
+              if (this.renderPost) {
+                this.renderPost(post); // Render the post immediately
+              }
 
               if (postData.wasExplicitlyCarried) {
                 state.explicitlyCarrying.add(post.id);
@@ -194,7 +197,7 @@ export class StateManager {
   
   
   async saveImageChunks() {
-        if (!this.db || !imageStore) return;
+        if (!this.db || !this.imageStore) return;
 
         const transaction = this.db.transaction(['imageChunks'], 'readwrite');
         const store = transaction.objectStore('imageChunks');
@@ -206,14 +209,14 @@ export class StateManager {
         });
 
         // Save all current chunks from the imageStore
-        for (const [hash, data] of imageStore.chunks) {
+        for (const [hash, data] of this.imageStore.chunks) {
             store.add({ hash: hash, data: data });
         }
-        console.log(`Saved ${imageStore.chunks.size} image chunks to storage.`);
+        console.log(`Saved ${this.imageStore.chunks.size} image chunks to storage.`);
     }
 
     async loadImageChunks() {
-        if (!this.db || !imageStore) return;
+        if (!this.db || !this.imageStore) return;
 
         const transaction = this.db.transaction(['imageChunks'], 'readonly');
         const store = transaction.objectStore('imageChunks');
@@ -223,7 +226,7 @@ export class StateManager {
             request.onsuccess = () => {
                 const chunks = request.result;
                 chunks.forEach(chunk => {
-                    imageStore.chunks.set(chunk.hash, chunk.data);
+                    this.imageStore.chunks.set(chunk.hash, chunk.data);
                 });
                 console.log(`Loaded ${chunks.length} image chunks from storage.`);
                 resolve(chunks.length);
@@ -314,18 +317,18 @@ export class StateManager {
     }
   
   async savePeerScores() {
-    if (!this.db || !peerManager) return;
+    if (!this.db || !this.peerManager) return;
     
     const transaction = this.db.transaction(['peerScores'], 'readwrite');
     const store = transaction.objectStore('peerScores');
     
-    peerManager.scores.forEach((score, peerId) => {
+    this.peerManager.scores.forEach((score, peerId) => {
       store.put({ peerId, ...score });
     });
   }
   
   async loadPeerScores() {
-    if (!this.db || !peerManager) return;
+    if (!this.db || !this.peerManager) return;
     
     const transaction = this.db.transaction(['peerScores'], 'readonly');
     const store = transaction.objectStore('peerScores');
@@ -336,7 +339,7 @@ export class StateManager {
         const scores = request.result;
         scores.forEach(score => {
           const { peerId, ...data } = score;
-          peerManager.scores.set(peerId, data);
+          this.peerManager.scores.set(peerId, data);
         });
         console.log(`Loaded ${scores.length} peer scores`);
         resolve();

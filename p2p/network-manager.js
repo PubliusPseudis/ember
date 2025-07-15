@@ -3,18 +3,25 @@
 
 // --- IMPORTS ---
 import WebTorrent from 'webtorrent';
-import { epidemicGossip, state, peerManager, imageStore, dandelion, handleNewPost, handleProvisionalClaim, handleConfirmationSlip, handleParentUpdate, handlePostsResponse, handleCarrierUpdate, handleVerificationResults, generateAndBroadcastAttestation,evaluatePostTrust, handleDirectMessage, handlePostRating } from '../main.js';
-import { updateConnectionStatus, notify, updateStatus, refreshPost, renderPost } from '../ui.js';
+// Import shared state and services directly from the state module
+import { state } from '../state.js';
+import { getServices } from '../services/instances.js';
+
+// Message handler registry
+const messageHandlers = new Map();
+export function registerHandler(type, handler) {
+  messageHandlers.set(type, handler);
+}
+
+
+import { updateConnectionStatus, notify, updateStatus, refreshPost, renderPost, setSendPeer, updateProfilePicturesInPosts } from '../ui.js';
 import { CONFIG } from '../config.js';
 import { generateId, hexToUint8Array, normalizePeerId, arrayBufferToBase64, base64ToArrayBuffer } from '../utils.js';
 import { KademliaDHT } from './dht.js';
 import { HyParView } from './hyparview.js';
 import { Scribe } from './scribe.js';
-import { Plumtree } from './plumtree.js';
+//import { Plumtree } from './plumtree.js';
 import nacl from 'tweetnacl'; 
-
-
-const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
 
 
 // --- FUNCTION DEFINITIONS ---
@@ -26,7 +33,7 @@ function initNetwork() { // It no longer needs to be async
   console.log("Initializing network... iOS:", isIOS);
 
  
-  if (!isNode && !window.RTCPeerConnection) {
+  if (!window.RTCPeerConnection) {
     console.error("WebRTC not supported!");
     updateConnectionStatus("WebRTC not supported on this device", 'error');
     notify("WebRTC not supported on this device");
@@ -359,12 +366,12 @@ function handleWire(wire, addr) {
     state.hyparview.addToActiveView(originalId, { wire, isOutgoing: false });
   }
 
-  peerManager.updateScore(idKey, 'connection', 1);
+  getServices().peerManager.updateScore(idKey, 'connection', 1);
   updateStatus();
 
   wire.on('download', (bytes) => {
     peerData.bytesReceived += bytes;
-    peerManager.updateScore(idKey, 'data', bytes / 1000);
+    getServices().peerManager.updateScore(idKey, 'data', bytes / 1000);
   });
 
   wire.on('upload', (bytes) => {
@@ -408,7 +415,7 @@ setTimeout(async () => {
 
   wire.on('close', () => {
     console.log(`Disconnected from peer: ${idKey}`);
-    peerManager.updateScore(idKey, 'disconnection', 1);
+    getServices().peerManager.updateScore(idKey, 'disconnection', 1);
     state.peers.delete(idKey);
     if (state.dht && originalId) state.dht.removePeer(originalId);
     if (state.hyparview && originalId) state.hyparview.handlePeerFailure(originalId);
@@ -417,6 +424,31 @@ setTimeout(async () => {
 
   wire.on('error', err => console.error(`Wire error ${idKey}:`, err.message));
 }
+
+function broadcast(message, excludePeerWire = null) {
+  // Use the resilient active view from HyParView for gossip
+  if (!state.hyparview) {
+    console.warn("[Broadcast] HyParView not initialized. Cannot broadcast.");
+    return;
+  }
+
+  const activePeers = state.hyparview.getActivePeers();
+  if (activePeers.length === 0) {
+    console.warn("[Broadcast] No active peers in HyParView to broadcast to.");
+    return;
+  }
+
+  console.log(`[Broadcast] Gossiping message type "${message.type}" to ${activePeers.length} active peers.`);
+  
+  for (const peer of activePeers) {
+    // Check if the peer wire is valid and not the one to exclude
+    if (peer.wire && !peer.wire.destroyed && peer.wire !== excludePeerWire) {
+      sendPeer(peer.wire, message);
+    }
+  }
+}
+
+
 
 const sendPeer = (wire, msg) => {
   if (!wire || wire.destroyed) return;
@@ -474,7 +506,10 @@ const sendPeer = (wire, msg) => {
   } catch (e) {
     console.warn("sendPeer fail", e.message);
   }
-};;
+};
+
+setSendPeer(sendPeer);
+
 
 function attachEphemeralExtension(wire) {
   function EphemeralExtension() {
@@ -558,31 +593,8 @@ async function authenticatePeer(wire, peerId) {
 }
 
 
-function broadcast(msg, excludeWire = null) {
-  if (!msg.msgId) {
-    msg.msgId = generateId();
-    msg.hops = 0;
-  }
 
-  if (epidemicGossip.messageTTL.has(msg.msgId)) {
-    const hops = epidemicGossip.messageTTL.get(msg.msgId);
-    if (hops >= epidemicGossip.maxHops) return;
-    msg.hops = hops + 1;
-  }
-  epidemicGossip.messageTTL.set(msg.msgId, msg.hops);
 
-  if (state.plumtree && state.hyparview && state.hyparview.getActivePeers().length > 2) {
-    state.plumtree.broadcast(msg, excludeWire?.peerId?.toString('hex'));
-  } else {
-    const networkSize = state.peers.size;
-    let fanout = Math.ceil(Math.log2(networkSize + 1)) + 2;
-    fanout = Math.min(fanout, 8);
-    const selected = epidemicGossip.selectRandomPeers(fanout, [excludeWire]);
-    selected.forEach(peer => {
-      epidemicGossip.sendWithExponentialBackoff(peer, msg);
-    });
-  }
-}
 
 async function handlePeerMessage(msg, fromWire) {
   if (msg.msgId && state.seenMessages.has(msg.msgId)) {
@@ -613,6 +625,12 @@ async function handlePeerMessage(msg, fromWire) {
       state.trafficMixer.addToMixPool(msg, fromWire);
   }
 
+  const handler = messageHandlers.get(msg.type);
+  if (handler) {
+    await handler(msg, fromWire);
+    return;
+  }
+
   switch (msg.type) {
     case "dht_rpc":
       if (state.dht) state.dht.handleRPC(msg, fromWire);
@@ -623,31 +641,19 @@ async function handlePeerMessage(msg, fromWire) {
     case "scribe":
       if (state.scribe) state.scribe.handleMessage(msg, fromWire);
       break;
-    case "plumtree":
-        if (state.plumtree) state.plumtree.handleMessage(msg, fromWire);
-        break;
-    case "onion_relay":
-        dandelion.handleOnionRelay(msg, fromWire);
-        break;
-    case 'provisional_identity_claim':
-        await handleProvisionalClaim(msg.claim);
-        break;
+
     case "request_image_chunks":
       if (msg.imageHash && Array.isArray(msg.chunkHashes) && msg.chunkHashes.length <= 100) {
         handleChunkRequest(msg.imageHash, msg.chunkHashes, fromWire);
       }
       break;
-    case 'post_attestation':
-      handlePostAttestation(msg, fromWire);
-      break;
+
     case "chunk_response":
       if (msg.imageHash && msg.chunks) {
         handleChunkResponse(msg);
       }
       break;
-    case 'identity_confirmation_slip':
-        await handleConfirmationSlip(msg.slip);
-        break;
+
     case "peer_exchange":
       if (msg.peers && Array.isArray(msg.peers)) {
         msg.peers.forEach(peerInfo => {
@@ -674,42 +680,25 @@ async function handlePeerMessage(msg, fromWire) {
         });
       }
       break;
-    case "e2e_dm":
-      await handleDirectMessage(msg, fromWire);
-      break;
+
     case "noise":
       return;
-    case "new_post":
-      if (msg.phase === "stem" || msg.phase === "fluff") {
-        dandelion.handleRoutedPost(msg, fromWire);
-      } else {
-        await handleNewPost(msg.post || msg, fromWire);
-      }
-      break;
+
     case "request_image":
       handleImageRequest(msg.imageHash, fromWire);
       break;
     case "image_response":
       handleImageResponse(msg);
       break;
-    case "parent_update":
-      handleParentUpdate(msg);
-      break;
+
     case "request_posts":
       if (fromWire) {
         const list = [...state.posts.values()].map(p => p.toJSON());
         sendPeer(fromWire, { type: "posts_response", posts: list });
       }
       break;
-    case "post_rating":
-        handlePostRating(msg, fromWire);
-        break;
-    case "posts_response":
-      await handlePostsResponse(msg.posts, fromWire);
-      break;
-    case "carrier_update":
-      handleCarrierUpdate(msg);
-      break;
+
+
     case "auth_challenge":
       if (state.myIdentity && state.myIdentity.secretKey) {
         const signature = nacl.sign(
@@ -776,15 +765,15 @@ async function handlePeerMessage(msg, fromWire) {
         }
       }
       break;
-      case "dm_delivered":
-          if (msg.messageId) {
+    case "dm_delivered":
+        if (msg.messageId) {
             console.log(`[DM] Received delivery confirmation for message ${msg.messageId}`);
-            stateManager.markMessageDelivered(msg.messageId);
+            getServices().stateManager.markMessageDelivered(msg.messageId);
             
             // Update UI to show delivered status
             notify(`Message to ${msg.recipient} delivered ✓`);
-          }
-          break;
+        }
+        break;
     case "routing_update":
       if (msg.handle && msg.nodeId && msg.peerId && msg.timestamp) {
         console.log(`[Network] Received routing update from ${msg.handle}`);
@@ -855,95 +844,10 @@ async function handlePeerMessage(msg, fromWire) {
 }
 
 
-async function handlePostAttestation(msg, fromWire) {
-  const { attestation, attesterHandle, attesterPublicKey, signature } = msg;
-  
-  if (!attestation || !attesterHandle || !attesterPublicKey || !signature) {
-    console.warn('[Attestation] Invalid attestation message format');
-    return;
-  }
-  
-  // Verify the signature
-  try {
-    const dataToVerify = JSON.stringify(attestation);
-    const publicKey = base64ToArrayBuffer(attesterPublicKey);
-    const sig = base64ToArrayBuffer(signature);
-    
-    const verified = nacl.sign.open(sig, publicKey);
-    if (!verified) {
-      console.warn(`[Attestation] Invalid signature from ${attesterHandle}`);
-      return;
-    }
-    
-    const decodedData = new TextDecoder().decode(verified);
-    if (decodedData !== dataToVerify) {
-      console.warn(`[Attestation] Signature mismatch from ${attesterHandle}`);
-      return;
-    }
-  } catch (e) {
-    console.error('[Attestation] Signature verification failed:', e);
-    return;
-  }
-  
-  // Check attestation age (prevent replay attacks)
-  const age = Date.now() - attestation.timestamp;
-  if (age > 60000) { // Reject attestations older than 1 minute
-    console.warn(`[Attestation] Attestation too old: ${age}ms`);
-    return;
-  }
-  
-  // Get attester's reputation
-  const peerId = fromWire.peerId;
-  const reputation = peerManager.getScore(peerId);
-  const canTrust = peerManager.canTrustAttestations(peerId);
-  
-  console.log(`[Attestation] Received from ${attesterHandle} (rep: ${reputation.toFixed(2)}, trusted: ${canTrust})`);
-  
-  // Find the post (could be in pendingVerification or already in posts)
-  let post = state.pendingVerification.get(attestation.postId);
-  if (!post) {
-    post = state.posts.get(attestation.postId);
-  }
-  
-  if (!post) {
-    console.log(`[Attestation] Post ${attestation.postId} not found`);
-    return;
-  }
-  
-  // Add attestation to the post
-  const wasNew = post.addAttestation(attesterHandle, reputation);
-  
-  if (wasNew) {
-    console.log(`[Attestation] Added to post ${attestation.postId}, trust score: ${post.trustScore.toFixed(2)}`);
-    
-    // Track attestation for reputation
-    peerManager.updateScore(peerId, 'attestation', 1);
-    
-    // Nudge the verifier so we don't wait for the next scheduled sweep
-    if (state.pendingVerification.has(attestation.postId)) { 
-        evaluatePostTrust(attestation.postId); 
-    }
-    
-    // If post is still pending and now has enough trust, promote it
-    if (state.pendingVerification.has(attestation.postId) && 
-        post.hasSufficientTrust(CONFIG.TRUST_THRESHOLD)) {
-      console.log(`[Attestation] Post ${attestation.postId} reached trust threshold, promoting without verification`);
-      
-      // Move from pending to verified
-      state.pendingVerification.delete(attestation.postId);
-      post.verified = true;
-      state.posts.set(post.id, post);
-      renderPost(post);
-      notify(`Post verified by peer attestations`);
-      
-      // The attester gets credit for a correct attestation
-      peerManager.updateScore(peerId, 'correct_attestation', 1);
-    }
-  }
-}
+
 
 async function handleImageRequest(imageHash, fromWire) {
-    const metadata = imageStore.images.get(imageHash);
+    const metadata = getServices().imageStore.images.get(imageHash);
     if (!metadata) {
         console.log(`[ImageRequest] Peer requested image ${imageHash.substring(0, 8)}... but we don't have its metadata.`);
         return;
@@ -952,7 +856,7 @@ async function handleImageRequest(imageHash, fromWire) {
 
     const chunks = [];
     for (const chunkMeta of metadata.chunks) {
-        const chunkData = imageStore.chunks.get(chunkMeta.hash);
+        const chunkData = getServices().imageStore.chunks.get(chunkMeta.hash);
         if (chunkData) {
             chunks.push({ hash: chunkMeta.hash, data: chunkData });
         } else {
@@ -970,20 +874,20 @@ async function handleImageRequest(imageHash, fromWire) {
 
 async function handleImageResponse(msg) {
     console.log(`[ImageResponse] Received image response for hash: ${msg.imageHash.substring(0, 8)}...`);
-    if (!imageStore.images.has(msg.imageHash) && msg.metadata) {
-        imageStore.images.set(msg.imageHash, msg.metadata);
+    if (!getServices().imageStore.images.has(msg.imageHash) && msg.metadata) {
+        getServices().imageStore.images.set(msg.imageHash, msg.metadata);
     }
 
     if (msg.chunks && Array.isArray(msg.chunks)) {
         for (const chunk of msg.chunks) {
-            if (chunk.hash && chunk.data && !imageStore.chunks.has(chunk.hash)) {
+            if (chunk.hash && chunk.data && !getServices().imageStore.chunks.has(chunk.hash)) {
                 // For simplicity, we assume the chunk hash is valid here. A robust implementation would verify it.
-                imageStore.chunks.set(chunk.hash, chunk.data);
+                getServices().imageStore.chunks.set(chunk.hash, chunk.data);
             }
         }
     }
 
-    const imageData = await imageStore.retrieveImage(msg.imageHash);
+    const imageData = await getServices().imageStore.retrieveImage(msg.imageHash);
 
     if (imageData) {
         // Check if a post was waiting for this image in the verification queue
@@ -1007,7 +911,12 @@ async function handleImageResponse(msg) {
 
             state.posts.set(pendingPost.id, pendingPost);
             renderPost(pendingPost); // Render for the first time
-            generateAndBroadcastAttestation(pendingPost);
+            
+            // Trigger attestation through registered handler
+            const attestationHandler = messageHandlers.get('generate_attestation');
+            if (attestationHandler) {
+                attestationHandler(pendingPost);
+            }
 
             // Finally, remove it from the pending queue
             state.pendingVerification.delete(pendingPost.id);
@@ -1022,12 +931,14 @@ async function handleImageResponse(msg) {
                 refreshPost(post);
             }
         }
+    // Trigger a UI scan for any placeholders that can now be filled ***
+    updateProfilePicturesInPosts(); 
     } else {
         // The image is still not complete, request the remaining chunks
-        const metadata = imageStore.images.get(msg.imageHash);
+        const metadata = getServices().imageStore.images.get(msg.imageHash);
         if (metadata) {
             const missingChunkHashes = metadata.chunks
-                .filter(chunkMeta => !imageStore.chunks.has(chunkMeta.hash))
+                .filter(chunkMeta => !getServices().imageStore.chunks.has(chunkMeta.hash))
                 .map(chunkMeta => chunkMeta.hash);
 
             if (missingChunkHashes.length > 0) {
@@ -1050,7 +961,7 @@ function handleChunkRequest(imageHash, requestedHashes, fromWire) {
     
     const chunks = [];
     for (const hash of requestedHashes) {
-        const chunk = imageStore.chunks.get(hash);
+        const chunk = getServices().imageStore.chunks.get(hash);
         if (chunk) {
             chunks.push({ hash, data: chunk });
         }
@@ -1079,11 +990,11 @@ async function handleChunkResponse(msg) {
     
     let newChunksCount = 0;
     for (const { hash, data } of msg.chunks) {
-        if (!imageStore.chunks.has(hash)) {
+        if (!getServices().imageStore.chunks.has(hash)) {
             // Verify chunk hash before storing
-            const actualHash = await imageStore.sha256(data);
+            const actualHash = await getServices().imageStore.sha256(data);
             if (actualHash === hash) {
-                imageStore.chunks.set(hash, data);
+                getServices().imageStore.chunks.set(hash, data);
                 newChunksCount++;
                 
                 // Notify any pending requests via a custom event
@@ -1105,7 +1016,7 @@ async function handleChunkResponse(msg) {
         console.log(`[ChunkResponse] Stored ${newChunksCount} new chunks for image ${msg.imageHash.substring(0, 8)}...`);
         
         // Try to retrieve the image now that we have new chunks
-        const imageData = await imageStore.retrieveImage(msg.imageHash);
+        const imageData = await getServices().imageStore.retrieveImage(msg.imageHash);
         if (imageData) {
             // Update all posts that need this image
             for (const [id, post] of state.posts) {
@@ -1123,7 +1034,7 @@ async function handleChunkResponse(msg) {
 // Export the functions that main.js needs to call.
 export {
   initNetwork,
+  sendPeer,  
   broadcast,
-  sendPeer,
   handlePeerMessage
 };

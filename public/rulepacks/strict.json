@@ -1,6 +1,6 @@
 {
   "profanity_basic": {
-    "severity": "high",           // ↑ stricter than default
+    "severity": "high",
     "patterns": [
       "\\b(fuck|shit|damn|bitch|asshole)\\b"
     ],
@@ -8,7 +8,7 @@
   },
 
   "hate_slurs_core": {
-    "severity": "critical",       // ↑
+    "severity": "critical",
     "patterns": [
       "\\b(kike|gook|wetback|tranny|nigger|faggot)\\b"
     ],
@@ -16,7 +16,7 @@
   },
 
   "spam_links": {
-    "severity": "medium",         // ↑
+    "severity": "medium",
     "patterns": [
       "https?:\\/\\/(?:[^\\s]+\\.)?(?:free-gift|win-big|click-here)[^\\s]*"
     ],
@@ -26,7 +26,7 @@
   "capslock_yelling": {
     "severity": "low",
     "patterns": [
-      "^[A-Z\\s]{20,}$"            // whole message ≥20 chars, all caps
+      "^[A-Z\\s]{20,}$"
     ],
     "requiresContext": false
   }

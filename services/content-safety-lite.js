@@ -395,30 +395,29 @@ export class ContentSafetySystem {
 compilePatterns() {
   console.log('[ContentSafety] Starting pattern compilation...');
   const compiled = new Map();
-  
+
   // First, verify harmPatterns exists
   if (!this.harmPatterns) {
     console.error('[ContentSafety] ERROR: harmPatterns is undefined!');
     return compiled;
   }
-  
+
   for (const [severity, categories] of Object.entries(this.harmPatterns)) {
     console.log(`[ContentSafety] Compiling severity: ${severity}`);
     compiled.set(severity, new Map());
-    
+
     if (!categories || typeof categories !== 'object') {
       console.error(`[ContentSafety] Invalid categories for ${severity}:`, categories);
       continue;
     }
-    
+
     for (const [category, config] of Object.entries(categories)) {
       console.log(`[ContentSafety]   Compiling category: ${category}`);
-      
       if (!config) {
         console.error(`[ContentSafety] Config is undefined for ${severity}.${category}`);
         continue;
       }
-      
+
       if (!config.patterns) {
         console.error(`[ContentSafety] No patterns array for ${severity}.${category}`);
         compiled.get(severity).set(category, {
@@ -427,56 +426,51 @@ compilePatterns() {
         });
         continue;
       }
-      
+
       if (!Array.isArray(config.patterns)) {
         console.error(`[ContentSafety] Patterns is not an array for ${severity}.${category}:`, config.patterns);
         continue;
       }
-      
+
       const compiledPatterns = [];
-      
       for (let i = 0; i < config.patterns.length; i++) {
         const pattern = config.patterns[i];
-        
         if (!pattern) {
           console.error(`[ContentSafety] Pattern ${i} is undefined in ${severity}.${category}`);
           continue;
         }
-        
-        if (!(pattern instanceof RegExp)) {
-          console.error(`[ContentSafety] Pattern ${i} is not a RegExp in ${severity}.${category}:`, pattern, typeof pattern);
-          continue;
-        }
-        
-        if (!pattern.source) {
-          console.error(`[ContentSafety] Pattern ${i} has no source in ${severity}.${category}:`, pattern);
-          continue;
-        }
-        
+
         try {
-          const source = pattern.source.replace(/\\b/g, '');
-          const flags = pattern.flags || '';
-          const newPattern = new RegExp(source, flags.includes('u') ? flags : flags + 'u');
+          let newPattern;
+          // Handle both RegExp objects from code and strings from JSON
+          if (pattern instanceof RegExp) {
+            // It's a hard-coded RegExp object, use it as-is
+            newPattern = pattern;
+          } else if (typeof pattern === 'string') {
+            // It's a string from JSON, create a new RegExp from it
+            // We assume case-insensitivity ('i') is a good default for all rules
+            newPattern = new RegExp(pattern, 'i');
+          } else {
+            console.error(`[ContentSafety] Pattern ${i} is not a RegExp or a string in ${severity}.${category}:`, typeof pattern);
+            continue;
+          }
           compiledPatterns.push(newPattern);
         } catch (e) {
           console.error(`[ContentSafety] Failed to compile pattern ${i} in ${severity}.${category}:`, e, pattern);
-          // Add the original pattern as fallback
-          compiledPatterns.push(pattern);
         }
       }
-      
+
       console.log(`[ContentSafety]   Compiled ${compiledPatterns.length} patterns for ${category}`);
-      
       compiled.get(severity).set(category, {
         patterns: compiledPatterns,
         contextRules: config.contextRules || {}
       });
     }
   }
-  
+
   console.log('[ContentSafety] Pattern compilation complete');
   console.log('[ContentSafety] Compiled structure:', compiled);
-  
+
   return compiled;
 }
   

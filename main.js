@@ -14,7 +14,12 @@ import { CONFIG } from './config.js';
 import { Post } from './models/post.js';
 import { VerificationQueue } from './verification-queue.js';
 import { KademliaDHT } from './p2p/dht.js';
-// Correctly import all necessary functions from ui.js
+
+// --- 2. IMPORT SHARED STATE & SERVICES ---
+import { initializeServices, getServices } from './services.js';
+
+import { state } from './state.js';
+
 import {
     currentDMRecipient, addMessageToConversation, applyTheme, setupThemeToggle, 
     showConnectScreen, updateLoadingMessage, renderPost, refreshPost, dropPost, 
@@ -23,7 +28,7 @@ import {
     discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, 
     scrollToPost, subscribeToTopic, handleReplyImageSelect, removeReplyImage, 
     storeDMLocallyAndUpdateUI, updateDMInbox, updateUnreadBadge, toggleThread,
-    openProfileForHandle, renderProfile, closeProfile, updateProfilePicturesInPosts, initializeUserProfileSection
+    openProfileForHandle, renderProfile, closeProfile, updateProfilePicturesInPosts, initializeUserProfileSection, setSendPeer,updateHotTopics
 } from './ui.js';
 import { StateManager } from './storage.js';
 import { MemoryManager } from './services/memory-manager.js';
@@ -32,60 +37,81 @@ import { ContentAddressedImageStore } from './services/image-store.js';
 import { createNewIdentity } from './identity/identity-flow.js';
 import { IdentityRegistry } from './identity/identity-manager.js';
 import { ProgressiveVDF } from './identity/vdf.js';
-import { initNetwork, broadcast, sendPeer} from './p2p/network-manager.js';
+import { initNetwork, registerHandler, sendPeer, broadcast } from './p2p/network-manager.js';
 import { NoiseGenerator } from './p2p/noise-generator.js';
 import { TrafficMixer } from './p2p/traffic-mixer.js';
-import { DandelionRouter } from './p2p/dandelion.js';
+//import { DandelionRouter } from './p2p/dandelion.js';
 import { HierarchicalBloomFilter, BloomFilter, generateId, isReply, arrayBufferToBase64, base64ToArrayBuffer, JSONStringifyWithBigInt, JSONParseWithBigInt } from './utils.js';
 import wasmVDF from './vdf-wrapper.js'; 
 import { EpidemicGossip } from './p2p/epidemic-gossip.js';
 import { HyParView } from './p2p/hyparview.js';
 import { Scribe } from './p2p/scribe.js';
-import { Plumtree } from './p2p/plumtree.js';
 import { routingManager } from './services/routing-manager.js';
 
-// --- 2. GLOBAL STATE ---
-export const state = {
-  posts: new Map(),
-  peers: new Map(),
-  peerIdentities: new Map(),
-  myIdentity: null,
-  client: null,
-  provisionalIdentities: new Map(),
-  explicitlyCarrying: new Set(),
-  viewing: new Set(),
-  toxicityClassifier: null,
-  imageClassifier: null,
-  seenMessages: new HierarchicalBloomFilter(),
-  seenPosts: new HierarchicalBloomFilter(),
-  dht: null,
-  hyparview: null,
-  scribe: null,
-  plumtree: null,
-  identityRegistry: null,
-  subscribedTopics: new Set(['#general', '#ember']),
-  topicFilter: '',
-  feedMode: 'all',
-  pendingVerification: new Map(),
-  viewingProfile: null, // Currently viewed profile handle
-  profileCache: new Map(), // Cache for received profiles
+
+// Get service references
+let stateManager, verificationQueue, imageStore, peerManager, memoryManager;
+let progressiveVDF, noiseGenerator, trafficMixer, epidemicGossip;
+
+// --- EXPORTS for other modules to import handler functions ---
+export {
+  // Core post handlers
+  handleNewPost,
+  handlePostsResponse,
+  handleVerificationResults,
+
+  // Identity and Attestation
+  handleProvisionalClaim,
+  handleConfirmationSlip,
+  generateAndBroadcastAttestation,
+  evaluatePostTrust,
+  scheduleTrustEvaluation,
+  hashClaim,
+
+  // Post interaction handlers
+  createPostWithTopics,
+  createReply,
+  toggleCarry,
+  handleCarrierUpdate,
+  handleParentUpdate,
+  findRootPost,
+  
+  // Rating system
+  ratePost,
+  handlePostRating,
+
+  // Content checking
+  isToxic,
+  isImageToxic,
+
+  // Direct Messaging
+  sendDirectMessage,
+  handleDirectMessage,
+
+  // Profile system
+  broadcastProfileUpdate,
+  subscribeToProfile,
+  unsubscribeFromProfile,
+  handleProfileUpdate,
+  
+  // P2P Protocol and Network Management
+  initializeP2PProtocols,
+  initNetworkWithTempId,
+  handleScribeMessage,
+  sendToPeer,
+  findPeerByHandle,
+
+  // Maintenance and Debugging
+  startMaintenanceLoop,
+  maintenanceInterval,
+  debugPostRemoval
 };
 
 // Trust evaluation system for incoming posts
 const trustEvaluationTimers = new Map(); // postId -> timer
 
 
-// --- 3. SERVICE INSTANCES ---
-export const stateManager = new StateManager();
-export const verificationQueue = new VerificationQueue();
-export const imageStore = new ContentAddressedImageStore();
-export const peerManager = new PeerManager();
-export const memoryManager = new MemoryManager();
-export const progressiveVDF = new ProgressiveVDF();
-export const noiseGenerator = new NoiseGenerator();
-export const trafficMixer = new TrafficMixer();
-export const dandelion = new DandelionRouter();
-export const epidemicGossip = new EpidemicGossip();
+
 
 
 // --- 4. CORE LOGIC & HANDLERS ---
@@ -121,7 +147,94 @@ async function initContentFilter() {
   }
 }
 
-export async function isToxic(text) {
+async function handlePostAttestation(msg, fromWire) {
+  const { attestation, attesterHandle, attesterPublicKey, signature } = msg;
+  
+  if (!attestation || !attesterHandle || !attesterPublicKey || !signature) {
+    console.warn('[Attestation] Invalid attestation message format');
+    return;
+  }
+  
+  // Verify the signature
+  try {
+    const dataToVerify = JSON.stringify(attestation);
+    const publicKey = base64ToArrayBuffer(attesterPublicKey);
+    const sig = base64ToArrayBuffer(signature);
+    
+    const verified = nacl.sign.open(sig, publicKey);
+    if (!verified) {
+      console.warn(`[Attestation] Invalid signature from ${attesterHandle}`);
+      return;
+    }
+    
+    const decodedData = new TextDecoder().decode(verified);
+    if (decodedData !== dataToVerify) {
+      console.warn(`[Attestation] Signature mismatch from ${attesterHandle}`);
+      return;
+    }
+  } catch (e) {
+    console.error('[Attestation] Signature verification failed:', e);
+    return;
+  }
+  
+  // Check attestation age (prevent replay attacks)
+  const age = Date.now() - attestation.timestamp;
+  if (age > 60000) { // Reject attestations older than 1 minute
+    console.warn(`[Attestation] Attestation too old: ${age}ms`);
+    return;
+  }
+  
+  // Get attester's reputation
+  const peerId = fromWire.peerId;
+  const reputation = getServices().peerManager.getScore(peerId);
+  const canTrust = getServices().peerManager.canTrustAttestations(peerId);
+  
+  console.log(`[Attestation] Received from ${attesterHandle} (rep: ${reputation.toFixed(2)}, trusted: ${canTrust})`);
+  
+  // Find the post (could be in pendingVerification or already in posts)
+  let post = state.pendingVerification.get(attestation.postId);
+  if (!post) {
+    post = state.posts.get(attestation.postId);
+  }
+  
+  if (!post) {
+    console.log(`[Attestation] Post ${attestation.postId} not found`);
+    return;
+  }
+  
+  // Add attestation to the post
+  const wasNew = post.addAttestation(attesterHandle, reputation);
+  
+  if (wasNew) {
+    console.log(`[Attestation] Added to post ${attestation.postId}, trust score: ${post.trustScore.toFixed(2)}`);
+    
+    // Track attestation for reputation
+    getServices().peerManager.updateScore(peerId, 'attestation', 1);
+    
+    // Nudge the verifier so we don't wait for the next scheduled sweep
+    if (state.pendingVerification.has(attestation.postId)) { 
+        evaluatePostTrust(attestation.postId); 
+    }
+    
+    // If post is still pending and now has enough trust, promote it
+    if (state.pendingVerification.has(attestation.postId) && 
+        post.hasSufficientTrust(CONFIG.TRUST_THRESHOLD)) {
+      console.log(`[Attestation] Post ${attestation.postId} reached trust threshold, promoting without verification`);
+      
+      // Move from pending to verified
+      state.pendingVerification.delete(attestation.postId);
+      post.verified = true;
+      state.posts.set(post.id, post);
+      renderPost(post);
+      notify(`Post verified by peer attestations`);
+      
+      // The attester gets credit for a correct attestation
+      getServices().peerManager.updateScore(peerId, 'correct_attestation', 1);
+    }
+  }
+}
+
+async function isToxic(text) {
   if (!state.toxicityClassifier) return false;
   
   try {
@@ -140,7 +253,7 @@ export async function isToxic(text) {
   }
 }
 
-export async function isImageToxic(imageData) {
+async function isImageToxic(imageData) {
     if (!state.imageClassifier) return false;
     try {
         const img = new Image();
@@ -160,7 +273,7 @@ export async function isImageToxic(imageData) {
     }
 }
 
-export async function handleNewPost(data, fromWire) {
+async function handleNewPost(data, fromWire) {
   const postData = data.post || data;
 
   if (!postData?.id || state.posts.has(postData.id) || state.seenPosts.has(postData.id)) {
@@ -193,7 +306,7 @@ export async function handleNewPost(data, fromWire) {
 
 
 
-export function findRootPost(postId) {
+function findRootPost(postId) {
   let current = postId;
   let post = state.posts.get(current);
   const visited = new Set();
@@ -207,7 +320,7 @@ export function findRootPost(postId) {
   return current;
 }
 
-export async function handlePostsResponse(list, fromWire) {
+async function handlePostsResponse(list, fromWire) {
   if (!Array.isArray(list)) return;
 
   console.log(`Received ${list.length} posts, queuing for trust evaluation...`);
@@ -238,7 +351,7 @@ export async function handlePostsResponse(list, fromWire) {
   }
 }
 
-export async function handleVerificationResults(results) {
+async function handleVerificationResults(results) {
     let newlyVerifiedCount = 0;
     console.log(`[Debug] Processing ${results.length} verification results`);
     for (const result of results) {
@@ -311,7 +424,7 @@ export async function handleVerificationResults(results) {
     }
 }
 
-export async function generateAndBroadcastAttestation(post) {
+async function generateAndBroadcastAttestation(post) {
   // Only generate attestations if we have an identity and the post is verified
   if (!state.myIdentity || !post.verified) return;
   
@@ -345,7 +458,7 @@ export async function generateAndBroadcastAttestation(post) {
   broadcast(attestationMsg);
 }
 
-export function evaluatePostTrust(postId) {
+function evaluatePostTrust(postId) {
   const post = state.pendingVerification.get(postId);
   if (!post) {
     // Clean up timer if post is gone
@@ -411,7 +524,7 @@ export function evaluatePostTrust(postId) {
   }
 }
 
-export function scheduleTrustEvaluation(post) {
+function scheduleTrustEvaluation(post) {
   const postId = post.id;
   
   // Helper function to clean up timer
@@ -456,7 +569,7 @@ export function scheduleTrustEvaluation(post) {
   evaluatePostTrust(postId);
 }
 
-export async function handleProvisionalClaim(claim) {
+async function handleProvisionalClaim(claim) {
     if (!claim || !claim.handle || !claim.vdfProof || !claim.signature) {
         return;
     }
@@ -500,7 +613,7 @@ export async function handleProvisionalClaim(claim) {
     broadcast({ type: 'identity_confirmation_slip', slip: slip });
 }
 
-export async function handleConfirmationSlip(slip) {
+async function handleConfirmationSlip(slip) {
     if (!slip || !slip.handle || !slip.claimHash || !slip.confirmerPublicKey || !slip.signature) return;
     const provisionalEntry = state.provisionalIdentities.get(slip.handle);
     if (!provisionalEntry) return;
@@ -525,7 +638,7 @@ export async function handleConfirmationSlip(slip) {
     }
 }
 
-export async function hashClaim(claim) {
+async function hashClaim(claim) {
     const claimString = JSON.stringify({
         handle: claim.handle,
         publicKey: claim.publicKey,
@@ -538,7 +651,7 @@ export async function hashClaim(claim) {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export function handleCarrierUpdate(msg) {
+function handleCarrierUpdate(msg) {
     const p = state.posts.get(msg.postId);
     if (!p) return;
     const handle = msg.peer || msg.fromIdentityHandle;
@@ -558,7 +671,7 @@ export function handleCarrierUpdate(msg) {
     }
 }
 
-export function handleParentUpdate(msg) {
+function handleParentUpdate(msg) {
     const parent = state.posts.get(msg.parentId);
     const reply = state.posts.get(msg.replyId);
     if (parent && reply) {
@@ -567,7 +680,7 @@ export function handleParentUpdate(msg) {
     }
 }
 
-export async function createPostWithTopics() {
+async function createPostWithTopics() {
     const input = document.getElementById("post-input");
     const txt = input.value.trim();
     if (!txt) return;
@@ -611,17 +724,22 @@ export async function createPostWithTopics() {
         input.value = "";
         document.getElementById("char-current").textContent = 0;
         renderPost(p);
-
+        /*****
         if (state.peers.size >= 3) {
             dandelion.routePostSecure(p);
         } else {
             dandelion.routePost(p);
         }
-
+        *****/
+        // This function now *only* multicasts via Scribe.
         if (state.scribe) {
             topics.forEach(topic => {
+                console.log(`[Scribe] Multicasting new post ${p.id} to topic: ${topic}`);
                 state.scribe.multicast(topic, { type: 'new_post', post: p.toJSON() });
             });
+        } else {
+            console.warn("Scribe not initialized, post was not sent.");
+            notify("Error: Not connected to the network.");
         }
 
         removeImage();
@@ -637,7 +755,7 @@ export async function createPostWithTopics() {
     }
 }
 
-export function toggleCarry(id, isManual = true) {
+function toggleCarry(id, isManual = true) {
     const p = state.posts.get(id);
     if (!p) return;
     const isCarrying = p.carriers.has(state.myIdentity.handle);
@@ -662,7 +780,7 @@ export function toggleCarry(id, isManual = true) {
     }
 }
 
-export async function ratePost(postId, vote) {
+async function ratePost(postId, vote) {
     const post = state.posts.get(postId);
     if (!post) return;
     
@@ -725,7 +843,7 @@ export async function ratePost(postId, vote) {
     }
 }
 
-export async function createReply(parentId) {
+async function createReply(parentId) {
     const input = document.getElementById(`reply-input-${parentId}`);
     if (!input) return;
 
@@ -785,14 +903,18 @@ export async function createReply(parentId) {
         renderPost(reply);
         
         const replyData = reply.toJSON();
-        broadcast({ type: "new_post", post: replyData });
-        broadcast({ type: "parent_update", parentId: parentId, replyId: reply.id });
+        //broadcast({ type: "new_post", post: replyData });
+        //broadcast({ type: "parent_update", parentId: parentId, replyId: reply.id });
 
         // Also broadcast to topics, which was missing before
-        const topics = state.scribe ? state.scribe.extractTopics(txt) : ['#general'];
+        const topics = state.scribe ?
+        state.scribe.extractTopics(txt) : [];
         if (state.scribe) {
             topics.forEach(topic => {
+                // Multicast the new reply post itself
                 state.scribe.multicast(topic, { type: 'new_post', post: replyData });
+                // ALSO multicast the parent update on the same topic
+                state.scribe.multicast(topic, { type: "parent_update", parentId: parentId, replyId: reply.id });
             });
         }
         
@@ -934,7 +1056,7 @@ async function storePendingMessage(recipientHandle, messageText, status = 'queue
   }
 }
 
-export async function sendDirectMessage(recipientHandle, messageText) {
+async function sendDirectMessage(recipientHandle, messageText) {
   console.log(`[DM] Initializing DM to ${recipientHandle}...`);
 
   try {
@@ -1015,7 +1137,7 @@ export async function sendDirectMessage(recipientHandle, messageText) {
   }
 }
 
-export async function handleDirectMessage(msg, fromWire) {
+async function handleDirectMessage(msg, fromWire) {
   try {
     // Check if this message is for us
     if (msg.recipient !== state.myIdentity.handle) {
@@ -1136,7 +1258,7 @@ export async function handleDirectMessage(msg, fromWire) {
 }
 
 // Profile Functions
-export async function broadcastProfileUpdate(profileData = null) {
+async function broadcastProfileUpdate(profileData = null) {
   if (!state.myIdentity || !state.scribe) return;
   
   const profile = profileData || state.myIdentity.profile;
@@ -1179,7 +1301,7 @@ export async function broadcastProfileUpdate(profileData = null) {
   }
 }
 
-export async function subscribeToProfile(handle) {
+async function subscribeToProfile(handle) {
   if (!state.scribe) return;
   
   const topic = '@' + handle;
@@ -1193,7 +1315,7 @@ export async function subscribeToProfile(handle) {
   }
 }
 
-export async function unsubscribeFromProfile(handle) {
+async function unsubscribeFromProfile(handle) {
   if (!state.scribe || !handle) return;
   
   const topic = '@' + handle;
@@ -1207,7 +1329,7 @@ export async function unsubscribeFromProfile(handle) {
   }
 }
 
-export function handleProfileUpdate(msg, fromWire) {
+function handleProfileUpdate(msg, fromWire) {
   if (!msg.profile || !msg.signature || !msg.publicKey) return;
   
   const { profile, signature, publicKey } = msg;
@@ -1238,6 +1360,15 @@ export function handleProfileUpdate(msg, fromWire) {
   
   // Cache the profile
   state.profileCache.set(profile.handle, profile);
+
+  // *** Check for and store the image metadata ***
+  if (profile.profilePictureHash && profile.profilePictureMeta) {
+    const imageStore = getServices().imageStore;
+    if (imageStore && !imageStore.images.has(profile.profilePictureHash)) {
+      imageStore.images.set(profile.profilePictureHash, profile.profilePictureMeta);
+      console.log(`[Profile] Stored new image metadata for ${profile.handle}'s profile picture.`);
+    }
+  }
   
   // ADDED: Cache verified profile into local DHT
   const dhtKey = `profile:${profile.handle}`;
@@ -1258,7 +1389,7 @@ export function handleProfileUpdate(msg, fromWire) {
   console.log(`[Profile] Received and verified profile update for ${profile.handle}`);
 }
 
-export async function handleScribeMessage(msg, fromWire) {
+async function handleScribeMessage(msg, fromWire) {
   if (!state.scribe) return;
   
   // Check if this is a profile update
@@ -1294,8 +1425,8 @@ async function initTopics() {
 }
 
 // --- 5. MAINTENANCE & GARBAGE COLLECTION ---
-export let maintenanceInterval;
-export function startMaintenanceLoop() {
+let maintenanceInterval;
+function startMaintenanceLoop() {
   let tick = 0;
   maintenanceInterval = setInterval(() => {
     tick++;
@@ -1320,6 +1451,28 @@ export function startMaintenanceLoop() {
       stateManager.savePeerScores();
       stateManager.saveImageChunks(); // Periodically save image data
       stateManager.saveDHTState(); 
+      
+              // Re-publish identity to DHT to ensure it doesn't expire
+        if (state.myIdentity && state.dht && state.myIdentity.isRegistered) {
+            console.log("[Maintenance] Re-publishing identity records to DHT...");
+            
+            const identityOptions = { propagate: true, refresh: true, replicationFactor: 30 };
+            const handleAddress = `handle-to-pubkey:${state.myIdentity.handle.toLowerCase()}`;
+            const pubkeyAddress = `pubkey:${state.myIdentity.publicKey}`;
+
+            // Re-store both the handle mapping and the full identity claim
+            state.dht.store(handleAddress, state.myIdentity.publicKey, identityOptions).catch(err => {
+                console.error("[Maintenance] Failed to re-publish handle mapping:", err);
+            });
+            
+            if (state.myIdentity.identityClaim) {
+                state.dht.store(pubkeyAddress, state.myIdentity.identityClaim, identityOptions).catch(err => {
+                    console.error("[Maintenance] Failed to re-publish identity claim:", err);
+                });
+            }
+        }
+
+      
     }
     if (tick % 60 === 0 && state.hyparview) {
         const activePeers = state.hyparview.getActivePeers();
@@ -1374,6 +1527,45 @@ export function startMaintenanceLoop() {
       }
     }
     
+    
+        if (tick % 180 === 0) { // Every 3 minutes
+      const hotTopics = new Map();
+      let topicsProcessed = 0;
+      
+      // Iterate through Scribe's known topics to find active ones
+      if (state.scribe) {
+        state.scribe.subscribedTopics.forEach((info, topic) => {
+            const children = info.children ? info.children.size : 0;
+            const score = 1 + children; // Simple score: 1 + number of children
+            if (score > 1) {
+                hotTopics.set(topic, { score });
+            }
+            topicsProcessed++;
+        });
+      }
+      
+      console.log(`[Maintenance] Processed ${topicsProcessed} topics for hotness score.`);
+
+      if (hotTopics.size > 0) {
+        const sortedTopics = Array.from(hotTopics.entries())
+            .sort((a, b) => b[1].score - a[1].score)
+            .slice(0, 50); // Store top 50 topics
+        
+        const dataToStore = {
+            topics: sortedTopics,
+            updatedAt: Date.now()
+        };
+
+        if (state.dht) {
+            state.dht.store('hot-topics:v1', dataToStore)
+                .then(() => console.log(`[Maintenance] Published ${sortedTopics.length} hot topics to the DHT.`))
+                .catch(e => console.error('[Maintenance] Failed to publish hot topics:', e));
+        }
+      }
+    }
+    
+    
+    
     if (tick % 300 === 0) {
         const stats = state.seenMessages.getStats();
       // Clean up stale routing cache entries
@@ -1402,6 +1594,11 @@ export function startMaintenanceLoop() {
         broadcastProfileUpdate();
       }
     }
+    
+    
+    
+    
+    
     
     if (tick % 600 === 0) { // Every 10 minutes
       // Log DHT health
@@ -1480,6 +1677,39 @@ async function init() {
   applyConfigToUI();
   
   try {
+    // Initialize services
+    const services = initializeServices({
+      renderPost: renderPost
+    });
+    // Extract service references
+    ({
+      stateManager,
+      verificationQueue,
+      imageStore,
+      peerManager,
+      memoryManager,
+      progressiveVDF,
+      noiseGenerator,
+      trafficMixer,
+      epidemicGossip
+    } = services);
+    
+      // Set up the StateManager's renderPost dependency
+  services.stateManager.renderPost = renderPost;
+    // Set up UI dependencies
+    setSendPeer(sendPeer);
+    
+    // Register message handlers
+    registerHandler('new_post', handleNewPost);
+    registerHandler('provisional_identity_claim', async (msg) => await handleProvisionalClaim(msg.claim));
+    registerHandler('identity_confirmation_slip', async (msg) => await handleConfirmationSlip(msg.slip));
+    registerHandler('post_attestation', handlePostAttestation);
+    registerHandler('carrier_update', handleCarrierUpdate);
+    registerHandler('parent_update', handleParentUpdate);
+    registerHandler('posts_response', async (msg) => await handlePostsResponse(msg.posts));
+    registerHandler('post_rating', handlePostRating);
+    registerHandler('e2e_dm', handleDirectMessage);
+    
     await wasmVDF.initialize();
     await verificationQueue.init();
     await stateManager.init();
@@ -1705,7 +1935,7 @@ async function init() {
   }
 }
 
-export async function handlePostRating(msg, fromWire) {
+async function handlePostRating(msg, fromWire) {
     const { postId, voter, vote, reputation, timestamp, signature, voterPublicKey } = msg;
     
     // Validate message
@@ -1770,7 +2000,7 @@ export async function handlePostRating(msg, fromWire) {
     }
 }
 
-export function initializeP2PProtocols() {
+function initializeP2PProtocols() {
   if (!state.myIdentity) {
     console.error("Cannot initialize P2P protocols without an identity.");
     return;
@@ -1791,6 +2021,9 @@ export function initializeP2PProtocols() {
         handleNewPost(message.post, null);
       } else if (message.type === 'PROFILE_UPDATE') {
         handleProfileUpdate(message, null);
+      } else if (message.type === 'parent_update') {
+        // New handler for reply notifications
+        handleParentUpdate(message);
       }
     };
   } catch (e) {
@@ -1798,21 +2031,21 @@ export function initializeP2PProtocols() {
   }
 
   // Initialize Plumtree
-  state.plumtree = new Plumtree(state.myIdentity.nodeId, state.hyparview);
-  state.plumtree.deliver = (message) => {
-    if (message.type === 'post') {
-      handleNewPost(message.data, null);
-    }
-  };
+ // state.plumtree = new Plumtree(state.myIdentity.nodeId, state.hyparview);
+ // state.plumtree.deliver = (message) => {
+ //   if (message.type === 'post') {
+ //     handleNewPost(message.data, null);
+ //   }
+ // };
   
-  console.log("Dependent P2P protocols (Scribe, Plumtree) initialized.");
+  console.log("P2P protocol (Scribe) initialized.");
   // Start routing manager
     routingManager.start();
     console.log("Routing manager initialized");
 }
 
 // helper function for init
-export async function initNetworkWithTempId(tempNodeId) {
+async function initNetworkWithTempId(tempNodeId) {
   initNetwork(); // This will create state.client
   
   // Initialize DHT and identity registry immediately
@@ -1822,7 +2055,7 @@ export async function initNetworkWithTempId(tempNodeId) {
   // The rest of the protocols will initialize after the bootstrap connection
 }
 
-export function sendToPeer(peer, message) {
+function sendToPeer(peer, message) {
     if (!peer || !peer.wire || peer.wire.destroyed) return false;
     
     try {
@@ -1834,7 +2067,7 @@ export function sendToPeer(peer, message) {
     }
 }
 
-export async function findPeerByHandle(handle) {
+async function findPeerByHandle(handle) {
   // First check our local peer identity map
   if (state.peerIdentities) {
     for (const [peerId, identity] of state.peerIdentities) {
@@ -1888,7 +2121,7 @@ export async function findPeerByHandle(handle) {
   return null;
 }
 
-export function debugPostRemoval(postId, reason) {
+function debugPostRemoval(postId, reason) {
   // This allows for live debugging via the browser console, e.g.:
 
   if (window.ephemeralDebug?.preventRemoval) {
@@ -1905,10 +2138,11 @@ export function debugPostRemoval(postId, reason) {
   return false; // Return false to ALLOW removal
 }
 
-
 // --- 7. GLOBALS & KICKOFF ---
 // Expose functions to the global scope so onclick handlers in the HTML can find them.
-if (typeof window !== 'undefined') {
+
+    // Set stateManager's renderPost dependency
+   // stateManager.renderPost = renderPost;
   // Expose functions to the global scope so onclick handlers in the HTML can find them.
   window.createPostWithTopics = createPostWithTopics;
   window.toggleCarry = toggleCarry;
@@ -1933,9 +2167,17 @@ if (typeof window !== 'undefined') {
   window.setRulePackPath = setRulePackPath;   // choose a new JSON file
   window.reloadRulePack  = reloadRulePack;    // refresh the current file
   window.ratePost = ratePost;
+    window.sendDirectMessage = sendDirectMessage;
+      window.isToxic = isToxic;
+    window.isImageToxic = isImageToxic;  
+        window.updateHotTopics = updateHotTopics;
+    window.handleProfileUpdate = handleProfileUpdate;
+    window.unsubscribeFromProfile =unsubscribeFromProfile;
+
+    window.subscribeToProfile = subscribeToProfile;
   window.state = state;
 window.openProfileForHandle = openProfileForHandle;
-
+window.broadcastProfileUpdate = broadcastProfileUpdate;
   // FIX: Expose profile functions to the global scope
   window.closeProfile = closeProfile;
 
@@ -2047,4 +2289,4 @@ window.openProfileForHandle = openProfileForHandle;
 
   // Start the application initialization process once the page is loaded.
   window.addEventListener("load", init);
-}
+

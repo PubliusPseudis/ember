@@ -1,6 +1,6 @@
 import nacl from 'tweetnacl'; 
 import wasmVDF from '../vdf-wrapper.js';
-import { state } from '../main.js';
+import { state } from '../state.js';
 import { base64ToArrayBuffer, arrayBufferToBase64 } from '../utils.js';
 
 // --- NEW, ROBUST IDENTITY REGISTRY ---

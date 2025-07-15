@@ -1,4 +1,4 @@
-import { state } from '../main.js';
+import { state } from '../state.js';
 import { notify } from '../ui.js';
 import wasmVDF from '../vdf-wrapper.js';
 

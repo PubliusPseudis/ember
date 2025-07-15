@@ -1,4 +1,4 @@
-import { state } from '../main.js';
+import { state } from '../state.js';
 
 export class PeerManager {
   constructor() {

@@ -1,6 +1,6 @@
 import { sendPeer } from '../p2p/network-manager.js'; 
 import { generateId } from '../utils.js';
-import { state } from '../main.js';
+import { state } from '../state.js';
 
 
 export class ContentAddressedImageStore {

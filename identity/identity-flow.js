@@ -1,6 +1,7 @@
 import nacl from 'tweetnacl';
 import { notify, initializeUserProfileSection  } from '../ui.js';
-import { state,  broadcastProfileUpdate} from '../main.js';
+import { state } from '../state.js';
+import { broadcastProfileUpdate } from '../main.js';
 import { arrayBufferToBase64, JSONStringifyWithBigInt } from '../utils.js';
 import { HyParView } from '../p2p/hyparview.js';
 import wasmVDF from '../vdf-wrapper.js';

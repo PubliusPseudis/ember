@@ -1,4 +1,4 @@
-import { state } from '../main.js';
+import { state } from '../state.js';
 import { sendPeer } from './network-manager.js';
 
 export class NoiseGenerator {

@@ -7,9 +7,28 @@ export default defineConfig({
       webtorrent: 'webtorrent/dist/webtorrent.min.js',
     },
   },
-  // Add this build configuration
   build: {
     target: 'esnext',
-    outDir: 'dist', // Output build files to 'docs' instead of 'dist'
+    outDir: 'dist',
+    rollupOptions: {
+      onwarn(warning, warn) {
+        // Log circular dependencies to help debug
+        if (warning.code === 'CIRCULAR_DEPENDENCY') {
+          console.log('Circular dependency:', warning.message);
+          return;
+        }
+        warn(warning);
+      },
+      output: {
+        manualChunks: {
+          // Split vendor chunks to avoid issues
+          'vendor': ['tweetnacl', 'webtorrent', 'dompurify'],
+          'tensorflow': ['@tensorflow/tfjs', 'nsfwjs']
+        }
+      }
+    }
   },
+  optimizeDeps: {
+    exclude: ['nsfwjs'] // Sometimes helps with TensorFlow issues
+  }
 });
