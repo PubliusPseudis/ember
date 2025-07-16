@@ -52,8 +52,8 @@ function initNetwork() { // It no longer needs to be async
   try {
     // This line will now use the `WebTorrent` variable we just defined above.
     state.client = new WebTorrent({
-      dht: !isIOS,
-      maxConns: isIOS ? 20 : 100,
+      dht: true,
+      maxConns: 100,
       tracker: {
         announce: trackers,
         rtcConfig: {
