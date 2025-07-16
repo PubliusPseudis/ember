@@ -1,7 +1,6 @@
 // --- IMPORTS ---
 import { state } from '../state.js';
-import { debugPostRemoval } from '../main.js';
-import { dropPost } from '../ui.js';
+import { serviceCallbacks } from './callbacks.js';
 import { HierarchicalBloomFilter, BloomFilter, isReply } from '../utils.js';
 
 
@@ -120,9 +119,9 @@ export class MemoryManager {
             if (!toKeep.has(id) && !isReply(post) && !state.explicitlyCarrying.has(id)) {
                 // Only drop if no one else is carrying AND it's not a reply
                 if (post.carriers.size === 0) {
-                    if (!debugPostRemoval(id, 'adaptive cleanup')) {
+                    if (!serviceCallbacks.debugPostRemoval(id, 'adaptive cleanup')) {
                         state.posts.delete(id);
-                        dropPost(id);
+                        serviceCallbacks.dropPost(id);
                     }
                 }
             }
@@ -150,9 +149,9 @@ export class MemoryManager {
                 const post = state.posts.get(id);
                 // Only drop if no one is carrying AND it's not a reply
                 if (post && post.carriers.size === 0 && !isReply(post)) {
-                    if (!debugPostRemoval(id, 'emergency cleanup')) {
+                    if (!serviceCallbacks.debugPostRemoval(id, 'emergency cleanup')) {
                         state.posts.delete(id);
-                        dropPost(id);
+                        serviceCallbacks.dropPost(id);
                     }
                 }
             }

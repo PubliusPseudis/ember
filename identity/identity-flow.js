@@ -1,7 +1,7 @@
 import nacl from 'tweetnacl';
-import { notify, initializeUserProfileSection  } from '../ui.js';
+import { notify } from '../ui.js';
+import { serviceCallbacks } from '../services/callbacks.js';
 import { state } from '../state.js';
-import { broadcastProfileUpdate } from '../main.js';
 import { arrayBufferToBase64, JSONStringifyWithBigInt } from '../utils.js';
 import { HyParView } from '../p2p/hyparview.js';
 import wasmVDF from '../vdf-wrapper.js';
@@ -304,13 +304,13 @@ export async function createNewIdentity() {
 
         // ADDED: Broadcast initial profile
         console.log('[Identity] Broadcasting initial profile...');
-        await broadcastProfileUpdate(state.myIdentity.profile);
+        await serviceCallbacks.broadcastProfileUpdate(state.myIdentity.profile);
         console.log('[Identity] Initial profile broadcast complete');
 
         setTimeout(() => {
           document.getElementById('identity-creation-overlay').style.display = 'none';
           notify(`Identity "${handle}" successfully registered! 🎉`);
-          initializeUserProfileSection();
+          serviceCallbacks.initializeUserProfileSection();
           resolve();
         }, 2000);
         

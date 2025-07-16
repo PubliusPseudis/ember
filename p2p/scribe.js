@@ -1,6 +1,6 @@
-import { sendPeer } from './network-manager.js';
+import { messageBus } from './message-bus.js';
 import { generateId } from '../utils.js';
-import { handleNewPost, handleParentUpdate, handleProfileUpdate } from '../main.js';
+import { state } from '../state.js';
 
 // --- SCRIBE MULTICAST PROTOCOL ---
 export class Scribe {
@@ -133,7 +133,7 @@ export class Scribe {
     
     // Notify parent
     if (topicInfo.parent) {
-      sendPeer(topicInfo.parent.wire, {
+      messageBus.sendPeer(topicInfo.parent.wire, {
         type: 'scribe',
         subtype: 'LEAVE',
         topic,
@@ -143,7 +143,7 @@ export class Scribe {
     
     // Notify children to find new parent
     topicInfo.children.forEach(child => {
-      sendPeer(child.wire, {
+      messageBus.sendPeer(child.wire, {
         type: 'scribe',
         subtype: 'PARENT_FAILED',
         topic
@@ -156,7 +156,7 @@ export class Scribe {
   
   // Send JOIN request
   sendJoinRequest(topic, peer) {
-    sendPeer(peer.wire, {
+    messageBus.sendPeer(peer.wire, {
       type: 'scribe',
       subtype: 'JOIN',
       topic,
@@ -204,7 +204,7 @@ export class Scribe {
       // Forward JOIN to next hop
       const route = await this.dht.findNode(rendezvousId);
       if (route.length > 0) {
-        sendPeer(route[0].wire, msg);
+        messageBus.sendPeer(route[0].wire, msg);
       }
       return;
     }
@@ -233,14 +233,14 @@ export class Scribe {
       console.log(`[Scribe] Added child for topic ${topic}. Children: ${info.children.size}`);
       
       // Send acceptance
-      sendPeer(fromWire, {
+      messageBus.sendPeer(fromWire, {
         type: 'scribe',
         subtype: 'JOIN_ACK',
         topic
       });
     } else {
       // Reject - tree node full
-      sendPeer(fromWire, {
+      messageBus.sendPeer(fromWire, {
         type: 'scribe',
         subtype: 'JOIN_REJECT',
         topic
@@ -283,7 +283,7 @@ export class Scribe {
       const rendezvousId = await this.getRendezvousNode(topic);
       const route = await this.dht.findNode(rendezvousId);
       if (route.length > 0) {
-        sendPeer(route[0].wire, {
+        messageBus.sendPeer(route[0].wire, {
           type: 'scribe',
           subtype: 'MULTICAST',
           topic,
@@ -323,7 +323,7 @@ export class Scribe {
     
     // Forward to parent (if not from parent)
     if (topicInfo.parent && topicInfo.parent.wire !== fromWire) {
-      sendPeer(topicInfo.parent.wire, {
+      messageBus.sendPeer(topicInfo.parent.wire, {
         type: 'scribe',
         subtype: 'MULTICAST',
         topic,
@@ -335,7 +335,7 @@ export class Scribe {
     // Forward to children (except sender)
     topicInfo.children.forEach(child => {
       if (child.wire !== fromWire && !child.wire.destroyed) {
-        sendPeer(child.wire, {
+        messageBus.sendPeer(child.wire, {
           type: 'scribe',
           subtype: 'MULTICAST',
           topic,
@@ -368,11 +368,11 @@ deliverMessage(topic, message) {
         if (message.type === 'new_post' && message.post) {
             // Don't process our own posts that have been echoed back to us
             if (message.post.author === state.myIdentity.handle) return;
-            handleNewPost(message.post, null);
+            messageBus.handleMessage('scribe:new_post', { topic, message }, null);
         } else if (message.type === 'PROFILE_UPDATE') {
-            handleProfileUpdate(message, null);
+            messageBus.handleMessage('scribe:PROFILE_UPDATE', { topic, message }, null);
         } else if (message.type === 'parent_update') {
-            handleParentUpdate(message);
+            messageBus.handleMessage('scribe:parent_update', { topic, message }, null);
         }
     } catch (e) {
         console.error(`[Scribe] Error delivering message of type ${message.type}:`, e);
@@ -392,7 +392,7 @@ deliverMessage(topic, message) {
     this.subscribedTopics.forEach((info, topic) => {
       info.children.forEach(child => {
         if (!child.wire.destroyed) {
-          sendPeer(child.wire, {
+          messageBus.sendPeer(child.wire, {
             type: 'scribe',
             subtype: 'HEARTBEAT',
             topic

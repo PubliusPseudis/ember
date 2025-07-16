@@ -1,4 +1,4 @@
-import { sendPeer } from './network-manager.js';
+import { messageBus } from './message-bus.js';
 
 // --- KADEMLIA DHT IMPLEMENTATION ---
 export class KademliaDHT {
@@ -236,7 +236,7 @@ export class KademliaDHT {
       
       this.pendingRPCs.set(rpcId, { resolve, reject, timeout });
       
-      sendPeer(peer.wire, {
+      messageBus.sendPeer(peer.wire, {
         type: 'dht_rpc',
         method,
         params,
@@ -265,7 +265,7 @@ export class KademliaDHT {
     const handler = this.rpcHandlers.get(method);
     if (handler) {
       const result = handler(params, senderId);
-      sendPeer(fromWire, {
+      messageBus.sendPeer(fromWire, {
         type: 'dht_rpc',
         isResponse: true,
         rpcId,

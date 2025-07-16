@@ -6,6 +6,7 @@ import WebTorrent from 'webtorrent';
 // Import shared state and services directly from the state module
 import { state } from '../state.js';
 import { getServices } from '../services/instances.js';
+import { messageBus } from './message-bus.js';
 
 // Message handler registry
 const messageHandlers = new Map();
@@ -507,6 +508,9 @@ const sendPeer = (wire, msg) => {
     console.warn("sendPeer fail", e.message);
   }
 };
+
+// Initialize messageBus with sendPeer
+messageBus.setSendPeer(sendPeer);
 
 setSendPeer(sendPeer);
 

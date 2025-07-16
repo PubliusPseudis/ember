@@ -19,6 +19,9 @@ import { KademliaDHT } from './p2p/dht.js';
 import { initializeServices, getServices } from './services.js';
 
 import { state } from './state.js';
+import { messageBus } from './p2p/message-bus.js';
+import { setServiceCallbacks } from './services/callbacks.js';
+
 
 import {
     currentDMRecipient, addMessageToConversation, applyTheme, setupThemeToggle, 
@@ -1677,6 +1680,30 @@ async function init() {
   applyConfigToUI();
   
   try {
+    // Set up service callbacks
+    setServiceCallbacks({
+      debugPostRemoval,
+      dropPost,
+      notify,
+      renderPost,
+      broadcastProfileUpdate,
+      initializeUserProfileSection
+    });
+    
+    // Register Scribe message handlers with message bus
+    messageBus.registerHandler('scribe:new_post', (data) => {
+      if (state.myIdentity && data.message.post.author === state.myIdentity.handle) return;
+      handleNewPost(data.message.post, null);
+    });
+    
+    messageBus.registerHandler('scribe:PROFILE_UPDATE', (data) => {
+      handleProfileUpdate(data.message, null);
+    });
+    
+    messageBus.registerHandler('scribe:parent_update', (data) => {
+      handleParentUpdate(data.message);
+    });
+    
     // Initialize services
     const services = initializeServices({
       renderPost: renderPost
@@ -1694,8 +1721,8 @@ async function init() {
       epidemicGossip
     } = services);
     
-      // Set up the StateManager's renderPost dependency
-  services.stateManager.renderPost = renderPost;
+    // Set up the StateManager's renderPost dependency
+    services.stateManager.renderPost = renderPost;
     // Set up UI dependencies
     setSendPeer(sendPeer);
     
@@ -1709,6 +1736,7 @@ async function init() {
     registerHandler('posts_response', async (msg) => await handlePostsResponse(msg.posts));
     registerHandler('post_rating', handlePostRating);
     registerHandler('e2e_dm', handleDirectMessage);
+    registerHandler('generate_attestation', generateAndBroadcastAttestation);
     
     await wasmVDF.initialize();
     await verificationQueue.init();
@@ -1884,16 +1912,6 @@ async function init() {
     
     const loadedPostCount = await stateManager.loadPosts();
     
-    /***if we trust ourselves, pending is none
-    if (state.pendingVerification.size > 0) {
-      const postsToVerify = Array.from(state.pendingVerification.values());
-      postsToVerify.sort((a, b) => a.timestamp - b.timestamp);
-      verificationQueue.addBatch(postsToVerify, 'high', (results) => {
-        handleVerificationResults(results);
-        notify(`Restored ${results.filter(r => r.valid).length} posts from your last session.`);
-      });
-    }
-    ***/
     
     await stateManager.loadPeerScores();
     

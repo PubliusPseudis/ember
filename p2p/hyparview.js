@@ -1,4 +1,4 @@
-import { sendPeer } from './network-manager.js';
+import { messageBus } from './message-bus.js';
 
 // --- HYPARVIEW PROTOCOL IMPLEMENTATION ---
 export class HyParView {
@@ -109,7 +109,7 @@ export class HyParView {
     
     // Send DISCONNECT message
     if (peer.wire && !peer.wire.destroyed) {
-      sendPeer(peer.wire, {
+      messageBus.sendPeer(peer.wire, {
         type: 'hyparview',
         subtype: 'DISCONNECT'
       });
@@ -156,7 +156,7 @@ export class HyParView {
     
     // Send JOIN request
     if (peer.wire && !peer.wire.destroyed) {
-      sendPeer(peer.wire, {
+      messageBus.sendPeer(peer.wire, {
         type: 'hyparview',
         subtype: 'JOIN',
         ttl: 3,
@@ -209,7 +209,7 @@ export class HyParView {
         if (activeList.length > 0) {
           const target = activeList[Math.floor(Math.random() * activeList.length)];
           
-          sendPeer(target.wire, {
+          messageBus.sendPeer(target.wire, {
             type: 'hyparview',
             subtype: 'FORWARD_JOIN',
             ttl: msg.ttl - 1,
@@ -232,7 +232,7 @@ export class HyParView {
       // Send NEIGHBOR message back to original sender
       const senderPeer = this.findPeerByWire(fromWire);
       if (senderPeer) {
-        sendPeer(fromWire, {
+        messageBus.sendPeer(fromWire, {
           type: 'hyparview',
           subtype: 'NEIGHBOR',
           target: msg.sender,
@@ -248,7 +248,7 @@ export class HyParView {
       if (activeList.length > 0) {
         const target = activeList[Math.floor(Math.random() * activeList.length)];
         
-        sendPeer(target.wire, {
+        messageBus.sendPeer(target.wire, {
           type: 'hyparview',
           subtype: 'FORWARD_JOIN',
           ttl: msg.ttl - 1,
@@ -285,7 +285,7 @@ export class HyParView {
     }
     
     // Send reply
-    sendPeer(fromWire, {
+    messageBus.sendPeer(fromWire, {
       type: 'hyparview',
       subtype: 'SHUFFLE_REPLY',
       peers: selected
@@ -357,7 +357,7 @@ export class HyParView {
     }
     
     if (toSend.length > 0 && target.wire && !target.wire.destroyed) {
-      sendPeer(target.wire, {
+      messageBus.sendPeer(target.wire, {
         type: 'hyparview',
         subtype: 'SHUFFLE',
         peers: toSend
@@ -405,7 +405,7 @@ export class HyParView {
       if (this.activeView.size >= this.activeViewSize) break;
       
       // Send JOIN request
-      sendPeer(peer.wire, {
+      messageBus.sendPeer(peer.wire, {
         type: 'hyparview',
         subtype: 'JOIN',
         ttl: 3,
@@ -444,7 +444,7 @@ export class HyParView {
     // Send disconnect to all active peers
     for (const peer of this.activeView.values()) {
       if (peer.wire && !peer.wire.destroyed) {
-        sendPeer(peer.wire, {
+        messageBus.sendPeer(peer.wire, {
           type: 'hyparview',
           subtype: 'DISCONNECT'
         });
