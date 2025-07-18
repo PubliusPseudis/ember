@@ -8,6 +8,8 @@ import { state } from '../state.js';
 import { getServices } from '../services/instances.js';
 import { messageBus } from './message-bus.js';
 
+import wasmVDF from '../vdf-wrapper.js';
+
 // Message handler registry
 const messageHandlers = new Map();
 export function registerHandler(type, handler) {
@@ -21,7 +23,6 @@ import { generateId, hexToUint8Array, normalizePeerId, arrayBufferToBase64, base
 import { KademliaDHT } from './dht.js';
 import { HyParView } from './hyparview.js';
 import { Scribe } from './scribe.js';
-//import { Plumtree } from './plumtree.js';
 import nacl from 'tweetnacl'; 
 
 
@@ -161,6 +162,53 @@ function initNetwork() { // It no longer needs to be async
     trackers: trackers.length
   });
 }
+
+async function handleRelayRequest(request, fromWire) {
+  const { payload, workProof } = request;
+
+  // Step 1: Verify the VDF proof of work.
+  // The input for the proof is the payload itself.
+  const isValidProof = await wasmVDF.verifyVDFProof(JSON.stringify(payload), workProof);
+  if (!isValidProof) {
+    console.warn("[Relay] Received RELAY_REQUEST with invalid VDF proof. Dropping.");
+    getServices().peerManager.updateScore(fromWire.peerId, 'invalid_post', 1); // Penalize peer
+    return;
+  }
+
+  try {
+    // Step 2: Decrypt the envelope.
+    // The key is derived from the VDF proof's output.
+    const keyData = new TextEncoder().encode(workProof.y + workProof.pi);
+    const key = new Uint8Array(nacl.hash(keyData)).slice(0, nacl.secretbox.keyLength);
+    
+    const ciphertext = base64ToArrayBuffer(payload.ciphertext);
+    const nonce = base64ToArrayBuffer(payload.nonce);
+
+    const decryptedBytes = nacl.secretbox.open(ciphertext, nonce, key);
+    if (!decryptedBytes) {
+      console.warn("[Relay] Failed to decrypt relay envelope. Dropping.");
+      return;
+    }
+    const envelope = JSON.parse(new TextDecoder().decode(decryptedBytes));
+
+    // Step 3: Validate the envelope contents.
+    // Check timestamp to prevent replay attacks (e.g., within last 5 minutes).
+    if (Date.now() - envelope.timestamp > 300000) {
+      console.warn("[Relay] Received stale relay envelope. Dropping.");
+      return;
+    }
+
+    // Step 4: Add the valid envelope to the mixing node.
+    // We can't know the original sender's reputation, so for now we'll use a default.
+    // A more advanced implementation might use the priorityHash.
+    const estimatedReputation = 100; // Placeholder for 'NEW' tier
+    getServices().mixingNode.add(envelope, estimatedReputation);
+
+  } catch (error) {
+    console.error("[Relay] Error processing relay request:", error);
+  }
+}
+
 
 function handleBootstrapWire(wire, addr) {
   const originalId = wire.peerId;
@@ -636,6 +684,10 @@ async function handlePeerMessage(msg, fromWire) {
   }
 
   switch (msg.type) {
+    case "RELAY_REQUEST": 
+      await handleRelayRequest(msg, fromWire);
+      break;
+      
     case "dht_rpc":
       if (state.dht) state.dht.handleRPC(msg, fromWire);
       break;

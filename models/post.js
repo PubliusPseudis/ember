@@ -58,6 +58,12 @@ export class Post {
         } else {
             this.authorVdfProof = null;
         }
+        
+        // Initialize post-specific VDF properties to null to ensure
+        // they are included in the JSON string during signing.
+        this.vdfInput = null;
+        this.vdfProof = null;
+        
         //nb do not sign ratings. they are mutable. 
         //we will use basic bayesian conjugate pair - beta-binomial.
         this.ratings = new Map(); // voter handle -> { vote: 'up'|'down', reputation: number }
@@ -132,7 +138,6 @@ export class Post {
      */
     sign(secretKey) {
         // Re-create the signable data at the moment of signing
-        // to capture any properties added after the constructor, like the reply's VDF proof.
         const signableData = {
           id: this.id,
           content: this.content,
@@ -145,7 +150,12 @@ export class Post {
         };
 
         const messageBytes = new TextEncoder().encode(JSON.stringify(signableData));
-        this.signature = nacl.sign(messageBytes, secretKey);
+        
+        // Ensure both arguments are proper Uint8Arrays
+        const messageArray = new Uint8Array(messageBytes);
+        const secretKeyArray = new Uint8Array(secretKey);
+        
+        this.signature = nacl.sign(messageArray, secretKeyArray);
         console.log(`[Post] Post signed. Signature: ${arrayBufferToBase64(this.signature).substring(0, 16)}...`);
     }
 
@@ -159,7 +169,6 @@ export class Post {
             return false;
         }
 
-        // Use the same logic as the new sign() method to reconstruct the data.
         const signableData = {
           id: this.id,
           content: this.content,
@@ -172,7 +181,12 @@ export class Post {
         };
         
         const messageToVerifyBytes = new TextEncoder().encode(JSON.stringify(signableData));
-        const originalMessage = nacl.sign.open(this.signature, this.authorPublicKey);
+        
+        // Ensure proper Uint8Arrays
+        const signatureArray = new Uint8Array(this.signature);
+        const publicKeyArray = new Uint8Array(this.authorPublicKey);
+        
+        const originalMessage = nacl.sign.open(signatureArray, publicKeyArray);
 
         if (originalMessage === null) {
             console.warn("[Post] Verification failed: nacl.sign.open returned null (invalid signature).");

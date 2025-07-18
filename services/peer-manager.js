@@ -1,18 +1,13 @@
 import { state } from '../state.js';
+import { CONFIG } from '../config.js';
 
 export class PeerManager {
   constructor() {
     this.scores = new Map();
     
-    // Reputation thresholds
-    this.REPUTATION_LEVELS = {
-      UNTRUSTED: 0,
-      NEW: 10,
-      BASIC: 50,
-      TRUSTED: 100,
-      HIGHLY_TRUSTED: 500
-    };
-    
+    // Use the new reputation tiers from the central configuration
+    this.REPUTATION_LEVELS = CONFIG.PRIVACY_CONFIG.REPUTATION_TIERS;
+
     // Action weights for reputation calculation
     this.ACTION_WEIGHTS = {
       CONNECTION: 1,
@@ -23,14 +18,20 @@ export class PeerManager {
       ATTESTATION: 2,
       CORRECT_ATTESTATION: 20,
       FALSE_ATTESTATION: -100,
-      UPTIME_HOUR: 1
+      UPTIME_HOUR: 1,
+      // --- NEW: Relay-specific action weights ---
+      SUCCESSFUL_RELAY: 15,
+      FAILED_RELAY: -30
     };
   }
   
   // Initialize or get peer data
   getPeerData(peerId) {
-    if (!this.scores.has(peerId)) {
-      this.scores.set(peerId, {
+    const normalizedId = this.normalizePeerId(peerId);
+    if (!normalizedId) return null; // Return null if the ID is invalid
+
+    if (!this.scores.has(normalizedId)) {
+      this.scores.set(normalizedId, {
         // Basic metrics
         messages: 0,
         posts: 0,
@@ -53,11 +54,15 @@ export class PeerManager {
         lastCalculated: 0
       });
     }
-    return this.scores.get(peerId);
+    return this.scores.get(normalizedId);
   }
   
   updateScore(peerId, action, value = 1) {
     const data = this.getPeerData(peerId);
+    if (!data) {
+        console.warn(`[PeerManager] Attempted to update score for invalid peerId:`, peerId);
+        return; // Do not proceed if the peerId is invalid
+    }
     
     switch(action) {
       case 'connection':
@@ -100,7 +105,17 @@ export class PeerManager {
         data.reputationScore += this.ACTION_WEIGHTS.CORRECT_ATTESTATION * value;
         data.quality = Math.min(1.5, data.quality * 1.02); // Slight quality boost
         break;
+
+      case 'successful_relay':
+        data.reputationScore += this.ACTION_WEIGHTS.SUCCESSFUL_RELAY * value;
+        data.quality = Math.min(1.5, data.quality * 1.01); // Minor quality boost
+        break;
         
+      case 'failed_relay':
+        data.reputationScore += this.ACTION_WEIGHTS.FAILED_RELAY * value;
+        data.quality *= 0.9; // Quality penalty
+        break;
+
       case 'false_attestation':
         data.falseAttestations += value;
         data.reputationScore += this.ACTION_WEIGHTS.FALSE_ATTESTATION * value;
@@ -122,10 +137,20 @@ export class PeerManager {
     // Mark as needing recalculation
     data.lastCalculated = 0;
   }
-  
+   // Normalize the peerId before use
+  normalizePeerId(peerId) {
+    if (typeof peerId === 'string') return peerId;
+    if (peerId instanceof Uint8Array) return Array.from(peerId).map(b => b.toString(16).padStart(2, '0')).join('');
+    // Add other conversions if needed, but return null for invalid types
+    return null;
+  }
+
   // Calculate comprehensive reputation score
   getScore(peerId) {
-    const data = this.getPeerData(peerId);
+    const normalizedId = this.normalizePeerId(peerId);
+    if (!normalizedId) return 0;
+    const data = this.getPeerData(normalizedId);
+    if (!data) return 0;
     
     // Recalculate if needed (cached for 1 minute)
     if (Date.now() - data.lastCalculated > 60000) {

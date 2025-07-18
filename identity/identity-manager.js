@@ -2,6 +2,7 @@ import nacl from 'tweetnacl';
 import wasmVDF from '../vdf-wrapper.js';
 import { state } from '../state.js';
 import { base64ToArrayBuffer, arrayBufferToBase64 } from '../utils.js';
+import { IdentityClaim } from '../models/identity-claim.js'; 
 
 // --- NEW, ROBUST IDENTITY REGISTRY ---
 export class IdentityRegistry {
@@ -12,10 +13,11 @@ export class IdentityRegistry {
   
   // --- STEP 1: Main registration function ---
   // Stores the full identity claim using the PUBLIC KEY as the address.
-async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
+async registerIdentity(handle, keyPair, encryptionPublicKey, vdfProof, vdfInput) { // Add encryptionPublicKey here
   console.log(`[Identity] Starting registration for handle: ${handle}`);
   
   const publicKeyB64 = arrayBufferToBase64(keyPair.publicKey);
+
 
   // First, check if the desired handle is already taken
   const existingPubkey = await this.dht.get(`handle-to-pubkey:${handle.toLowerCase()}`);
@@ -27,7 +29,7 @@ async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
   const claim = {
     handle: handle,
     publicKey: publicKeyB64,
-    encryptionPublicKey: state.myIdentity.encryptionPublicKey,
+    encryptionPublicKey: arrayBufferToBase64(encryptionPublicKey), // Use the argument
     vdfProof: {
       y: vdfProof.y,
       pi: vdfProof.pi,
@@ -77,38 +79,26 @@ async registerIdentity(handle, keyPair, vdfProof, vdfInput) {
   // Now, to look up a user, we first find their pubkey, then get their full data.
 async lookupHandle(handle) {
   const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
-  console.log(`[DM] Looking up handle: ${handle} at DHT address: ${handleAddress}`);
-
-  // Get the public key from DHT
-  const publicKeyB64 = await this.dht.get(handleAddress);
-  if (!publicKeyB64 || typeof publicKeyB64 !== 'string') {
-    console.warn(`[DM] No valid mapping found for handle ${handle}.`);
-    return null;
-  }
-
-  // Fetch the full claim
-  const pubkeyAddress = `pubkey:${publicKeyB64}`;
-  const actualClaim = await this.dht.get(pubkeyAddress);
+  const publicKeyB64 = await this.dht.get(handleAddress); // This would be the simpler fix from before
   
-  if (!actualClaim) {
-    console.warn(`[DM] Found pubkey for ${handle}, but the full claim is missing.`);
+  if (!publicKeyB64 || typeof publicKeyB64 !== 'string') {
     return null;
   }
 
-  // Verify the claim
-  try {
-    const isValid = await this.verifyClaim(actualClaim);
-    if (isValid) {
-      console.log(`[DM] Claim for ${handle} is verified.`);
-      return actualClaim;
-    } else {
-      console.warn(`[DM] Claim verification failed for ${handle}.`);
-      return null;
-    }
-  } catch (error) {
-    console.error(`[DM] Error verifying claim for ${handle}:`, error);
+  const pubkeyAddress = `pubkey:${publicKeyB64}`;
+  const rawClaim = await this.dht.get(pubkeyAddress);
+  if (!rawClaim) {
     return null;
   }
+
+  // Use the class to deserialize and validate
+  const claim = IdentityClaim.fromJSON(rawClaim);
+
+  if (await this.verifyClaim(claim)) {
+    return claim; // Return the full class instance
+  }
+  
+  return null;
 }
 
 

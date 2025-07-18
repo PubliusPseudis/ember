@@ -4,6 +4,7 @@ import { serviceCallbacks } from '../services/callbacks.js';
 import { state } from '../state.js';
 import { arrayBufferToBase64, JSONStringifyWithBigInt } from '../utils.js';
 import { HyParView } from '../p2p/hyparview.js';
+
 import wasmVDF from '../vdf-wrapper.js';
 
 export async function createNewIdentity() {
@@ -144,13 +145,13 @@ export async function createNewIdentity() {
         confirmButton.disabled = true;
         
         // Now compute VDF
-        await computeVDFAndRegister(handle, resolve);
+        await computeVDFAndRegister(handle, resolve,reject);
       };
       
       handleInput.focus();
     }
     
-    async function computeVDFAndRegister(handle, resolve) {
+    async function computeVDFAndRegister(handle, resolve, reject) {
       const step3 = document.getElementById('identity-step-3-prompt');
       const step2 = document.getElementById('identity-step-2-pow');
       
@@ -213,33 +214,39 @@ export async function createNewIdentity() {
         const keyPair = nacl.sign.keyPair();
         const encryptionKeyPair = nacl.box.keyPair(); // NEW: encryption keys
         const nodeId = new Uint8Array(await crypto.subtle.digest('SHA-1', keyPair.publicKey));
-        
+                const idKey = Array.from(nodeId).map(b => b.toString(16).padStart(2, '0')).join('');
+
         // Create identity object with default profile
-        state.myIdentity = {
+                state.myIdentity = {
             handle: handle,
             publicKey: arrayBufferToBase64(keyPair.publicKey),
             secretKey: keyPair.secretKey,
             encryptionPublicKey: arrayBufferToBase64(encryptionKeyPair.publicKey), 
             encryptionSecretKey: encryptionKeyPair.secretKey, 
             vdfProof: proofResult,
-            vdfInput: vdfInput,
+    
+        vdfInput: vdfInput,
             uniqueId: uniqueId,
             nodeId: nodeId,
+            idKey: idKey, 
             deviceCalibration: {
                 iterationsPerMs: iterationsPerMs,
                 calibrationTime: calibrationTime,
                 targetIterations: Number(targetIterations)
-            },
+ 
+           },
             profile: {
                 handle: handle,
                 bio: '',
                 profilePictureHash: null,
                 theme: {
-                    backgroundColor: '#000000',
+        
+            backgroundColor: '#000000',
                     fontColor: '#ffffff',
                     accentColor: '#ff1493'
                 },
                 updatedAt: Date.now()
+            
             }
         };
         
@@ -260,6 +267,7 @@ export async function createNewIdentity() {
             // Re-show the handle selection screen so the user can pick another
             step2.style.display = 'none';
             showHandleSelection();
+            reject(e); // <--  Reject the main promise on registration failure
             return; // Stop the process
         }
         
@@ -314,7 +322,7 @@ export async function createNewIdentity() {
           resolve();
         }, 2000);
         
-      } catch (error) {
+    } catch (error) {
         console.error("Identity registration failed:", error);
         step2.innerHTML = `
           <div style="text-align: center;">
@@ -323,6 +331,7 @@ export async function createNewIdentity() {
             <button onclick="location.reload()" class="primary-button">Try Again</button>
           </div>
         `;
+        reject(error);
       }
     }
   });

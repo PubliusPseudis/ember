@@ -14,6 +14,7 @@ import { CONFIG } from './config.js';
 import { Post } from './models/post.js';
 import { VerificationQueue } from './verification-queue.js';
 import { KademliaDHT } from './p2p/dht.js';
+import { IdentityClaim } from './models/identity-claim.js';
 
 // --- 2. IMPORT SHARED STATE & SERVICES ---
 import { initializeServices, getServices } from './services.js';
@@ -483,7 +484,32 @@ function evaluatePostTrust(postId) {
     }
     return;
   }
-  
+    // Force immediate verification for own posts
+    if (post.author === state.myIdentity.handle) {
+      console.log(`[Trust] Fast-tracking own post ${postId} through verification`);
+      
+      // Clear any existing timer
+      if (trustEvaluationTimers.has(postId)) {
+        clearInterval(trustEvaluationTimers.get(postId));
+        trustEvaluationTimers.delete(postId);
+      }
+      
+      // Check if verificationQueue is initialized
+      if (verificationQueue) {
+        verificationQueue.addBatch([post], 'normal', (results) => {
+          handleVerificationResults(results);
+        });
+      } else {
+        // If verification queue isn't ready, just accept the post directly
+        console.log(`[Trust] Verification queue not ready, accepting own post directly`);
+        handleVerificationResults([{
+          id: postId,
+          valid: true,
+          errors: []
+        }]);
+      }
+      return;
+    }
   // Check if post has reached trust threshold
   if (post.hasSufficientTrust(CONFIG.TRUST_THRESHOLD)) {
     console.log(`[Trust] Post ${postId} reached trust threshold (${post.trustScore.toFixed(2)}), accepting with verified signature`);
@@ -688,18 +714,16 @@ async function createPostWithTopics() {
     const txt = input.value.trim();
     if (!txt) return;
 
-    const topics = state.scribe ? state.scribe.extractTopics(txt) : ['#general'];
     const imagePreview = document.getElementById('image-preview');
     const imageData = imagePreview.dataset.imageData || null;
     const btn = document.getElementById("send-button");
     btn.disabled = true;
+    btn.textContent = "Mixing..."; // Updated UI text
 
-    notify("Computing proof of work...", 10000);
+    notify("Securing post for relay...", 10000); // Updated notification
 
     try {
-        const vdfInput = txt + state.myIdentity.uniqueId + Date.now();
-        btn.textContent = "Computing proof...";
-        const proof = await progressiveVDF.computeAdaptiveProof(txt, state.myIdentity.uniqueId, vdfInput);
+        // --- Local pre-checks remain ---
         if (await isToxic(txt)) {
             notify(`Your post may be seen as toxic. Please rephrase.`);
             btn.disabled = false;
@@ -712,47 +736,33 @@ async function createPostWithTopics() {
             btn.textContent = "🔥";
             return;
         }
-        
+
+        // --- Post Creation (Local) ---
+        // Create the post object, process the image, and sign it.
+        // The post is now a self-contained, signed object ready for publishing.
         const p = new Post(txt, null, imageData);
-        p.verified = true;
         if (imageData) {
             await p.processImage();
         }
-        
-        p.vdfProof = proof;
-        p.vdfInput = vdfInput;
         p.sign(state.myIdentity.secretKey);
 
-        state.posts.set(p.id, p);
+        // --- Hand off to Privacy Layer ---
+        // The privacy publisher handles all the complex parts:
+        // VDF generation, encryption, and relaying.
+        await getServices().privacyPublisher.publishPost(p);
+
+        // --- UI Cleanup ---
         input.value = "";
         document.getElementById("char-current").textContent = 0;
-        renderPost(p);
-        /*****
-        if (state.peers.size >= 3) {
-            dandelion.routePostSecure(p);
-        } else {
-            dandelion.routePost(p);
-        }
-        *****/
-        // This function now *only* multicasts via Scribe.
-        if (state.scribe) {
-            topics.forEach(topic => {
-                console.log(`[Scribe] Multicasting new post ${p.id} to topic: ${topic}`);
-                state.scribe.multicast(topic, { type: 'new_post', post: p.toJSON() });
-            });
-        } else {
-            console.warn("Scribe not initialized, post was not sent.");
-            notify("Error: Not connected to the network.");
-        }
-
         removeImage();
 
         btn.disabled = false;
         btn.textContent = "🔥";
-        notify("Posted to the void");
+        notify("Post sent to the mixing layer!");
+
     } catch (error) {
-        console.error("VDF computation failed:", error);
-        notify("Failed to compute proof of work", 5000);
+        console.error("Failed to publish post through privacy layer:", error);
+        notify(`Could not publish post: ${error.message}`, 5000);
         btn.disabled = false;
         btn.textContent = "🔥";
     }
@@ -855,93 +865,64 @@ async function createReply(parentId) {
 
     try {
         const txt = input.value.trim();
-        if (!txt) return; // Exit silently if there is no text
-
+        if (!txt) {
+            btn.disabled = false;
+            return; // Exit silently if there is no text
+        }
+        
         const parentPost = state.posts.get(parentId);
         if (!parentPost) {
             notify("Parent post no longer exists!");
+            btn.disabled = false;
             return;
         }
 
-        // --- All checks now happen inside the robust try block ---
-
+        // --- Local pre-checks ---
         if (await isToxic(txt)) {
             notify(`Your reply may be seen as toxic. Please rephrase.`);
-            return; // Abort if toxic
+            btn.disabled = false;
+            return;
         }
 
         const imagePreview = document.getElementById(`reply-image-preview-${parentId}`);
         const imageData = imagePreview?.dataset?.imageData || null;
         if (imageData && await isImageToxic(imageData)) {
             notify("Image content not allowed");
-            return; // Abort if image is toxic
+            btn.disabled = false;
+            return;
         }
         
-        // --- VDF is now mandatory and will throw an error on failure ---
-        
+        // --- Reply Creation (Local) ---
+        // Create the reply Post object with the parentId, process image, and sign it.
         const reply = new Post(txt, parentId, imageData);
         reply.depth = Math.min(parentPost.depth + 1, 5);
 
         if (imageData) {
             await reply.processImage();
         }
-
-        const vdfInput = txt + state.myIdentity.uniqueId + Date.now();
-        const proof = await progressiveVDF.computeAdaptiveProof(txt, state.myIdentity.uniqueId, vdfInput);
-        reply.vdfProof = proof;
-        reply.vdfInput = vdfInput;
-
-        // --- Signing and Broadcasting, identical to parent posts ---
-
         reply.sign(state.myIdentity.secretKey);
         
-        parentPost.replies.add(reply.id);
-        if (!parentPost.carriers.has(state.myIdentity.handle)) {
-            parentPost.carriers.add(state.myIdentity.handle);
-            state.explicitlyCarrying.add(parentId);
-            broadcast({ type: "carrier_update", postId: parentId, peer: state.myIdentity.handle, carrying: true });
-        }
-        
-        state.posts.set(reply.id, reply);
-        renderPost(reply);
-        
-        const replyData = reply.toJSON();
-        //broadcast({ type: "new_post", post: replyData });
-        //broadcast({ type: "parent_update", parentId: parentId, replyId: reply.id });
+        // --- Hand off to Privacy Layer ---
+        // The PrivacyPublisher handles the VDF proof, encryption, and relaying.
+        // It works for both top-level posts and replies without any changes.
+        await getServices().privacyPublisher.publishPost(reply);
 
-        // Also broadcast to topics, which was missing before
-        const topics = state.scribe ?
-        state.scribe.extractTopics(txt) : [];
-        if (state.scribe) {
-            topics.forEach(topic => {
-                // Multicast the new reply post itself
-                state.scribe.multicast(topic, { type: 'new_post', post: replyData });
-                // ALSO multicast the parent update on the same topic
-                state.scribe.multicast(topic, { type: "parent_update", parentId: parentId, replyId: reply.id });
-            });
-        }
-        
-        reply.carriers.add(state.myIdentity.handle);
-        state.explicitlyCarrying.add(reply.id);
-
-        // --- Final UI Cleanup ---
-
+        // --- UI Cleanup ---
         input.value = "";
         document.getElementById(`reply-char-${parentId}`).textContent = 0;
         removeReplyImage(parentId);
-        toggleReplyForm(parentId);
-        notify("Gas'd the thread!");
+        toggleReplyForm(parentId); // Hide the form after successfully sending
+        notify("Reply sent to the mixing layer!");
 
     } catch (error) {
-        // If anything fails (especially VDF), notify the user and log it.
         console.error("Failed to create reply:", error);
         notify(`Could not create reply: ${error.message}`);
-
     } finally {
         // IMPORTANT: Always re-enable the button, whether it succeeded or failed.
         btn.disabled = false;
     }
 }
+
 async function checkAndDeliverPendingMessages(recipientHandle = null) {
   try {
     console.log('[DM] Checking for pending messages to deliver');
@@ -1674,13 +1655,15 @@ function garbageCollect() {
 }
 
 // --- 6. APP LIFECYCLE (INIT) ---
+// FILE: main.js
+
 async function init() {
   applyTheme(localStorage.getItem('ephemeral-theme') || 'dark');
   setupThemeToggle();
   applyConfigToUI();
-  
+
   try {
-    // Set up service callbacks
+    // --- Step 1: Set up basic message handlers ---
     setServiceCallbacks({
       debugPostRemoval,
       dropPost,
@@ -1689,26 +1672,103 @@ async function init() {
       broadcastProfileUpdate,
       initializeUserProfileSection
     });
-    
-    // Register Scribe message handlers with message bus
     messageBus.registerHandler('scribe:new_post', (data) => {
-      if (state.myIdentity && data.message.post.author === state.myIdentity.handle) return;
       handleNewPost(data.message.post, null);
     });
-    
     messageBus.registerHandler('scribe:PROFILE_UPDATE', (data) => {
       handleProfileUpdate(data.message, null);
     });
-    
     messageBus.registerHandler('scribe:parent_update', (data) => {
       handleParentUpdate(data.message);
     });
+    registerHandler('new_post', handleNewPost);
+    registerHandler('provisional_identity_claim', async (msg) => await handleProvisionalClaim(msg.claim));
+    registerHandler('identity_confirmation_slip', async (msg) => await handleConfirmationSlip(msg.slip));
+    registerHandler('post_attestation', handlePostAttestation);
+    registerHandler('carrier_update', handleCarrierUpdate);
+    registerHandler('parent_update', handleParentUpdate);
+    registerHandler('posts_response', async (msg) => await handlePostsResponse(msg.posts));
+    registerHandler('post_rating', handlePostRating);
+    registerHandler('e2e_dm', handleDirectMessage);
+    registerHandler('generate_attestation', generateAndBroadcastAttestation);
+    setSendPeer(sendPeer);
+
+    // --- Step 2: Initialize WASM and Base Network ---
+    await wasmVDF.initialize();
+    const stored = localStorage.getItem("ephemeral-id");
+    let storedIdentity = null;
+    if (stored) {
+      try {
+        const identity = JSONParseWithBigInt(stored);
+        if (identity.nodeId) {
+            if (typeof identity.nodeId === 'string') {
+            identity.nodeId = base64ToArrayBuffer(identity.nodeId);
+            } else if (Array.isArray(identity.nodeId)) {
+            identity.nodeId = new Uint8Array(identity.nodeId);
+            }
+        }       
+        if (identity.secretKey && Array.isArray(identity.secretKey)) {
+          identity.secretKey = new Uint8Array(identity.secretKey);
+        }
+        if (identity.publicKey && typeof identity.publicKey === 'string') {
+          identity.publicKey = base64ToArrayBuffer(identity.publicKey);
+        }
+        if (identity.encryptionPublicKey && typeof identity.encryptionPublicKey === 'string') {
+          identity.encryptionPublicKey = base64ToArrayBuffer(identity.encryptionPublicKey);
+        }
+        if (identity.encryptionSecretKey && Array.isArray(identity.encryptionSecretKey)) {
+          identity.encryptionSecretKey = new Uint8Array(identity.encryptionSecretKey);
+        }
+        if (identity.vdfProof && identity.vdfProof.iterations && typeof identity.vdfProof.iterations === 'string') {
+          identity.vdfProof.iterations = BigInt(identity.vdfProof.iterations);
+        }
+        if (!identity.profile) {
+          identity.profile = {
+            handle: identity.handle, bio: '', profilePictureHash: null,
+            theme: { backgroundColor: '#000000', fontColor: '#ffffff', accentColor: '#ff1493' },
+            updatedAt: Date.now()
+          };
+        }
+        storedIdentity = identity;
+      } catch (e) { console.error("Failed to parse stored identity:", e); }
+    }
+    const tempNodeId = (storedIdentity && storedIdentity.nodeId instanceof Uint8Array) ? storedIdentity.nodeId : crypto.getRandomValues(new Uint8Array(20));
+    await initNetworkWithTempId(tempNodeId);
     
-    // Initialize services
+    // Wait for DHT to be ready
+    await new Promise(resolve => {
+      const i = setInterval(() => { if (state.dht && state.identityRegistry) { clearInterval(i); resolve(); } }, 100);
+    });
+    
+    // --- Step 3: Establish User Identity ---
+    if (storedIdentity && storedIdentity.handle) {
+      const isValid = await state.identityRegistry.verifyOwnIdentity(storedIdentity);
+      if (isValid) {
+        state.myIdentity = storedIdentity;
+        state.dht.nodeId = state.myIdentity.nodeId;
+        console.log("[Identity] Re-publishing identity records for returning user...");
+        const handleAddress = `handle-to-pubkey:${state.myIdentity.handle.toLowerCase()}`;
+        const pubkeyAddress = `pubkey:${state.myIdentity.publicKey}`;
+        Promise.all([
+          state.dht.store(handleAddress, { publicKey: state.myIdentity.publicKey }),
+          state.dht.store(pubkeyAddress, state.myIdentity.identityClaim)
+        ]).catch(err => { console.error("[Identity] Failed to re-publish identity:", err); });
+      } else {
+        notify("Stored identity is no longer valid. Please create a new one.");
+        await createNewIdentity();
+      }
+    } else {
+      await createNewIdentity();
+    }
+    initializeUserProfileSection();
+
+    // --- Step 4: Initialize Core P2P Protocols (like Scribe) ---
+    initializeP2PProtocols(); 
+    
+    // --- Step 5: Initialize High-Level Services (NOW SAFE TO DO) ---
     const services = initializeServices({
       renderPost: renderPost
     });
-    // Extract service references
     ({
       stateManager,
       verificationQueue,
@@ -1720,213 +1780,30 @@ async function init() {
       trafficMixer,
       epidemicGossip
     } = services);
-    
-    // Set up the StateManager's renderPost dependency
     services.stateManager.renderPost = renderPost;
-    // Set up UI dependencies
-    setSendPeer(sendPeer);
-    
-    // Register message handlers
-    registerHandler('new_post', handleNewPost);
-    registerHandler('provisional_identity_claim', async (msg) => await handleProvisionalClaim(msg.claim));
-    registerHandler('identity_confirmation_slip', async (msg) => await handleConfirmationSlip(msg.slip));
-    registerHandler('post_attestation', handlePostAttestation);
-    registerHandler('carrier_update', handleCarrierUpdate);
-    registerHandler('parent_update', handleParentUpdate);
-    registerHandler('posts_response', async (msg) => await handlePostsResponse(msg.posts));
-    registerHandler('post_rating', handlePostRating);
-    registerHandler('e2e_dm', handleDirectMessage);
-    registerHandler('generate_attestation', generateAndBroadcastAttestation);
-    
-    await wasmVDF.initialize();
     await verificationQueue.init();
-    await stateManager.init();
-    
-    // Check for stored identity but DON'T set it yet
-    const stored = localStorage.getItem("ephemeral-id");
-    let storedIdentity = null;
-    
-    if (stored) {
-      try {
-        const identity = JSONParseWithBigInt(stored);
-        if (identity.nodeId) {
-            if (typeof identity.nodeId === 'string') {
-            // stored as base-64
-            identity.nodeId = base64ToArrayBuffer(identity.nodeId);
-            } else if (Array.isArray(identity.nodeId)) {
-            // stored as JSON array
-            identity.nodeId = new Uint8Array(identity.nodeId);
-           }
-        }       
-        
-        
-        if (identity.secretKey) {
-          if (Array.isArray(identity.secretKey)) {
-            identity.secretKey = new Uint8Array(identity.secretKey);
-          }
-        }
-        if (identity.publicKey && typeof identity.publicKey === 'string') {
-          identity.publicKey = base64ToArrayBuffer(identity.publicKey);
-        }
-        if (identity.encryptionPublicKey && typeof identity.encryptionPublicKey === 'string') {
-          identity.encryptionPublicKey = base64ToArrayBuffer(identity.encryptionPublicKey);
-        }
-        if (identity.encryptionSecretKey && Array.isArray(identity.encryptionSecretKey)) {
-          identity.encryptionSecretKey = new Uint8Array(identity.encryptionSecretKey);
-        }
-        if (identity.vdfProof && identity.vdfProof.iterations) {
-          if (typeof identity.vdfProof.iterations === 'string') {
-            identity.vdfProof.iterations = BigInt(identity.vdfProof.iterations);
-          }
-        }
-        
-        // Initialize default profile if not present
-        if (!identity.profile) {
-          identity.profile = {
-            handle: identity.handle,
-            bio: '',
-            profilePictureHash: null,
-            theme: {
-              backgroundColor: '#000000',
-              fontColor: '#ffffff',
-              accentColor: '#ff1493'
-            },
-            updatedAt: Date.now()
-          };
-        }
-        
-        storedIdentity = identity;
-      } catch (e) {
-        console.error("Failed to parse stored identity:", e);
-      }
-    }
-    
-    // Initialize network FIRST with temporary node ID
-    const tempNodeId = (storedIdentity && storedIdentity.nodeId instanceof Uint8Array)
-                        ? storedIdentity.nodeId
-                        : crypto.getRandomValues(new Uint8Array(20));
-    
-    await initNetworkWithTempId(tempNodeId);
-    await stateManager.loadDHTState();
-    
-    // Wait for DHT to be ready
-    await new Promise(resolve => {
-      const checkInterval = setInterval(() => {
-        if (state.dht && state.identityRegistry) {
-          clearInterval(checkInterval);
-          resolve();
-        }
-      }, 100);
-    });
-    
-    await new Promise(resolve => {
-      let waitTime = 0;
-      const checkInterval = setInterval(() => {
-        waitTime += 100;
-        
-        if (state.dht && state.identityRegistry) {
-          clearInterval(checkInterval);
-          
-          // Check if we're likely the first node
-          if (waitTime > 5000 && state.peers.size === 0) {
-            notify("🎉 Welcome, pioneer! You appear to be the first node on the network!");
-          }
-          
-          resolve();
-        }
-      }, 100);
-    });
-        
-    
-    // Now handle identity
-    if (storedIdentity && storedIdentity.handle) {
-      // Verify stored identity
-      const isValid = await state.identityRegistry.verifyOwnIdentity(storedIdentity);
-      
-      if (isValid) {
-        // Identity was successfully verified on the network
-        state.myIdentity = storedIdentity;
-        
-        // Update the DHT with the final, correct nodeId ---
-        state.dht.nodeId = state.myIdentity.nodeId;
-        
-         // Re-publish identity records to the DHT to ensure discoverability ---
-        console.log("[Identity] Re-publishing identity records for returning user...");
-        const handleAddress = `handle-to-pubkey:${state.myIdentity.handle.toLowerCase()}`;
-        const pubkeyAddress = `pubkey:${state.myIdentity.publicKey}`;
 
-        // Use Promise.all to re-publish both records concurrently.
-        Promise.all([
-          state.dht.store(handleAddress, { publicKey: state.myIdentity.publicKey }),
-          state.dht.store(pubkeyAddress, state.myIdentity.identityClaim)
-        ]).then(() => {
-            console.log("[Identity] Successfully re-published identity to the DHT.");
-        }).catch(err => {
-            console.error("[Identity] Failed to re-publish identity:", err);
-        });       
-          // Initialize profile section
-        initializeUserProfileSection();
-        notify(`Welcome back, ${storedIdentity.handle}!`);
-        // Announce our routing info after a short delay
-        setTimeout(async () => {
-          if (state.client && state.identityRegistry) {
-            // Get our current WebRTC peer ID from any active connection
-            const activePeer = Array.from(state.peers.values())[0];
-            if (activePeer && activePeer.wire) {
-              const ourWirePeerId = activePeer.wire._client?.peerId;
-              if (ourWirePeerId) {
-                await state.identityRegistry.updatePeerLocation(
-                  state.myIdentity.handle,
-                  state.myIdentity.nodeId,
-                  ourWirePeerId
-                );
-                console.log('[Init] Initial routing info announced');
-              }
-            }
-          }
-        }, 5000); // Wait 5 seconds for connections to establish
-      } else if (state.peers.size === 0) {
-        // If verification fails BUT we have no peers, we are the first node.
-        // We should trust the local identity and assume it's valid.
-        console.warn("Could not verify identity on DHT (no peers found), trusting local storage.");
-        state.myIdentity = storedIdentity;
-         initializeUserProfileSection();
-        notify(`Welcome back, pioneer ${storedIdentity.handle}!`);
-      } else {
-        // Stored identity is invalid or taken because verification failed and there ARE peers.
-        notify("Stored identity is no longer valid. Please create a new one.");
-        await createNewIdentity();
-        initializeUserProfileSection();
-      }
-    } else {
-      // No stored identity
-      await createNewIdentity();
-      initializeUserProfileSection();
-    }
-    
-    // Continue with rest of initialization
+    // --- Step 6: Load Saved State Using the New Services ---
+    await stateManager.init();
+    await stateManager.loadDHTState();
     await stateManager.loadUserState();
     await stateManager.loadImageChunks();
+    await stateManager.loadPosts();
+    await stateManager.loadPeerScores();
+    
+    // --- Step 7: Finalize UI and start background tasks ---
     await initContentFilter();
     await initImageFilter();
     
-    const loadedPostCount = await stateManager.loadPosts();
-    
-    
-    await stateManager.loadPeerScores();
-    
-    // Hide loading screen and show main app
     document.getElementById("loading").style.display = "none";
-    initializeP2PProtocols();
     startMaintenanceLoop();
     initTopics();
     updateDMInbox();
     updateUnreadBadge();
-    // Update inbox periodically
     setInterval(()=>{ 
                 updateDMInbox(),
                 updateUnreadBadge();
-                }, 30000); // Every 30 seconds
+                }, 30000);
     
     window.addEventListener("beforeunload", () => {
       if (maintenanceInterval) clearInterval(maintenanceInterval);
@@ -1934,13 +1811,15 @@ async function init() {
       stateManager.saveUserState();
       stateManager.savePeerScores();
       stateManager.saveDHTState();
-        routingManager.stop();
+      routingManager.stop();
       if (state.client) state.client.destroy();
-      if (state.dht) {
-        state.dht.shutdown();
-      }
+      if (state.dht) state.dht.shutdown();
     });
-    
+
+    try {
+        getServices().relayCoordinator.start();
+    } catch(e) { console.error("[Init] Failed to start Relay Coordinator:", e); }
+
     if (!localStorage.getItem("ephemeral-tips")) {
       setTimeout(() => notify("💡 Tip: Posts live only while carried by peers"), 1000);
       setTimeout(() => notify("💡 Tip: Ctrl+Enter to post quickly"), 6000);
@@ -2035,7 +1914,6 @@ function initializeP2PProtocols() {
     state.scribe = new Scribe(state.myIdentity.nodeId, state.dht);
     state.scribe.deliverMessage = (topic, message) => {
       if (message.type === 'new_post' && message.post) {
-        if (message.post.author === state.myIdentity.handle) return;
         handleNewPost(message.post, null);
       } else if (message.type === 'PROFILE_UPDATE') {
         handleProfileUpdate(message, null);

@@ -3,7 +3,7 @@ export const CONFIG = {
   MAX_POST_SIZE: 1120,
   MAX_PEERS: 50,
   MAX_MESSAGE_SIZE: 1 * 1024 * 1024, // 1MB
-  RATE_LIMIT_MESSAGES: 50,
+  RATE_LIMIT_MESSAGES: 250,
   RATE_LIMIT_WINDOW: 60_000,
   GARBAGE_COLLECT_INTERVAL: 60_000,
   CARRIER_UPDATE_INTERVAL: 30_000,
@@ -12,6 +12,40 @@ export const CONFIG = {
   IDENTITY_CONFIRMATION_THRESHOLD: 1,
   NSFWJS_MODEL_PATH: 'nsfwjs-model/',
   TRUST_THRESHOLD: 30, // Minimum trust score to skip verification
-  ATTESTATION_TIMEOUT: 1000, // Max time to wait for attestations (1 second)
+  ATTESTATION_TIMEOUT: 15000, // Max time to wait for attestations (15 second)
   MAX_PENDING_MESSAGES: 100, // Max messages to queue per peer before handshake
+
+  // --- NEW: Universal Privacy Mixing Layer ---
+  PRIVACY_CONFIG: {
+    // Relay topic assignment
+    MIN_RELAY_TOPICS: 1,                    // Minimum for new nodes
+    MAX_RELAY_TOPICS: 20,                   // Maximum for highest reputation
+    RELAY_TOPIC_UNIVERSE: 10000,            // Total possible relay topics
+    TOPIC_ROTATION_PERIOD: 3600000,         // 1 hour in ms
+    
+    // Bloom filter parameters
+    BLOOM_FILTER_SIZE: 1024,                // bits
+    BLOOM_HASH_FUNCTIONS: 3,                // hash function count
+    BLOOM_FALSE_POSITIVE_RATE: 0.01,        // target FP rate
+    
+    // Mixing parameters  
+    POOL_FLUSH_THRESHOLD: 5,                // minimum posts before flush
+    POOL_TIMEOUT: 30000,                    // force flush after 30s
+    BASE_MIXING_DELAY: 5000,                // base delay in ms
+    REPUTATION_DELAY_FACTOR: 0.7,           // high rep = shorter delays
+    
+    // Rate limiting
+    RELAY_RATE_WINDOW: 3600000,             // 1 hour
+    RELAY_RATE_BASE: 150,                    // base rate for new nodes
+    RELAY_RATE_REPUTATION_MULTIPLIER: 10,   // max 10x for trusted nodes
+    
+    // Reputation thresholds
+    REPUTATION_TIERS: {
+      UNTRUSTED: 0,
+      NEW: 100,
+      ESTABLISHED: 1000,
+      TRUSTED: 5000,
+      HIGHLY_TRUSTED: 10000
+    }
+  }
 };

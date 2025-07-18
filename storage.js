@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { generateId } from './utils.js';
+import { generateId, JSONStringifyWithBigInt, JSONParseWithBigInt, base64ToArrayBuffer } from './utils.js';
 import { Post } from './models/post.js';
 
 export class StateManager {
@@ -243,22 +243,32 @@ export class StateManager {
   
   async saveUserState() {
     if (!this.db) return;
-    
     const transaction = this.db.transaction(['userState'], 'readwrite');
     const store = transaction.objectStore('userState');
     
-    // Save identity (including profile)
-    store.put({ 
-      key: 'identity', 
-      value: state.myIdentity 
-    });
-    
+    if (state.myIdentity) {
+      // Create a serializable copy of the identity object
+      const serializableIdentity = {
+        ...state.myIdentity,
+        nodeId: state.myIdentity.nodeId ? Array.from(state.myIdentity.nodeId) : null,
+        secretKey: state.myIdentity.secretKey ? Array.from(state.myIdentity.secretKey) : null,
+        publicKey: state.myIdentity.publicKey ? arrayBufferToBase64(state.myIdentity.publicKey) : null,
+        encryptionSecretKey: state.myIdentity.encryptionSecretKey ? Array.from(state.myIdentity.encryptionSecretKey) : null,
+        encryptionPublicKey: state.myIdentity.encryptionPublicKey ? arrayBufferToBase64(state.myIdentity.encryptionPublicKey) : null,
+      };
+
+      const identityString = JSONStringifyWithBigInt(serializableIdentity);
+      store.put({ 
+        key: 'identity', 
+        value: identityString 
+      });
+    }
+
     // Save theme preference
     store.put({ 
       key: 'theme', 
       value: localStorage.getItem('ephemeral-theme') || 'dark' 
     });
-    
     // Save explicitly carried posts
     store.put({ 
       key: 'explicitlyCarrying', 
@@ -266,55 +276,81 @@ export class StateManager {
     });
   }
   
-    async loadUserState() {
-        if (!this.db) return;
+  async loadUserState() {
+    if (!this.db) return;
+    return new Promise((resolve, reject) => {
+        const transaction = this.db.transaction(['userState'], 'readonly');
+        const store = transaction.objectStore('userState');
 
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['userState'], 'readonly');
-            const store = transaction.objectStore('userState');
+        const identityReq = store.get('identity');
+        const carryReq = store.get('explicitlyCarrying');
 
-            const identityReq = store.get('identity');
-            const carryReq = store.get('explicitlyCarrying');
+        let identityLoaded = false;
+        let carryLoaded = false;
 
-            let identityLoaded = false;
-            let carryLoaded = false;
+        const checkCompletion = () => {
+            if (identityLoaded && carryLoaded) {
+                resolve();
+            }
+        };
 
-            const checkCompletion = () => {
-                if (identityLoaded && carryLoaded) {
-                    resolve(); // Resolve the promise only when both are done
+        identityReq.onsuccess = () => {
+            if (identityReq.result && identityReq.result.value) {
+                // **FIX START: Deserialize the identity string and rehydrate Uint8Arrays**
+                try {
+                  const identity = JSONParseWithBigInt(identityReq.result.value);
+                  
+                  // Re-create Uint8Arrays from plain objects/arrays
+                  if (identity.nodeId && !(identity.nodeId instanceof Uint8Array)) {
+                      identity.nodeId = new Uint8Array(Object.values(identity.nodeId));
+                  }
+                  if (identity.secretKey && !(identity.secretKey instanceof Uint8Array)) {
+                      identity.secretKey = new Uint8Array(Object.values(identity.secretKey));
+                  }
+                  if (identity.encryptionSecretKey && !(identity.encryptionSecretKey instanceof Uint8Array)) {
+                      identity.encryptionSecretKey = new Uint8Array(Object.values(identity.encryptionSecretKey));
+                  }
+                  
+                  // Re-create from base64 strings
+                  if (identity.publicKey && typeof identity.publicKey === 'string') {
+                      identity.publicKey = base64ToArrayBuffer(identity.publicKey);
+                  }
+                  if (identity.encryptionPublicKey && typeof identity.encryptionPublicKey === 'string') {
+                      identity.encryptionPublicKey = base64ToArrayBuffer(identity.encryptionPublicKey);
+                  }
+
+                  state.myIdentity = identity;
+                  console.log('Loaded identity from storage');
+                } catch (e) {
+                   console.error("Failed to parse stored identity:", e);
                 }
-            };
+                // **FIX END**
+            }
+            identityLoaded = true;
+            checkCompletion();
+        };
 
-            identityReq.onsuccess = () => {
-                if (identityReq.result) {
-                    state.myIdentity = identityReq.result.value;
-                    console.log('Loaded identity from storage');
-                }
-                identityLoaded = true;
-                checkCompletion();
-            };
+        carryReq.onsuccess = () => {
+            if (carryReq.result) {
+                state.explicitlyCarrying = new Set(carryReq.result.value);
+            }
+            carryLoaded = true;
+            checkCompletion();
+        };
+        
+        identityReq.onerror = (event) => {
+            console.error("Failed to load identity:", event.target.error);
+            identityLoaded = true;
+            checkCompletion();
+        };
 
-            carryReq.onsuccess = () => {
-                if (carryReq.result) {
-                    state.explicitlyCarrying = new Set(carryReq.result.value);
-                }
-                carryLoaded = true;
-                checkCompletion();
-            };
-
-            identityReq.onerror = (event) => {
-                console.error("Failed to load identity:", event.target.error);
-                identityLoaded = true; // Mark as done even on error to not block forever
-                checkCompletion();
-            };
-
-            carryReq.onerror = (event) => {
-                console.error("Failed to load explicitly carried posts:", event.target.error);
-                carryLoaded = true; // Mark as done even on error
-                checkCompletion();
-            };
-        });
-    }
+        carryReq.onerror = (event) => {
+            console.error("Failed to load explicitly carried posts:", event.target.error);
+            carryLoaded = true;
+            checkCompletion();
+        };
+    });
+  }
   
   async savePeerScores() {
     if (!this.db || !this.peerManager) return;

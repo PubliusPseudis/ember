@@ -573,6 +573,30 @@ fn verify_proof_internal(&self, input: &str, proof: &VDFProof) -> Result<bool, S
         
         true
     }
+    
+    /// Create a VDF computer with a custom modulus (hex string) - TEST ONLY
+    /// This bypasses security validations and should only be used for testing
+    #[cfg(test)]
+    pub fn with_modulus_unchecked(modulus_hex: &str) -> Result<VDFComputer, JsValue> {
+        let modulus = BigUint::parse_bytes(modulus_hex.as_bytes(), 16)
+            .ok_or_else(|| JsValue::from_str("Invalid modulus format"))?;
+        
+        // For tests, we allow any odd modulus
+        if modulus.is_even() {
+            return Err(JsValue::from_str("Modulus must be odd"));
+        }
+        
+        // Precompute Montgomery parameters (simplified for this example)
+        let montgomery_r = BigUint::one() << modulus.bits();
+        let montgomery_r_inv = montgomery_r.clone();
+        
+        Ok(VDFComputer {
+            modulus,
+            montgomery_r,
+            montgomery_r_inv,
+        })
+    }
+    
 }
 
 /// Helper function to decode base64 to BigUint
@@ -616,35 +640,186 @@ pub fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+// ===================================================================================
+//                                VDF WASM TEST SUITE
+// ===================================================================================
+// To run these tests, use the command: `wasm-pack test --headless --firefox`
+// (or --chrome, --safari)
+//
+// These tests validate the VDF implementation in a real WASM environment.
+// ===================================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    #[test]
-    fn test_vdf_correctness() {
-        let computer = VDFComputer::new().unwrap();
-        let input = "test_input";
-        let iterations = 10000;
-        
+    use wasm_bindgen_test::*;
+
+    // Configure wasm-bindgen-test to run in a browser environment
+    wasm_bindgen_test_configure!(run_in_browser);
+
+
+/// Real 512-bit RSA modulus generated with OpenSSL
+const TEST_MODULUS_HEX: &str = "bc975c587f80c63fc038828ed7416a2c0cf209e434494b77096086f47cbafff224d6c853998f3cfb8a8fd1c847b06666561e8ef5adfe5b3e11c09ac7324c4119";
+
+    /// Creates a VDF computer with the default RSA-2048 modulus.
+    fn setup_default_computer() -> VDFComputer {
+        VDFComputer::new()
+    }
+
+/// Creates a VDF computer with a small, fast modulus for testing.
+fn setup_test_computer() -> VDFComputer {
+    VDFComputer::with_modulus_unchecked(TEST_MODULUS_HEX).unwrap()
+}
+
+    #[wasm_bindgen_test]
+    fn test_vdf_proof_generation_and_verification_happy_path() {
+        let computer = setup_default_computer();
+        let input = "hello world";
+        let iterations = MIN_ITERATIONS; // Use minimum iterations for speed
+
         let proof = computer.compute_proof(input, iterations, None).unwrap();
-        assert!(computer.verify_proof(input, &proof).unwrap());
+        let is_valid = computer.verify_proof(input, &proof).unwrap();
+
+        assert!(is_valid, "VDF proof should be valid for a correct computation");
+    }
+
+#[wasm_bindgen_test]
+fn test_with_custom_modulus() {
+    let computer = setup_test_computer();
+    let input = "custom modulus test";
+    let iterations = MIN_ITERATIONS;
+
+    let proof = computer.compute_proof(input, iterations, None).unwrap();
+    let is_valid = computer.verify_proof(input, &proof).unwrap();
+
+    assert!(is_valid, "VDF should work with a custom modulus");
+    assert_eq!(computer.modulus.bits(), 512, "Test modulus should be 512 bits");
+}
+
+    #[wasm_bindgen_test]
+    fn test_proof_verification_fails_with_wrong_input() {
+        let computer = setup_default_computer();
+        let original_input = "correct input";
+        let wrong_input = "wrong input";
+        let iterations = MIN_ITERATIONS;
+
+        let proof = computer.compute_proof(original_input, iterations, None).unwrap();
+        let is_valid = computer.verify_proof(wrong_input, &proof).unwrap();
+
+        assert!(!is_valid, "Verification should fail if the input is incorrect");
+    }
+
+    #[wasm_bindgen_test]
+    fn test_proof_verification_fails_with_tampered_proof() {
+        let computer = setup_default_computer();
+        let input = "tamper-proof test";
+        let iterations = MIN_ITERATIONS;
+
+        let mut proof = computer.compute_proof(input, iterations, None).unwrap();
         
-        // Test invalid proof
-        let mut invalid_proof = proof.clone();
-        invalid_proof.iterations = 9999;
-        assert!(!computer.verify_proof(input, &invalid_proof).unwrap());
+        // Tamper with the 'y' value
+        let mut y_bytes = general_purpose::STANDARD.decode(&proof.y).unwrap();
+        y_bytes[0] ^= 0xff; // Flip some bits
+        proof.y = general_purpose::STANDARD.encode(&y_bytes);
+
+        let is_valid = computer.verify_proof(input, &proof).unwrap();
+        assert!(!is_valid, "Verification should fail if 'y' is tampered");
+    }
+
+    #[wasm_bindgen_test]
+    fn test_iteration_bounds() {
+        let computer = setup_default_computer();
+        let input = "iteration bounds test";
+
+        // Test below minimum
+        let result_min = computer.compute_proof(input, MIN_ITERATIONS - 1, None);
+        assert!(result_min.is_err(), "Should fail with iterations below minimum");
+
+        // Test above maximum
+        let result_max = computer.compute_proof(input, MAX_ITERATIONS + 1, None);
+        assert!(result_max.is_err(), "Should fail with iterations above maximum");
+    }
+
+    #[wasm_bindgen_test]
+    fn test_empty_input_fails() {
+        let computer = setup_default_computer();
+        let result = computer.compute_proof("", MIN_ITERATIONS, None);
+        assert!(result.is_err(), "Computation should fail for empty input");
+    }
+
+    #[wasm_bindgen_test]
+    fn test_proof_serialization_deserialization() {
+        let computer = setup_default_computer();
+        let input = "json test";
+        let iterations = MIN_ITERATIONS;
+
+        let original_proof = computer.compute_proof(input, iterations, None).unwrap();
+        let json_proof = original_proof.to_json().unwrap();
+        let deserialized_proof = VDFProof::from_json(&json_proof).unwrap();
+
+        assert_eq!(original_proof.y, deserialized_proof.y);
+        assert_eq!(original_proof.pi, deserialized_proof.pi);
+        assert_eq!(original_proof.l, deserialized_proof.l);
+        assert_eq!(original_proof.r, deserialized_proof.r);
+        assert_eq!(original_proof.iterations, deserialized_proof.iterations);
+        
+        // Verify the deserialized proof
+        let is_valid = computer.verify_proof(input, &deserialized_proof).unwrap();
+        assert!(is_valid, "Deserialized proof should be valid");
+    }
+
+    #[wasm_bindgen_test]
+    fn test_hash_to_group_is_deterministic() {
+        let computer = setup_default_computer();
+        let input = "deterministic hash";
+
+        let hash1 = computer.hash_to_group(input).unwrap();
+        let hash2 = computer.hash_to_group(input).unwrap();
+        
+        assert_eq!(hash1, hash2, "hash_to_group should produce the same output for the same input");
     }
     
-    #[test]
-    fn test_deterministic_proofs() {
-        let computer = VDFComputer::new().unwrap();
-        let input = "deterministic_test";
-        let iterations = 5000;
+    #[wasm_bindgen_test]
+    fn test_fiat_shamir_prime_is_deterministic() {
+        let computer = setup_default_computer();
+        let input = "deterministic prime";
+        let iterations = MIN_ITERATIONS;
         
-        let proof1 = computer.compute_proof(input, iterations, None).unwrap();
-        let proof2 = computer.compute_proof(input, iterations, None).unwrap();
-        
-        assert_eq!(proof1.y(), proof2.y());
-        assert_eq!(proof1.l(), proof2.l());
+        let x = computer.hash_to_group(input).unwrap();
+        let y = computer.compute_vdf_output(&x, iterations, &None).unwrap();
+
+        let l1 = computer.generate_fiat_shamir_prime(&x, &y, iterations).unwrap();
+        let l2 = computer.generate_fiat_shamir_prime(&x, &y, iterations).unwrap();
+
+        assert_eq!(l1, l2, "Fiat-Shamir prime generation should be deterministic");
+    }
+    
+    #[wasm_bindgen_test]
+    async fn test_progress_callback() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let computer = setup_default_computer();
+        let input = "progress callback test";
+        let iterations = MIN_ITERATIONS + PROGRESS_INTERVAL; // Ensure it fires at least once
+
+        let progress_log = Rc::new(RefCell::new(Vec::<f64>::new()));
+        let progress_log_clone = progress_log.clone();
+
+        let on_progress_callback = Closure::wrap(Box::new(move |p: f64| {
+            progress_log_clone.borrow_mut().push(p);
+        }) as Box<dyn Fn(f64)>);
+
+        let _ = computer.compute_proof(
+            input,
+            iterations,
+            Some(on_progress_callback.as_ref().clone().into()),
+        );
+
+        let log = progress_log.borrow();
+        assert!(!log.is_empty(), "Progress callback should have been called");
+        assert!(log[0] > 0.0, "First progress value should be greater than 0");
+        assert_eq!(*log.last().unwrap(), 100.0, "Last progress value should be 100");
     }
 }
+

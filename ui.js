@@ -1861,7 +1861,6 @@ export {
     getThreadSize,
     toggleReplyForm,
     toggleThread,
-    updateBonfire,
     scrollToPost,
     subscribeToTopic,
     addTopicToUI,

@@ -9,12 +9,13 @@ import { ProgressiveVDF } from './identity/vdf.js';
 import { NoiseGenerator } from './p2p/noise-generator.js';
 import { TrafficMixer } from './p2p/traffic-mixer.js';
 import { EpidemicGossip } from './p2p/epidemic-gossip.js';
-
+import { PrivacyPublisher } from './p2p/privacy-publisher.js'; 
+import { MixingNode } from './p2p/mixing-node.js';
+import { RelayCoordinator } from './p2p/relay-coordinator.js';
 import { StateManager } from './storage.js';
 import { setServices } from './services/instances.js';
 
 // --- SERVICE INSTANCES ---
-// Create instances with dependency injection
 export function initializeServices(dependencies = {}) {
   const imageStore = new ContentAddressedImageStore();
   const peerManager = new PeerManager();
@@ -24,7 +25,7 @@ export function initializeServices(dependencies = {}) {
     peerManager,
     renderPost: dependencies.renderPost
   });
-  
+
   const services = {
     stateManager,
     verificationQueue: new VerificationQueue(),
@@ -34,14 +35,21 @@ export function initializeServices(dependencies = {}) {
     progressiveVDF: new ProgressiveVDF(),
     noiseGenerator: new NoiseGenerator(),
     trafficMixer: new TrafficMixer(),
-    epidemicGossip: new EpidemicGossip()
+    epidemicGossip: new EpidemicGossip(),
+    privacyPublisher: new PrivacyPublisher(),
+    mixingNode: new MixingNode(),
+    relayCoordinator: new RelayCoordinator() 
   };
   
+  // First, make all services globally available.
   setServices(services);
+
+  // Second, initialize dependencies in the correct order.
+  services.relayCoordinator.init(services.peerManager);
+  services.privacyPublisher.init(services.peerManager, services.relayCoordinator);
+  
   return services;
 }
 
 // Re-export for backward compatibility
 export { getServices, getImageStore, getPeerManager, getStateManager } from './services/instances.js';
-
-
