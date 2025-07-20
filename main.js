@@ -15,6 +15,7 @@ import { Post } from './models/post.js';
 import { VerificationQueue } from './verification-queue.js';
 import { KademliaDHT } from './p2p/dht.js';
 import { IdentityClaim } from './models/identity-claim.js';
+import { LocalIdentity } from './models/local-identity.js';
 
 // --- 2. IMPORT SHARED STATE & SERVICES ---
 import { initializeServices, getServices } from './services.js';
@@ -1441,19 +1442,17 @@ function startMaintenanceLoop() {
             console.log("[Maintenance] Re-publishing identity records to DHT...");
             
             const identityOptions = { propagate: true, refresh: true, replicationFactor: 30 };
+            const publicClaim = state.myIdentity.getPublicClaim();
             const handleAddress = `handle-to-pubkey:${state.myIdentity.handle.toLowerCase()}`;
-            const pubkeyAddress = `pubkey:${state.myIdentity.publicKey}`;
+            const pubkeyAddress = `pubkey:${arrayBufferToBase64(state.myIdentity.publicKey)}`;
 
-            // Re-store both the handle mapping and the full identity claim
-            state.dht.store(handleAddress, state.myIdentity.publicKey, identityOptions).catch(err => {
+            state.dht.store(handleAddress, arrayBufferToBase64(state.myIdentity.publicKey), identityOptions).catch(err => {
                 console.error("[Maintenance] Failed to re-publish handle mapping:", err);
             });
-            
-            if (state.myIdentity.identityClaim) {
-                state.dht.store(pubkeyAddress, state.myIdentity.identityClaim, identityOptions).catch(err => {
-                    console.error("[Maintenance] Failed to re-publish identity claim:", err);
-                });
-            }
+
+            state.dht.store(pubkeyAddress, publicClaim.toJSON(), identityOptions).catch(err => {
+                console.error("[Maintenance] Failed to re-publish identity claim:", err);
+            });
         }
 
       
@@ -1699,38 +1698,11 @@ async function init() {
     let storedIdentity = null;
     if (stored) {
       try {
-        const identity = JSONParseWithBigInt(stored);
-        if (identity.nodeId) {
-            if (typeof identity.nodeId === 'string') {
-            identity.nodeId = base64ToArrayBuffer(identity.nodeId);
-            } else if (Array.isArray(identity.nodeId)) {
-            identity.nodeId = new Uint8Array(identity.nodeId);
-            }
-        }       
-        if (identity.secretKey && Array.isArray(identity.secretKey)) {
-          identity.secretKey = new Uint8Array(identity.secretKey);
-        }
-        if (identity.publicKey && typeof identity.publicKey === 'string') {
-          identity.publicKey = base64ToArrayBuffer(identity.publicKey);
-        }
-        if (identity.encryptionPublicKey && typeof identity.encryptionPublicKey === 'string') {
-          identity.encryptionPublicKey = base64ToArrayBuffer(identity.encryptionPublicKey);
-        }
-        if (identity.encryptionSecretKey && Array.isArray(identity.encryptionSecretKey)) {
-          identity.encryptionSecretKey = new Uint8Array(identity.encryptionSecretKey);
-        }
-        if (identity.vdfProof && identity.vdfProof.iterations && typeof identity.vdfProof.iterations === 'string') {
-          identity.vdfProof.iterations = BigInt(identity.vdfProof.iterations);
-        }
-        if (!identity.profile) {
-          identity.profile = {
-            handle: identity.handle, bio: '', profilePictureHash: null,
-            theme: { backgroundColor: '#000000', fontColor: '#ffffff', accentColor: '#ff1493' },
-            updatedAt: Date.now()
-          };
-        }
-        storedIdentity = identity;
-      } catch (e) { console.error("Failed to parse stored identity:", e); }
+        const parsed = JSON.parse(stored);
+        storedIdentity = LocalIdentity.fromJSON(parsed);
+      } catch (e) { 
+        console.error("Failed to parse stored identity:", e); 
+      }
     }
     const tempNodeId = (storedIdentity && storedIdentity.nodeId instanceof Uint8Array) ? storedIdentity.nodeId : crypto.getRandomValues(new Uint8Array(20));
     await initNetworkWithTempId(tempNodeId);
@@ -1747,11 +1719,12 @@ async function init() {
         state.myIdentity = storedIdentity;
         state.dht.nodeId = state.myIdentity.nodeId;
         console.log("[Identity] Re-publishing identity records for returning user...");
+        const publicClaim = state.myIdentity.getPublicClaim();
         const handleAddress = `handle-to-pubkey:${state.myIdentity.handle.toLowerCase()}`;
-        const pubkeyAddress = `pubkey:${state.myIdentity.publicKey}`;
+        const pubkeyAddress = `pubkey:${arrayBufferToBase64(state.myIdentity.publicKey)}`;
         Promise.all([
-          state.dht.store(handleAddress, { publicKey: state.myIdentity.publicKey }),
-          state.dht.store(pubkeyAddress, state.myIdentity.identityClaim)
+          state.dht.store(handleAddress, arrayBufferToBase64(state.myIdentity.publicKey)),
+          state.dht.store(pubkeyAddress, publicClaim.toJSON())
         ]).catch(err => { console.error("[Identity] Failed to re-publish identity:", err); });
       } else {
         notify("Stored identity is no longer valid. Please create a new one.");
@@ -1805,16 +1778,24 @@ async function init() {
                 updateUnreadBadge();
                 }, 30000);
     
-    window.addEventListener("beforeunload", () => {
-      if (maintenanceInterval) clearInterval(maintenanceInterval);
-      stateManager.savePosts();
-      stateManager.saveUserState();
-      stateManager.savePeerScores();
-      stateManager.saveDHTState();
-      routingManager.stop();
-      if (state.client) state.client.destroy();
-      if (state.dht) state.dht.shutdown();
-    });
+        window.addEventListener("beforeunload", () => {
+          if (maintenanceInterval) clearInterval(maintenanceInterval);
+          
+          // Save identity to localStorage
+          if (state.myIdentity) {
+            const localIdentity = state.myIdentity instanceof LocalIdentity ?
+              state.myIdentity : new LocalIdentity(state.myIdentity);
+            localStorage.setItem("ephemeral-id", JSON.stringify(localIdentity.toJSON()));
+          }
+          
+          stateManager.savePosts();
+          stateManager.saveUserState();
+          stateManager.savePeerScores();
+          stateManager.saveDHTState();
+          routingManager.stop();
+          if (state.client) state.client.destroy();
+          if (state.dht) state.dht.shutdown();
+        });
 
     try {
         getServices().relayCoordinator.start();

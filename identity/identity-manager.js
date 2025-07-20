@@ -1,7 +1,7 @@
 import nacl from 'tweetnacl'; 
 import wasmVDF from '../vdf-wrapper.js';
 import { state } from '../state.js';
-import { base64ToArrayBuffer, arrayBufferToBase64 } from '../utils.js';
+import { base64ToArrayBuffer, arrayBufferToBase64,JSONStringifyWithBigInt } from '../utils.js';
 import { IdentityClaim } from '../models/identity-claim.js'; 
 
 // --- NEW, ROBUST IDENTITY REGISTRY ---
@@ -13,11 +13,10 @@ export class IdentityRegistry {
   
   // --- STEP 1: Main registration function ---
   // Stores the full identity claim using the PUBLIC KEY as the address.
-async registerIdentity(handle, keyPair, encryptionPublicKey, vdfProof, vdfInput) { // Add encryptionPublicKey here
+async registerIdentity(handle, keyPair, encryptionPublicKey, vdfProof, vdfInput) {
   console.log(`[Identity] Starting registration for handle: ${handle}`);
   
   const publicKeyB64 = arrayBufferToBase64(keyPair.publicKey);
-
 
   // First, check if the desired handle is already taken
   const existingPubkey = await this.dht.get(`handle-to-pubkey:${handle.toLowerCase()}`);
@@ -26,37 +25,70 @@ async registerIdentity(handle, keyPair, encryptionPublicKey, vdfProof, vdfInput)
   }
 
   // Create the primary identity claim
-  const claim = {
+  const claim = new IdentityClaim({
     handle: handle,
-    publicKey: publicKeyB64,
-    encryptionPublicKey: arrayBufferToBase64(encryptionPublicKey), // Use the argument
-    vdfProof: {
-      y: vdfProof.y,
-      pi: vdfProof.pi,
-      l: vdfProof.l,
-      r: vdfProof.r,
-      iterations: vdfProof.iterations.toString()
-    },
+    publicKey: keyPair.publicKey,
+    encryptionPublicKey: encryptionPublicKey,
+    vdfProof: vdfProof,
     vdfInput: vdfInput,
     claimedAt: Date.now(),
-    nodeId: arrayBufferToBase64(await crypto.subtle.digest('SHA-1', keyPair.publicKey))
+    nodeId: await crypto.subtle.digest('SHA-1', keyPair.publicKey)
+  });
+  
+  console.log(`[Identity] DEBUG: Claim created, signature field:`, claim.signature);
+  
+  // Sign the claim
+  const claimData = {
+    handle: claim.handle,
+    publicKey: arrayBufferToBase64(claim.publicKey),
+    encryptionPublicKey: arrayBufferToBase64(claim.encryptionPublicKey),
+    vdfProof: claim.vdfProof,
+    vdfInput: claim.vdfInput,
+    claimedAt: claim.claimedAt,
+    nodeId: arrayBufferToBase64(claim.nodeId)
   };
   
-  // Sign the ENTIRE claim
-  const claimData = JSON.stringify(claim);
-  const signature = nacl.sign(new TextEncoder().encode(claimData), keyPair.secretKey);
-  claim.signature = arrayBufferToBase64(signature);
+  const claimString = JSONStringifyWithBigInt(claimData);
+  const signature = nacl.sign(new TextEncoder().encode(claimString), keyPair.secretKey);
+  claim.signature = signature;
+  
+  console.log(`[Identity] DEBUG: Signature assigned to claim:`, {
+    signatureLength: claim.signature?.length,
+    signatureType: typeof claim.signature,
+    signatureIsUint8Array: claim.signature instanceof Uint8Array,
+    first10Bytes: claim.signature ? Array.from(claim.signature.slice(0, 10)) : null
+  });
 
   // Store with high replication factor for identity data
   const identityOptions = {
     propagate: true,
     refresh: true,
-    replicationFactor: 30 // Higher replication for critical identity data
+    replicationFactor: 30
   };
 
-  // Store the FULL claim at the pubkey address
+  // ALWAYS store as JSON
   const pubkeyAddress = `pubkey:${publicKeyB64}`;
-  const pubkeyResult = await this.dht.store(pubkeyAddress, claim, identityOptions);
+  const claimJSON = claim.toJSON();
+  
+  console.log(`[Identity] DEBUG: claimJSON before storage:`, {
+    hasSignature: !!claimJSON.signature,
+    signatureValue: claimJSON.signature?.substring(0, 20) + '...',
+    allKeys: Object.keys(claimJSON)
+  });
+  
+  // Let's also log the full JSON to see what's being stored
+  console.log(`[Identity] DEBUG: Full claimJSON:`, JSON.stringify(claimJSON, null, 2));
+  
+  const pubkeyResult = await this.dht.store(pubkeyAddress, claimJSON, identityOptions);
+  
+  // Immediately read it back to verify
+  const verifyStore = await this.dht.get(pubkeyAddress);
+  console.log(`[Identity] DEBUG: Immediately after store, retrieved:`, {
+    hasValue: !!verifyStore,
+    valueType: typeof verifyStore,
+    hasSignature: !!(verifyStore?.signature || verifyStore?.value?.signature),
+    keys: verifyStore ? Object.keys(verifyStore) : null
+  });
   
   if (pubkeyResult.replicas < 3) {
     console.warn(`[Identity] Low replication for identity claim: ${pubkeyResult.replicas} replicas`);
@@ -64,7 +96,6 @@ async registerIdentity(handle, keyPair, encryptionPublicKey, vdfProof, vdfInput)
 
   // Store the secondary mapping from handle -> pubkey
   const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
-  //const handleResult = await this.dht.store(handleAddress, { publicKey: publicKeyB64 }, identityOptions);
   const handleResult = await this.dht.store(handleAddress, publicKeyB64, identityOptions);
 
   if (handleResult.replicas < 3) {
@@ -78,24 +109,72 @@ async registerIdentity(handle, keyPair, encryptionPublicKey, vdfProof, vdfInput)
   // --- STEP 2: Main lookup function ---
   // Now, to look up a user, we first find their pubkey, then get their full data.
 async lookupHandle(handle) {
+  console.log(`[Identity] DEBUG: Looking up handle: ${handle}`);
+  
   const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
-  const publicKeyB64 = await this.dht.get(handleAddress); // This would be the simpler fix from before
+  const publicKeyB64 = await this.dht.get(handleAddress);
+  
+  console.log(`[Identity] DEBUG: Got pubkey from handle mapping:`, publicKeyB64);
   
   if (!publicKeyB64 || typeof publicKeyB64 !== 'string') {
     return null;
   }
 
   const pubkeyAddress = `pubkey:${publicKeyB64}`;
-  const rawClaim = await this.dht.get(pubkeyAddress);
-  if (!rawClaim) {
+  const rawData = await this.dht.get(pubkeyAddress);
+  
+  console.log(`[Identity] DEBUG: Raw data from DHT:`, {
+    type: typeof rawData,
+    isNull: rawData === null,
+    hasValue: !!(rawData?.value),
+    directKeys: rawData ? Object.keys(rawData) : null,
+    valueKeys: rawData?.value ? Object.keys(rawData.value) : null
+  });
+  
+  if (!rawData) {
     return null;
   }
 
-  // Use the class to deserialize and validate
+  // The DHT wraps values, so we need to unwrap
+  let rawClaim = rawData;
+  
+  // Check if it's wrapped
+  if (rawData && typeof rawData === 'object') {
+    // Check for .value wrapper from DHT storage
+    if ('value' in rawData && rawData.value !== undefined) {
+      console.log(`[Identity] DEBUG: Unwrapping from .value`);
+      rawClaim = rawData.value;
+    }
+    // Check for other possible wrappers
+    else if ('data' in rawData) {
+      console.log(`[Identity] DEBUG: Unwrapping from .data`);
+      rawClaim = rawData.data;
+    }
+  }
+  
+  console.log('[Identity] Raw claim data:', rawClaim);
+  console.log(`[Identity] DEBUG: Raw claim details:`, {
+    type: typeof rawClaim,
+    hasSignature: !!rawClaim?.signature,
+    keys: rawClaim ? Object.keys(rawClaim) : null
+  });
+
+  // ALWAYS deserialize from JSON
   const claim = IdentityClaim.fromJSON(rawClaim);
 
+  if (!claim) {
+    console.log(`[Identity] DEBUG: IdentityClaim.fromJSON returned null`);
+    return null;
+  }
+
+  console.log(`[Identity] DEBUG: After fromJSON:`, {
+    hasSignature: !!claim.signature,
+    signatureType: typeof claim.signature,
+    signatureLength: claim.signature?.length
+  });
+
   if (await this.verifyClaim(claim)) {
-    return claim; // Return the full class instance
+    return claim;
   }
   
   return null;
@@ -109,16 +188,49 @@ async verifyClaim(claim) {
     try {
         console.log("[Identity] Starting claim verification for handle:", claim.handle);
         
-        // Create a copy of the claim without the signature for verification
-        const { signature, ...dataToVerify } = claim;
-        const signedString = JSON.stringify(dataToVerify);
+        // Ensure binary fields are properly converted to Uint8Array
+        let publicKey = claim.publicKey;
+        let signature = claim.signature;
         
-        // Get the public key and signature as buffers
-        const publicKey = base64ToArrayBuffer(claim.publicKey);
-        const signatureBuffer = base64ToArrayBuffer(signature);
+        // Handle case where fields might be base64 strings or objects
+        if (typeof publicKey === 'string') {
+            publicKey = base64ToArrayBuffer(publicKey);
+        } else if (publicKey && publicKey.data) {
+            publicKey = new Uint8Array(publicKey.data);
+        }
+        
+        if (typeof signature === 'string') {
+            signature = base64ToArrayBuffer(signature);
+        } else if (signature && signature.data) {
+            signature = new Uint8Array(signature.data);
+        }
+        
+        // Validate we have Uint8Arrays
+        if (!(publicKey instanceof Uint8Array)) {
+            console.error("[Identity] Public key is not Uint8Array:", typeof publicKey, publicKey);
+            return false;
+        }
+        
+        if (!(signature instanceof Uint8Array)) {
+            console.error("[Identity] Signature is not Uint8Array:", typeof signature, signature);
+            return false;
+        }
+        
+        // Reconstruct the exact data that was signed
+        const dataToVerify = {
+            handle: claim.handle,
+            publicKey: arrayBufferToBase64(publicKey),
+            encryptionPublicKey: arrayBufferToBase64(claim.encryptionPublicKey),
+            vdfProof: claim.vdfProof,
+            vdfInput: claim.vdfInput,
+            claimedAt: claim.claimedAt,
+            nodeId: arrayBufferToBase64(claim.nodeId)
+        };
+        
+        const signedString = JSONStringifyWithBigInt(dataToVerify);
         
         console.log("[Identity] Verifying signature...");
-        const verifiedMessage = nacl.sign.open(signatureBuffer, publicKey);
+        const verifiedMessage = nacl.sign.open(signature, publicKey);
         
         if (!verifiedMessage) {
             console.warn("[Identity] nacl.sign.open returned null. Invalid signature.");
@@ -141,9 +253,6 @@ async verifyClaim(claim) {
             return false;
         }
         
-        console.log("[Identity] VDF proof structure:", Object.keys(claim.vdfProof));
-        console.log("[Identity] Calling wasmVDF.verifyVDFProof...");
-        
         const vdfValid = await wasmVDF.verifyVDFProof(claim.vdfInput, claim.vdfProof);
         console.log("[Identity] VDF verification result:", vdfValid);
         
@@ -157,14 +266,15 @@ async verifyClaim(claim) {
 
   // --- STEP 4: Other functions remain largely the same ---
   
-  async verifyAuthorIdentity(post) {
+async verifyAuthorIdentity(post) {
     const claim = await this.lookupHandle(post.author);
     if (!claim) {
       console.warn(`[Identity] No registration found for handle: ${post.author}`);
       return false;
     }
     
-    const registeredPubKey = claim.publicKey;
+    // Convert both to base64 strings for comparison
+    const registeredPubKey = arrayBufferToBase64(claim.publicKey);
     const postPubKey = arrayBufferToBase64(post.authorPublicKey);
     
     if (registeredPubKey !== postPubKey) {
@@ -174,7 +284,7 @@ async verifyClaim(claim) {
     
     this.verifiedIdentities.set(post.author, claim);
     return true;
-  }
+}
   
   
   

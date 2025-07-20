@@ -10,6 +10,7 @@ export default defineConfig({
   build: {
     target: 'esnext',
     outDir: 'dist',
+    sourcemap: true,
     rollupOptions: {
       onwarn(warning, warn) {
         // Log circular dependencies to help debug

@@ -4,6 +4,7 @@ import { serviceCallbacks } from '../services/callbacks.js';
 import { state } from '../state.js';
 import { arrayBufferToBase64, JSONStringifyWithBigInt } from '../utils.js';
 import { HyParView } from '../p2p/hyparview.js';
+import { LocalIdentity } from '../models/local-identity.js';
 
 import wasmVDF from '../vdf-wrapper.js';
 
@@ -95,7 +96,7 @@ export async function createNewIdentity() {
             // Set a timeout for the DHT lookup
             const checkPromise = state.identityRegistry.lookupHandle(handle);
             const timeoutPromise = new Promise((resolve) => 
-              setTimeout(() => resolve({ timeout: true }), 3000)
+              setTimeout(() => resolve({ timeout: true }), 5000)
             );
             
             const result = await Promise.race([checkPromise, timeoutPromise]);
@@ -217,7 +218,7 @@ export async function createNewIdentity() {
                 const idKey = Array.from(nodeId).map(b => b.toString(16).padStart(2, '0')).join('');
 
         // Create identity object with default profile
-                state.myIdentity = {
+             const identity = {
             handle: handle,
             publicKey: arrayBufferToBase64(keyPair.publicKey),
             secretKey: keyPair.secretKey,
@@ -249,18 +250,22 @@ export async function createNewIdentity() {
             
             }
         };
-        
+        state.myIdentity = new LocalIdentity(identity);
+
         // Register immediately in DHT
         try {
             const identityClaim = await state.identityRegistry.registerIdentity(
                 handle,
                 keyPair,
+                encryptionKeyPair.publicKey, 
                 proofResult,
                 vdfInput
             );
             state.myIdentity.identityClaim = identityClaim;
             state.myIdentity.isRegistered = true;
             state.myIdentity.registrationVerified = true;
+            state.myIdentity.signature = identityClaim.signature;
+            state.myIdentity.claimedAt = identityClaim.claimedAt;
         } catch (e) {
             // This will now correctly catch if a handle is already taken
             notify(e.message);
@@ -300,7 +305,8 @@ export async function createNewIdentity() {
             nodeId: Array.from(state.myIdentity.nodeId),
             profile: state.myIdentity.profile
         };
-        localStorage.setItem("ephemeral-id", JSONStringifyWithBigInt(serializableIdentity));
+        localStorage.setItem("ephemeral-id", JSON.stringify(state.myIdentity.toJSON()));
+
         
         // Success!
         step2.innerHTML = `

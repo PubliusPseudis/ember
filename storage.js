@@ -1,6 +1,7 @@
 import { state } from './state.js';
 import { generateId, JSONStringifyWithBigInt, JSONParseWithBigInt, base64ToArrayBuffer } from './utils.js';
 import { Post } from './models/post.js';
+import { LocalIdentity } from './models/local-identity.js';
 
 export class StateManager {
   constructor(dependencies = {}) {
@@ -241,127 +242,237 @@ export class StateManager {
   
   
   
-  async saveUserState() {
-    if (!this.db) return;
+async saveUserState() {
+  if (!this.db) return;
+  
+  try {
     const transaction = this.db.transaction(['userState'], 'readwrite');
     const store = transaction.objectStore('userState');
     
     if (state.myIdentity) {
-      // Create a serializable copy of the identity object
-      const serializableIdentity = {
-        ...state.myIdentity,
-        nodeId: state.myIdentity.nodeId ? Array.from(state.myIdentity.nodeId) : null,
-        secretKey: state.myIdentity.secretKey ? Array.from(state.myIdentity.secretKey) : null,
-        publicKey: state.myIdentity.publicKey ? arrayBufferToBase64(state.myIdentity.publicKey) : null,
-        encryptionSecretKey: state.myIdentity.encryptionSecretKey ? Array.from(state.myIdentity.encryptionSecretKey) : null,
-        encryptionPublicKey: state.myIdentity.encryptionPublicKey ? arrayBufferToBase64(state.myIdentity.encryptionPublicKey) : null,
-      };
-
-      const identityString = JSONStringifyWithBigInt(serializableIdentity);
-      store.put({ 
-        key: 'identity', 
-        value: identityString 
+     
+      // Ensure we have a LocalIdentity instance
+      const localIdentity = state.myIdentity instanceof LocalIdentity ?
+        state.myIdentity : new LocalIdentity(state.myIdentity);
+      
+      // Save the full identity (including private keys) for local storage
+      await new Promise((resolve, reject) => {
+        const req = store.put({ 
+          key: 'identity', 
+          value: JSON.stringify(localIdentity.toJSON())
+        });
+        req.onsuccess = resolve;
+        req.onerror = reject;
       });
+      
+      console.log('Saved identity to storage');
     }
 
     // Save theme preference
-    store.put({ 
-      key: 'theme', 
-      value: localStorage.getItem('ephemeral-theme') || 'dark' 
+    const currentTheme = localStorage.getItem('ephemeral-theme') || 'dark';
+    await new Promise((resolve, reject) => {
+      const req = store.put({ 
+        key: 'theme', 
+        value: currentTheme
+      });
+      req.onsuccess = resolve;
+      req.onerror = reject;
     });
+    
     // Save explicitly carried posts
-    store.put({ 
-      key: 'explicitlyCarrying', 
-      value: Array.from(state.explicitlyCarrying) 
-    });
+    if (state.explicitlyCarrying) {
+      await new Promise((resolve, reject) => {
+        const req = store.put({ 
+          key: 'explicitlyCarrying', 
+          value: Array.from(state.explicitlyCarrying)
+        });
+        req.onsuccess = resolve;
+        req.onerror = reject;
+      });
+      
+      console.log(`Saved ${state.explicitlyCarrying.size} explicitly carried posts`);
+    }
+    
+  } catch (error) {
+    console.error('Error saving user state:', error);
+    
+    // If we hit quota exceeded, try to clear some data
+    if (error.name === 'QuotaExceededError') {
+      console.warn('Storage quota exceeded, attempting cleanup...');
+      await this.cleanup();
+      // Could retry save here if desired
+    }
   }
+}
   
-  async loadUserState() {
-    if (!this.db) return;
-    return new Promise((resolve, reject) => {
+    async loadUserState() {
+      if (!this.db) return;
+      
+      return new Promise((resolve, reject) => {
         const transaction = this.db.transaction(['userState'], 'readonly');
         const store = transaction.objectStore('userState');
 
+        // Create requests for all user state items
         const identityReq = store.get('identity');
+        const themeReq = store.get('theme');
         const carryReq = store.get('explicitlyCarrying');
 
         let identityLoaded = false;
+        let themeLoaded = false;
         let carryLoaded = false;
 
         const checkCompletion = () => {
-            if (identityLoaded && carryLoaded) {
-                resolve();
-            }
+          if (identityLoaded && themeLoaded && carryLoaded) {
+            resolve();
+          }
         };
 
+        // Load identity
         identityReq.onsuccess = () => {
-            if (identityReq.result && identityReq.result.value) {
-                // **FIX START: Deserialize the identity string and rehydrate Uint8Arrays**
-                try {
-                  const identity = JSONParseWithBigInt(identityReq.result.value);
-                  
-                  // Re-create Uint8Arrays from plain objects/arrays
-                  if (identity.nodeId && !(identity.nodeId instanceof Uint8Array)) {
-                      identity.nodeId = new Uint8Array(Object.values(identity.nodeId));
-                  }
-                  if (identity.secretKey && !(identity.secretKey instanceof Uint8Array)) {
-                      identity.secretKey = new Uint8Array(Object.values(identity.secretKey));
-                  }
-                  if (identity.encryptionSecretKey && !(identity.encryptionSecretKey instanceof Uint8Array)) {
-                      identity.encryptionSecretKey = new Uint8Array(Object.values(identity.encryptionSecretKey));
-                  }
-                  
-                  // Re-create from base64 strings
-                  if (identity.publicKey && typeof identity.publicKey === 'string') {
-                      identity.publicKey = base64ToArrayBuffer(identity.publicKey);
-                  }
-                  if (identity.encryptionPublicKey && typeof identity.encryptionPublicKey === 'string') {
-                      identity.encryptionPublicKey = base64ToArrayBuffer(identity.encryptionPublicKey);
-                  }
-
-                  state.myIdentity = identity;
-                  console.log('Loaded identity from storage');
-                } catch (e) {
-                   console.error("Failed to parse stored identity:", e);
-                }
-                // **FIX END**
+          if (identityReq.result && identityReq.result.value) {
+            try {
+              const stored = JSON.parse(identityReq.result.value);         
+              
+              state.myIdentity = LocalIdentity.fromJSON(stored);
+              
+              // If the loaded identity has a profile, ensure it's complete
+              if (!state.myIdentity.profile || !state.myIdentity.profile.theme) {
+                state.myIdentity.profile = {
+                  handle: state.myIdentity.handle,
+                  bio: state.myIdentity.profile?.bio || '',
+                  profilePictureHash: state.myIdentity.profile?.profilePictureHash || null,
+                  theme: {
+                    backgroundColor: '#000000',
+                    fontColor: '#ffffff',
+                    accentColor: '#ff1493'
+                  },
+                  updatedAt: Date.now()
+                };
+              }
+              
+              console.log('Loaded identity from storage:', {
+                handle: state.myIdentity.handle,
+                hasPublicKey: !!state.myIdentity.publicKey,
+                hasSecretKey: !!state.myIdentity.secretKey,
+                isRegistered: state.myIdentity.isRegistered,
+                hasProfile: !!state.myIdentity.profile
+              });
+              
+            } catch (e) {
+              console.error("Failed to parse stored identity:", e);
+              
+              // If we can't parse the stored identity, clear it
+              // This prevents repeated errors on every load
+              const clearTx = this.db.transaction(['userState'], 'readwrite');
+              const clearStore = clearTx.objectStore('userState');
+              clearStore.delete('identity');
             }
-            identityLoaded = true;
-            checkCompletion();
+          } else {
+            console.log('No stored identity found');
+          }
+          identityLoaded = true;
+          checkCompletion();
         };
 
-        carryReq.onsuccess = () => {
-            if (carryReq.result) {
-                state.explicitlyCarrying = new Set(carryReq.result.value);
-            }
-            carryLoaded = true;
-            checkCompletion();
-        };
-        
         identityReq.onerror = (event) => {
-            console.error("Failed to load identity:", event.target.error);
-            identityLoaded = true;
-            checkCompletion();
+          console.error("Failed to load identity:", event.target.error);
+          identityLoaded = true;
+          checkCompletion();
+        };
+
+        // Load theme
+        themeReq.onsuccess = () => {
+          if (themeReq.result && themeReq.result.value) {
+            const theme = themeReq.result.value;
+            localStorage.setItem('ephemeral-theme', theme);
+            
+            // Apply theme if function is available
+            if (typeof applyTheme === 'function') {
+              applyTheme(theme);
+            }
+            
+            console.log('Loaded theme:', theme);
+          }
+          themeLoaded = true;
+          checkCompletion();
+        };
+
+        themeReq.onerror = (event) => {
+          console.error("Failed to load theme:", event.target.error);
+          themeLoaded = true;
+          checkCompletion();
+        };
+
+        // Load explicitly carried posts
+        carryReq.onsuccess = () => {
+          if (carryReq.result && carryReq.result.value) {
+            state.explicitlyCarrying = new Set(carryReq.result.value);
+            console.log(`Loaded ${state.explicitlyCarrying.size} explicitly carried posts`);
+          } else {
+            state.explicitlyCarrying = new Set();
+          }
+          carryLoaded = true;
+          checkCompletion();
         };
 
         carryReq.onerror = (event) => {
-            console.error("Failed to load explicitly carried posts:", event.target.error);
-            carryLoaded = true;
-            checkCompletion();
+          console.error("Failed to load explicitly carried posts:", event.target.error);
+          state.explicitlyCarrying = new Set();
+          carryLoaded = true;
+          checkCompletion();
         };
-    });
-  }
+
+        // Handle transaction errors
+        transaction.onerror = (event) => {
+          console.error("Transaction error in loadUserState:", event.target.error);
+          // Ensure we still resolve to prevent hanging
+          resolve();
+        };
+
+        transaction.onabort = (event) => {
+          console.error("Transaction aborted in loadUserState:", event.target.error);
+          resolve();
+        };
+      });
+    }
   
-  async savePeerScores() {
-    if (!this.db || !this.peerManager) return;
-    
+async savePeerScores() {
+  if (!this.db || !this.peerManager) return;
+  
+  try {
     const transaction = this.db.transaction(['peerScores'], 'readwrite');
     const store = transaction.objectStore('peerScores');
     
-    this.peerManager.scores.forEach((score, peerId) => {
-      store.put({ peerId, ...score });
+    // Clear existing scores first
+    await new Promise((resolve, reject) => {
+      const clearReq = store.clear();
+      clearReq.onsuccess = resolve;
+      clearReq.onerror = reject;
     });
+    
+    // Save each score with a valid string key
+    for (const [peerId, score] of this.peerManager.scores) {
+      // Ensure peerId is a string
+      const keyString = this.peerManager.normalizePeerId(peerId);
+      if (!keyString) continue; // Skip invalid peer IDs
+      
+      try {
+        await new Promise((resolve, reject) => {
+          const req = store.put({ 
+            peerId: keyString, 
+            ...score 
+          });
+          req.onsuccess = resolve;
+          req.onerror = reject;
+        });
+      } catch (e) {
+        console.error(`Failed to save score for peer ${keyString}:`, e);
+      }
+    }
+  } catch (error) {
+    console.error('Error saving peer scores:', error);
   }
+}
   
   async loadPeerScores() {
     if (!this.db || !this.peerManager) return;

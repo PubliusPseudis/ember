@@ -65,12 +65,23 @@ export class RelayCoordinator {
    * @param {string} indexKey - The DHT key for the index (e.g., 'relay-index:TRUSTED').
    * @param {string} ownNodeIdB64 - This node's own Base64-encoded ID.
    */
-  async updateRelayIndex(indexKey, ownNodeIdB64) {
+async updateRelayIndex(indexKey, ownNodeIdB64) {
     try {
       const existingIndex = (await this.dht.get(indexKey)) || [];
       
+      // FIX: Ensure existingIndex is an array
+      let nodeIds;
+      if (Array.isArray(existingIndex)) {
+        nodeIds = existingIndex;
+      } else if (existingIndex && typeof existingIndex === 'object' && existingIndex.value) {
+        // Handle wrapped values from DHT storage
+        nodeIds = Array.isArray(existingIndex.value) ? existingIndex.value : [];
+      } else {
+        nodeIds = [];
+      }
+      
       // Add our ID and remove any duplicates
-      let updatedNodeIds = new Set([ownNodeIdB64, ...existingIndex]);
+      let updatedNodeIds = new Set([ownNodeIdB64, ...nodeIds]);
       let finalNodeIds = Array.from(updatedNodeIds);
       
       // Prune the list to a maximum size to keep it manageable
@@ -99,6 +110,8 @@ export class RelayCoordinator {
     // Create the bloom filter string first
     const bloomFilterB64 = arrayBufferToBase64(this.selfRelayManager.createTopicBloomFilter().bits); 
 
+
+
     // Validate that the generated string is a valid Base64 string.
     const base64Regex = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
     if (!base64Regex.test(bloomFilterB64)) {
@@ -106,20 +119,20 @@ export class RelayCoordinator {
         return; // Do not proceed if our own data is invalid.
     }
 
-    const announcement = {
-      nodeId: nodeIdB64,
-      // FIX: Convert the publicKey to Base64 here
-      publicKey: arrayBufferToBase64(this.identity.publicKey),
-      epoch: Math.floor(Date.now() / CONFIG.PRIVACY_CONFIG.TOPIC_ROTATION_PERIOD),
-      topics: topics,
-      bloomFilter: bloomFilterB64,
-      reputation: this.peerManager.getScore(this.identity.idKey),
-      capacity: {
-        currentLoad: Math.random() * 0.5, // Placeholder metric
-        maxThroughput: 100, // Placeholder metric
-        averageLatency: 50 + Math.random() * 50 // Placeholder metric
-      }
-    };
+      const announcement = {
+        nodeId: nodeIdB64,
+        publicKey: arrayBufferToBase64(this.identity.publicKey),
+        epoch: Math.floor(Date.now() / CONFIG.PRIVACY_CONFIG.TOPIC_ROTATION_PERIOD),
+        topics: topics,
+        bloomFilter: bloomFilterB64,
+        reputation: this.peerManager ? 
+          this.peerManager.getScore(this.identity.handle) : 0, // Use handle, not idKey
+        capacity: {
+          currentLoad: Math.random() * 0.5,
+          maxThroughput: 100,
+          averageLatency: 50 + Math.random() * 50
+        }
+      };
 
     // Sign the announcement
     const signature = await this.sign(announcement); 

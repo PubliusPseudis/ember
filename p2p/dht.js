@@ -316,6 +316,13 @@ export class KademliaDHT {
     handleStore(params, senderId) {
       const { key, value } = params;
       
+      console.log(`[DHT] DEBUG handleStore:`, {
+        key: key,
+        valueType: typeof value,
+        hasSignature: !!value?.signature,
+        valueKeys: value && typeof value === 'object' ? Object.keys(value) : null
+      });
+      
       // ADDED: Validate key and value
       if (!key || typeof key !== 'string' || key.length > 256) {
         console.warn('[DHT] Invalid key in STORE request');
@@ -566,6 +573,13 @@ async get(key) {
   const localValue = this.storage.get(key);
   if (localValue) {
     console.log(`[DHT] Found ${key} in local storage`);
+    console.log(`[DHT] DEBUG get local:`, {
+      hasValue: !!localValue.value,
+      directKeys: Object.keys(localValue),
+      valueType: typeof localValue.value,
+      valueKeys: localValue.value && typeof localValue.value === 'object' ? 
+        Object.keys(localValue.value) : null
+    });
     return localValue.value; // Always return the wrapped value
   }
   
