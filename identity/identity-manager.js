@@ -188,48 +188,50 @@ async verifyClaim(claim) {
     try {
         console.log("[Identity] Starting claim verification for handle:", claim.handle);
         
-        // Ensure binary fields are properly converted to Uint8Array
+        // Ensure all fields are in the correct format
         let publicKey = claim.publicKey;
         let signature = claim.signature;
+        let nodeId = claim.nodeId;
         
-        // Handle case where fields might be base64 strings or objects
-        if (typeof publicKey === 'string') {
-            publicKey = base64ToArrayBuffer(publicKey);
-        } else if (publicKey && publicKey.data) {
-            publicKey = new Uint8Array(publicKey.data);
-        }
-        
-        if (typeof signature === 'string') {
-            signature = base64ToArrayBuffer(signature);
-        } else if (signature && signature.data) {
-            signature = new Uint8Array(signature.data);
-        }
-        
-        // Validate we have Uint8Arrays
+        // Convert fields if needed
         if (!(publicKey instanceof Uint8Array)) {
-            console.error("[Identity] Public key is not Uint8Array:", typeof publicKey, publicKey);
-            return false;
+            publicKey = base64ToArrayBuffer(publicKey);
         }
-        
         if (!(signature instanceof Uint8Array)) {
-            console.error("[Identity] Signature is not Uint8Array:", typeof signature, signature);
-            return false;
+            signature = base64ToArrayBuffer(signature);
+        }
+        if (!(nodeId instanceof Uint8Array)) {
+            nodeId = base64ToArrayBuffer(nodeId);
         }
         
         // Reconstruct the exact data that was signed
         const dataToVerify = {
             handle: claim.handle,
             publicKey: arrayBufferToBase64(publicKey),
-            encryptionPublicKey: arrayBufferToBase64(claim.encryptionPublicKey),
+            encryptionPublicKey: typeof claim.encryptionPublicKey === 'string' ? 
+                claim.encryptionPublicKey : arrayBufferToBase64(claim.encryptionPublicKey),
             vdfProof: claim.vdfProof,
             vdfInput: claim.vdfInput,
             claimedAt: claim.claimedAt,
-            nodeId: arrayBufferToBase64(claim.nodeId)
+            nodeId: arrayBufferToBase64(nodeId)
         };
+        
+        // Ensure consistent serialization of vdfProof
+        if (dataToVerify.vdfProof && dataToVerify.vdfProof.iterations) {
+            // Convert iterations to string format if it's not already
+            if (typeof dataToVerify.vdfProof.iterations !== 'string') {
+                dataToVerify.vdfProof = {
+                    ...dataToVerify.vdfProof,
+                    iterations: dataToVerify.vdfProof.iterations.toString()
+                };
+            }
+        }
         
         const signedString = JSONStringifyWithBigInt(dataToVerify);
         
         console.log("[Identity] Verifying signature...");
+        console.log("[Identity] Data to verify:", signedString.substring(0, 200) + "...");
+        
         const verifiedMessage = nacl.sign.open(signature, publicKey);
         
         if (!verifiedMessage) {
@@ -238,10 +240,13 @@ async verifyClaim(claim) {
         }
 
         const decodedMessage = new TextDecoder().decode(verifiedMessage);
+        
+        console.log("[Identity] Decoded message:", decodedMessage.substring(0, 200) + "...");
+        
         if (decodedMessage !== signedString) {
             console.warn("[Identity] Signature is valid, but message content does not match.");
-            console.log("[Identity] Expected:", signedString.substring(0, 100) + "...");
-            console.log("[Identity] Got:", decodedMessage.substring(0, 100) + "...");
+            console.log("[Identity] Expected:", signedString);
+            console.log("[Identity] Got:", decodedMessage);
             return false;
         }
         

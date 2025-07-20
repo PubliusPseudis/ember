@@ -112,6 +112,21 @@ export async function createNewIdentity() {
               availabilityDiv.innerHTML = '<span style="color: #ff6b4a">❌ Handle already taken</span>';
               confirmButton.disabled = true;
             } else {
+              // Check if handle exists in DHT even if verification failed
+              try {
+                const pubkeyB64 = await state.dht.get(`handle-to-pubkey:${handle.toLowerCase()}`);
+                if (pubkeyB64) {
+                  // Handle exists but verification failed - still taken!
+                  availabilityDiv.innerHTML = '<span style="color: #ff6b4a">❌ Handle already taken</span>';
+                  confirmButton.disabled = true;
+                  console.log('[DEBUG] Handle exists in DHT but verification failed');
+                  return;
+                }
+              } catch (e) {
+                console.error('[DEBUG] Error checking DHT directly:', e);
+              }
+              
+              // Handle is truly available
               availabilityDiv.innerHTML = '<span style="color: #44ff44">✓ Handle available!</span>';
               confirmButton.disabled = false;
               lastCheckedHandle = handle;

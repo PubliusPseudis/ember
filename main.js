@@ -486,7 +486,8 @@ function evaluatePostTrust(postId) {
     return;
   }
     // Force immediate verification for own posts
-    if (post.author === state.myIdentity.handle) {
+    const isOwnPost = state.myIdentity && post.author === state.myIdentity.handle;
+    if (isOwnPost) {
       console.log(`[Trust] Fast-tracking own post ${postId} through verification`);
       
       // Clear any existing timer
