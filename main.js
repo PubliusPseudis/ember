@@ -48,7 +48,6 @@ import { TrafficMixer } from './p2p/traffic-mixer.js';
 //import { DandelionRouter } from './p2p/dandelion.js';
 import { HierarchicalBloomFilter, BloomFilter, generateId, isReply, arrayBufferToBase64, base64ToArrayBuffer, JSONStringifyWithBigInt, JSONParseWithBigInt } from './utils.js';
 import wasmVDF from './vdf-wrapper.js'; 
-import { EpidemicGossip } from './p2p/epidemic-gossip.js';
 import { HyParView } from './p2p/hyparview.js';
 import { Scribe } from './p2p/scribe.js';
 import { routingManager } from './services/routing-manager.js';
@@ -56,7 +55,7 @@ import { routingManager } from './services/routing-manager.js';
 
 // Get service references
 let stateManager, verificationQueue, imageStore, peerManager, memoryManager;
-let progressiveVDF, noiseGenerator, trafficMixer, epidemicGossip;
+let progressiveVDF, noiseGenerator, trafficMixer;
 
 // --- EXPORTS for other modules to import handler functions ---
 export {
@@ -549,9 +548,17 @@ function evaluatePostTrust(postId) {
       trustEvaluationTimers.delete(postId);
     }
     
-    verificationQueue.addBatch([post], 'normal', (results) => {
-      handleVerificationResults(results);
-    });
+    // FIX: Check if the verification queue is initialized before using it.
+    if (verificationQueue) {
+        verificationQueue.addBatch([post], 'normal', (results) => {
+          handleVerificationResults(results);
+        });
+    } else {
+        // CORRECTED FIX: If the queue isn't ready, use setTimeout to retry after a short delay.
+        // This avoids a busy-wait loop and allows the main thread to complete initialization.
+        console.warn(`[Trust] Verification queue not ready, retrying verification for post: ${postId} in 250ms.`);
+        setTimeout(() => evaluatePostTrust(postId), 250);
+    }
   }
 }
 
@@ -1655,8 +1662,6 @@ function garbageCollect() {
 }
 
 // --- 6. APP LIFECYCLE (INIT) ---
-// FILE: main.js
-
 async function init() {
   applyTheme(localStorage.getItem('ephemeral-theme') || 'dark');
   setupThemeToggle();
@@ -1752,7 +1757,6 @@ async function init() {
       progressiveVDF,
       noiseGenerator,
       trafficMixer,
-      epidemicGossip
     } = services);
     services.stateManager.renderPost = renderPost;
     await verificationQueue.init();

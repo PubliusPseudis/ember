@@ -188,27 +188,17 @@ async verifyClaim(claim) {
     try {
         console.log("[Identity] Starting claim verification for handle:", claim.handle);
         
-        // Ensure all fields are in the correct format
-        let publicKey = claim.publicKey;
-        let signature = claim.signature;
-        let nodeId = claim.nodeId;
-        
-        // Convert fields if needed
-        if (!(publicKey instanceof Uint8Array)) {
-            publicKey = base64ToArrayBuffer(publicKey);
-        }
-        if (!(signature instanceof Uint8Array)) {
-            signature = base64ToArrayBuffer(signature);
-        }
-        if (!(nodeId instanceof Uint8Array)) {
-            nodeId = base64ToArrayBuffer(nodeId);
-        }
+        // FIX: The claim object from `IdentityClaim.fromJSON` already contains Uint8Arrays.
+        // The redundant checks and conversions have been removed.
+        const publicKey = claim.publicKey;
+        const signature = claim.signature;
+        const nodeId = claim.nodeId;
         
         // Reconstruct the exact data that was signed
         const dataToVerify = {
             handle: claim.handle,
             publicKey: arrayBufferToBase64(publicKey),
-            encryptionPublicKey: typeof claim.encryptionPublicKey === 'string' ? 
+            encryptionPublicKey: typeof claim.encryptionPublicKey === 'string' ?
                 claim.encryptionPublicKey : arrayBufferToBase64(claim.encryptionPublicKey),
             vdfProof: claim.vdfProof,
             vdfInput: claim.vdfInput,
