@@ -1,6 +1,6 @@
 // services/instances.js
 let stateManager, verificationQueue, imageStore, peerManager, memoryManager;
-let progressiveVDF, noiseGenerator, trafficMixer, epidemicGossip, privacyPublisher, mixingNode,relayCoordinator; 
+let progressiveVDF, noiseGenerator, trafficMixer, privacyPublisher, mixingNode,relayCoordinator; 
 
 export function getServices() {
   return {
@@ -12,7 +12,6 @@ export function getServices() {
     progressiveVDF,
     noiseGenerator,
     trafficMixer,
-    epidemicGossip,
     privacyPublisher,
     mixingNode,
     relayCoordinator
@@ -29,7 +28,6 @@ export function setServices(services) {
     progressiveVDF,
     noiseGenerator,
     trafficMixer,
-    epidemicGossip,
     privacyPublisher,
     mixingNode,
     relayCoordinator
