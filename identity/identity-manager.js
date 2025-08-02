@@ -108,17 +108,21 @@ async registerIdentity(handle, keyPair, encryptionPublicKey, vdfProof, vdfInput)
   
   // --- STEP 2: Main lookup function ---
   // Now, to look up a user, we first find their pubkey, then get their full data.
-async lookupHandle(handle) {
-  console.log(`[Identity] DEBUG: Looking up handle: ${handle}`);
-  
-  const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
-  const publicKeyB64 = await this.dht.get(handleAddress);
-  
-  console.log(`[Identity] DEBUG: Got pubkey from handle mapping:`, publicKeyB64);
-  
-  if (!publicKeyB64 || typeof publicKeyB64 !== 'string') {
-    return null;
-  }
+  async lookupHandle(handle) {
+    console.log(`[Identity] DEBUG: Looking up handle: ${handle}`);
+    
+    const handleAddress = `handle-to-pubkey:${handle.toLowerCase()}`;
+    const rawValue = await this.dht.get(handleAddress);
+    console.log(`[Identity] DEBUG: Got raw value from handle mapping:`, rawValue);
+
+    // Defensively unwrap the value if it's a metadata object
+    const publicKeyB64 = (rawValue && typeof rawValue === 'object' && rawValue.value) 
+      ? rawValue.value 
+      : rawValue;
+
+    if (!publicKeyB64 || typeof publicKeyB64 !== 'string') {
+      return null;
+    }
 
   const pubkeyAddress = `pubkey:${publicKeyB64}`;
   const rawData = await this.dht.get(pubkeyAddress);
@@ -285,13 +289,17 @@ async verifyAuthorIdentity(post) {
   
   
   async verifyOwnIdentity(identity, maxRetries = 5) {
+      console.log(`identity ${identity}`);
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
           const claim = await this.lookupHandle(identity.handle);
-          if (claim) {
-            const ourPubKey = arrayBufferToBase64(identity.publicKey);
-            return claim.publicKey === ourPubKey;
-          }
+        if (claim) {
+          const ourPubKey = arrayBufferToBase64(identity.publicKey);
+
+          //  Convert the claim's public key to a base64 string before comparing
+          const claimPubKeyB64 = arrayBufferToBase64(claim.publicKey);
+          return claimPubKeyB64 === ourPubKey;
+        }
           if (this.dht.buckets.every(bucket => bucket.length === 0)) {
             console.log(`[Identity] No peers available yet (attempt ${attempt + 1}/${maxRetries}), retrying...`);
             await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));

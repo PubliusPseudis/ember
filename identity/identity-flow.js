@@ -9,6 +9,11 @@ import { LocalIdentity } from '../models/local-identity.js';
 import wasmVDF from '../vdf-wrapper.js';
 
 export async function createNewIdentity() {
+  // Safety check to prevent double creation
+  if (state.myIdentity && window.identityReady) {
+    console.warn("[Identity] Attempted to create new identity when one already exists");
+    return;
+  }
   return new Promise(async (resolve, reject) => {
           console.log('[DEBUG] createNewIdentity called.'); //
 

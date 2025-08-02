@@ -11,3 +11,5 @@ test-safety.js
 node_modules/
 v2.txt
 v3.txt
+focused.sh
+focused_context.txt

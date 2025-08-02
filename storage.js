@@ -13,18 +13,23 @@ export class StateManager {
     this.db = null;
   }
   
-    async clearLocalData() {
-        if (confirm('This will clear all saved posts and reset your identity. Continue?')) {
-          // Close the DB connection this manager is holding
-          if (this.db) {
-            this.db.close();
-          }
-          // Clear IndexedDB and localStorage
-          await indexedDB.deleteDatabase(this.dbName);
-          localStorage.clear();
-          location.reload();
+  async clearLocalData() {
+      if (confirm('This will clear all saved posts and reset your identity. Continue?')) {
+        if (this.db) {
+          this.db.close();
         }
+        
+        // Clear the in-memory state FIRST ---
+        state.myIdentity = null;
+
+        // Now clear persistent storage
+        await indexedDB.deleteDatabase(this.dbName);
+        localStorage.clear();
+        
+        // Finally, reload the page
+        location.reload();
       }
+    }
   
   async init() {
     return new Promise((resolve, reject) => {

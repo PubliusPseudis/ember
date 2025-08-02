@@ -42,7 +42,7 @@ import { ContentAddressedImageStore } from './services/image-store.js';
 import { createNewIdentity } from './identity/identity-flow.js';
 import { IdentityRegistry } from './identity/identity-manager.js';
 import { ProgressiveVDF } from './identity/vdf.js';
-import { initNetwork, registerHandler, sendPeer, broadcast } from './p2p/network-manager.js';
+import { initNetwork, registerHandler, sendPeer, broadcast, handlePeerMessage } from './p2p/network-manager.js';
 import { NoiseGenerator } from './p2p/noise-generator.js';
 import { TrafficMixer } from './p2p/traffic-mixer.js';
 //import { DandelionRouter } from './p2p/dandelion.js';
@@ -57,6 +57,12 @@ import { routingManager } from './services/routing-manager.js';
 let stateManager, verificationQueue, imageStore, peerManager, memoryManager;
 let progressiveVDF, noiseGenerator, trafficMixer;
 
+//globals - for startup sequence
+let identityReady = false;
+const earlyMessageQueue = [];
+  //startup/identity sequence gloabs
+window.identityReady = identityReady;
+window.earlyMessageQueue = earlyMessageQueue;
 // --- EXPORTS for other modules to import handler functions ---
 export {
   // Core post handlers
@@ -278,6 +284,12 @@ async function isImageToxic(imageData) {
 }
 
 async function handleNewPost(data, fromWire) {
+  // Add identity check
+  if (!state.myIdentity) {
+    console.warn("[handleNewPost] Received post before identity ready, dropping");
+    return;
+  }
+
   const postData = data.post || data;
 
   if (!postData?.id || state.posts.has(postData.id) || state.seenPosts.has(postData.id)) {
@@ -287,14 +299,14 @@ async function handleNewPost(data, fromWire) {
     return;
   }
   // Quick pattern check for received content
-    if (await isToxic(postData.content)) {
-      notify(`Blocked harmful content from ${postData.author}`);
-      console.warn(`Blocked harmful content from ${postData.author}`);
-      if (fromWire) {
-        peerManager.updateScore(fromWire.peerId, 'harmful_content', -50);
-      }
-      return;
+  if (await isToxic(postData.content)) {
+    notify(`Blocked harmful content from ${postData.author}`);
+    console.warn(`Blocked harmful content from ${postData.author}`);
+    if (fromWire) {
+      peerManager.updateScore(fromWire.peerId, 'harmful_content', -50);
     }
+    return;
+  }
 
   state.seenPosts.add(postData.id);
   const p = Post.fromJSON(postData);
@@ -1677,15 +1689,24 @@ async function init() {
       broadcastProfileUpdate,
       initializeUserProfileSection
     });
+    
+    // Set up handlers but DON'T process network messages yet
     messageBus.registerHandler('scribe:new_post', (data) => {
-      handleNewPost(data.message.post, null);
+      if (identityReady) {
+        handleNewPost(data.message.post, null);
+      }
     });
     messageBus.registerHandler('scribe:PROFILE_UPDATE', (data) => {
-      handleProfileUpdate(data.message, null);
+      if (identityReady) {
+        handleProfileUpdate(data.message, null);
+      }
     });
     messageBus.registerHandler('scribe:parent_update', (data) => {
-      handleParentUpdate(data.message);
+      if (identityReady) {
+        handleParentUpdate(data.message);
+      }
     });
+    
     registerHandler('new_post', handleNewPost);
     registerHandler('provisional_identity_claim', async (msg) => await handleProvisionalClaim(msg.claim));
     registerHandler('identity_confirmation_slip', async (msg) => await handleConfirmationSlip(msg.slip));
@@ -1700,49 +1721,88 @@ async function init() {
 
     // --- Step 2: Initialize WASM and Base Network ---
     await wasmVDF.initialize();
+    
+    // --- Step 3: Load and verify identity BEFORE network init ---
     const stored = localStorage.getItem("ephemeral-id");
     let storedIdentity = null;
+    let identityValid = false;
+    
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
         storedIdentity = LocalIdentity.fromJSON(parsed);
+        console.log("[Identity] Found stored identity, preparing to verify...");
       } catch (e) { 
         console.error("Failed to parse stored identity:", e); 
       }
     }
-    const tempNodeId = (storedIdentity && storedIdentity.nodeId instanceof Uint8Array) ? storedIdentity.nodeId : crypto.getRandomValues(new Uint8Array(20));
+    
+    // Initialize network with temp node ID
+    const tempNodeId = (storedIdentity && storedIdentity.nodeId instanceof Uint8Array) 
+      ? storedIdentity.nodeId 
+      : crypto.getRandomValues(new Uint8Array(20));
+    
     await initNetworkWithTempId(tempNodeId);
     
     // Wait for DHT to be ready
     await new Promise(resolve => {
-      const i = setInterval(() => { if (state.dht && state.identityRegistry) { clearInterval(i); resolve(); } }, 100);
+      const checkInterval = setInterval(() => { 
+        if (state.dht && state.identityRegistry) { 
+          clearInterval(checkInterval); 
+          resolve(); 
+        } 
+      }, 100);
     });
     
-    // --- Step 3: Establish User Identity ---
+    // --- NOW verify identity with DHT ready ---
     if (storedIdentity && storedIdentity.handle) {
-      const isValid = await state.identityRegistry.verifyOwnIdentity(storedIdentity);
-      if (isValid) {
+      // Give DHT a moment to populate from peers
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      identityValid = await state.identityRegistry.verifyOwnIdentity(storedIdentity);
+      
+      if (identityValid) {
         state.myIdentity = storedIdentity;
         state.dht.nodeId = state.myIdentity.nodeId;
-        console.log("[Identity] Re-publishing identity records for returning user...");
+        console.log("[Identity] Verified stored identity, republishing...");
+        
+        // Re-publish identity
         const publicClaim = state.myIdentity.getPublicClaim();
         const handleAddress = `handle-to-pubkey:${state.myIdentity.handle.toLowerCase()}`;
         const pubkeyAddress = `pubkey:${arrayBufferToBase64(state.myIdentity.publicKey)}`;
-        Promise.all([
+        
+        await Promise.all([
           state.dht.store(handleAddress, arrayBufferToBase64(state.myIdentity.publicKey)),
           state.dht.store(pubkeyAddress, publicClaim.toJSON())
-        ]).catch(err => { console.error("[Identity] Failed to re-publish identity:", err); });
+        ]).catch(err => { 
+          console.error("[Identity] Failed to re-publish identity:", err); 
+        });
       } else {
+        console.log("[Identity] Stored identity verification failed");
         notify("Stored identity is no longer valid. Please create a new one.");
         await createNewIdentity();
       }
     } else {
+      console.log("[Identity] No stored identity found");
       await createNewIdentity();
     }
-    initializeUserProfileSection();
+    
+    // --- CRITICAL: Mark identity as ready and process queued messages ---
+identityReady = true;
+window.identityReady = true;  // Add this line
+console.log("[Identity] Identity ready, processing queued messages...");
+    
+    // Process any messages that arrived while identity was loading
+    while (earlyMessageQueue.length > 0) {
+      const { msg, fromWire } = earlyMessageQueue.shift();
+      console.log(`[Network] Processing queued ${msg.type} message`);
+      await handlePeerMessage(msg, fromWire);
+    }
+    
 
-    // --- Step 4: Initialize Core P2P Protocols (like Scribe) ---
-    initializeP2PProtocols(); 
+
+    // --- Step 4: Initialize Core P2P Protocols (NOW SAFE TO DO) ---
+    initializeP2PProtocols();
     
     // --- Step 5: Initialize High-Level Services (NOW SAFE TO DO) ---
     const services = initializeServices({
@@ -1760,6 +1820,10 @@ async function init() {
     } = services);
     services.stateManager.renderPost = renderPost;
     await verificationQueue.init();
+
+
+    // Initialize UI with identity
+    initializeUserProfileSection();
 
     // --- Step 6: Load Saved State Using the New Services ---
     await stateManager.init();
@@ -1779,32 +1843,34 @@ async function init() {
     updateDMInbox();
     updateUnreadBadge();
     setInterval(()=>{ 
-                updateDMInbox(),
-                updateUnreadBadge();
-                }, 30000);
+      updateDMInbox(),
+      updateUnreadBadge();
+    }, 30000);
     
-        window.addEventListener("beforeunload", () => {
-          if (maintenanceInterval) clearInterval(maintenanceInterval);
-          
-          // Save identity to localStorage
-          if (state.myIdentity) {
-            const localIdentity = state.myIdentity instanceof LocalIdentity ?
-              state.myIdentity : new LocalIdentity(state.myIdentity);
-            localStorage.setItem("ephemeral-id", JSON.stringify(localIdentity.toJSON()));
-          }
-          
-          stateManager.savePosts();
-          stateManager.saveUserState();
-          stateManager.savePeerScores();
-          stateManager.saveDHTState();
-          routingManager.stop();
-          if (state.client) state.client.destroy();
-          if (state.dht) state.dht.shutdown();
-        });
+    window.addEventListener("beforeunload", () => {
+      if (maintenanceInterval) clearInterval(maintenanceInterval);
+      
+      // Save identity to localStorage
+      if (state.myIdentity) {
+        const localIdentity = state.myIdentity instanceof LocalIdentity ?
+          state.myIdentity : new LocalIdentity(state.myIdentity);
+        localStorage.setItem("ephemeral-id", JSON.stringify(localIdentity.toJSON()));
+      }
+      
+      stateManager.savePosts();
+      stateManager.saveUserState();
+      stateManager.savePeerScores();
+      stateManager.saveDHTState();
+      routingManager.stop();
+      if (state.client) state.client.destroy();
+      if (state.dht) state.dht.shutdown();
+    });
 
     try {
-        getServices().relayCoordinator.start();
-    } catch(e) { console.error("[Init] Failed to start Relay Coordinator:", e); }
+      getServices().relayCoordinator.start();
+    } catch(e) { 
+      console.error("[Init] Failed to start Relay Coordinator:", e); 
+    }
 
     if (!localStorage.getItem("ephemeral-tips")) {
       setTimeout(() => notify("💡 Tip: Posts live only while carried by peers"), 1000);
@@ -1812,10 +1878,12 @@ async function init() {
       localStorage.setItem("ephemeral-tips", "yes");
     }
     
-  } catch (e) {
-    console.error("Init failed:", e);
-    document.getElementById("loading").innerHTML = `<div class="loading-content"><h2>Init Failed</h2><p>${e.message}</p><button onclick="location.reload()">Try Again</button></div>`;
-  }
+} catch (e) {
+  console.error("Init failed:", e);
+  identityReady = true; // Set to true even on error to prevent message queue buildup
+  window.identityReady = true;  
+  document.getElementById("loading").innerHTML = `<div class="loading-content"><h2>Init Failed</h2><p>${e.message}</p><button onclick="location.reload()">Try Again</button></div>`;
+}
 }
 
 async function handlePostRating(msg, fromWire) {
@@ -2056,6 +2124,10 @@ function debugPostRemoval(postId, reason) {
     window.handleProfileUpdate = handleProfileUpdate;
     window.unsubscribeFromProfile =unsubscribeFromProfile;
 
+
+
+
+
     window.subscribeToProfile = subscribeToProfile;
   window.state = state;
 window.openProfileForHandle = openProfileForHandle;
@@ -2171,4 +2243,4 @@ window.broadcastProfileUpdate = broadcastProfileUpdate;
 
   // Start the application initialization process once the page is loaded.
   window.addEventListener("load", init);
-
+  

@@ -297,7 +297,7 @@ export class KademliaDHT {
     if (this.storage.has(key)) {
       return {
         found: true,
-        value: this.storage.get(key)
+        value: this.storage.get(key).value
       };
     }
     

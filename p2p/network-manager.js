@@ -649,6 +649,13 @@ async function authenticatePeer(wire, peerId) {
 
 
 async function handlePeerMessage(msg, fromWire) {
+  // Queue messages if identity isn't ready yet (except DHT and HyParView messages)
+  if (!window.identityReady && msg.type !== 'dht_rpc' && msg.type !== 'hyparview') {
+    window.earlyMessageQueue.push({ msg, fromWire });
+    console.log(`[Network] Queued ${msg.type} message while identity loads`);
+    return;
+  }
+
   if (msg.msgId && state.seenMessages.has(msg.msgId)) {
     return;
   }
@@ -754,7 +761,6 @@ async function handlePeerMessage(msg, fromWire) {
       }
       break;
 
-
     case "auth_challenge":
       if (state.myIdentity && state.myIdentity.secretKey) {
         const signature = nacl.sign(
@@ -793,6 +799,7 @@ async function handlePeerMessage(msg, fromWire) {
         state.peerChallenges.delete(peerId);
       }
       break;
+
     case "identity_announce":
       if (msg.handle && msg.publicKey && msg.wirePeerId) {
         console.log(`[Network] Received identity announcement from ${msg.handle}`);
@@ -821,6 +828,7 @@ async function handlePeerMessage(msg, fromWire) {
         }
       }
       break;
+
     case "dm_delivered":
         if (msg.messageId) {
             console.log(`[DM] Received delivery confirmation for message ${msg.messageId}`);
@@ -830,6 +838,7 @@ async function handlePeerMessage(msg, fromWire) {
             notify(`Message to ${msg.recipient} delivered ✓`);
         }
         break;
+
     case "routing_update":
       if (msg.handle && msg.nodeId && msg.peerId && msg.timestamp) {
         console.log(`[Network] Received routing update from ${msg.handle}`);
