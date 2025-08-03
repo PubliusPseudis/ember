@@ -611,13 +611,28 @@ function renderHotPostsForTopic(topic) {
     `;
 }
 function scrollToPost(postId) {
+    // Ensure the correct mobile view is active 
+    const feedView = document.getElementById('column-feed');
+    // Check if the feed view is NOT active
+    if (!feedView.classList.contains('active')) {
+        // Find the navigation button that corresponds to the feed view
+        const feedNavButton = document.querySelector('.nav-button[data-view="column-feed"]');
+        if (feedNavButton) {
+            // Programmatically click the button to switch to "The Void"
+            feedNavButton.click();
+        }
+    }
+
     const el = document.getElementById(`post-${postId}`);
     if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.style.animation = 'pulse-border 2s ease-in-out';
+        // Use a small timeout to allow the view to become visible before scrolling
         setTimeout(() => {
-            el.style.animation = '';
-        }, 2000);
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.style.animation = 'pulse-border 2s ease-in-out';
+            setTimeout(() => {
+                el.style.animation = '';
+            }, 2000);
+        }, 100); // 100ms delay is usually sufficient for the view transition
     }
 }
 
