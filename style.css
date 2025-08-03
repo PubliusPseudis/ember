@@ -2826,7 +2826,6 @@ body.light-mode .author-profile-placeholder {
     overflow: hidden;
     position: relative;
     display: block !important;
-    height: calc(100vh - 60px - env(safe-area-inset-top));
   }
 
   /* Hide desktop columns on mobile */
@@ -2839,10 +2838,13 @@ body.light-mode .author-profile-placeholder {
     display: none;
   }
 
-  .app-view.active {
-    display: block !important;
-  }
-
+.app-view.active {
+  display: flex !important; /* Changed from block */
+  flex-direction: column;   /* Added for consistency */
+}
+#column-feed .column-header {
+  display: none;
+}
   /* Hide desktop compose on mobile */
   #compose {
     display: none !important;
@@ -2896,8 +2898,8 @@ body.light-mode .author-profile-placeholder {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   color: white;
   border: none;
-  position: fixed; /* Make sure it's fixed */
-  bottom: 6rem;   /* Adjust to be above the new floating nav */
+  position: fixed; 
+  bottom: 6rem;   
   right: 1.5rem;
   z-index: 100;
 }
@@ -3040,12 +3042,11 @@ body.light-mode .nav-button.active {
   }
 
   /* Ensure bonfire column takes full height minus header */
-  #column-bonfire {
-    display: flex;
-    flex-direction: column;
-    height: calc(100vh - 60px - 60px); /* Minus header and bottom nav */
-    padding-bottom: 0;
-  }
+#column-bonfire {
+  /* display and flex-direction are now handled by .app-view.active */
+  height: calc(100vh - 60px - 60px);
+  padding-bottom: 0;
+}
 
   /* Fix the column header on mobile */
   #column-bonfire .column-header {
