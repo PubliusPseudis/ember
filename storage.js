@@ -9,10 +9,68 @@ export class StateManager {
     this.peerManager = dependencies.peerManager;
     this.renderPost = dependencies.renderPost;
     this.dbName = 'EmberNetwork';
-    this.version = 2;
+    this.version =3; //v3 has DM permissions and encrypted storage for local identity
     this.db = null;
   }
-  
+  async saveDMPermissions() {
+      if (!this.db) return;
+      
+      try {
+        const transaction = this.db.transaction(['dmPermissions'], 'readwrite');
+        const store = transaction.objectStore('dmPermissions');
+        
+        // Clear existing
+        await new Promise((resolve, reject) => {
+          const clearReq = store.clear();
+          clearReq.onsuccess = resolve;
+          clearReq.onerror = reject;
+        });
+        
+        // Save current permissions
+        for (const [handle, permission] of state.dmPermissions) {
+          await new Promise((resolve, reject) => {
+            const req = store.put({ 
+              handle, 
+              ...permission 
+            });
+            req.onsuccess = resolve;
+            req.onerror = reject;
+          });
+        }
+        
+        console.log(`[Storage] Saved ${state.dmPermissions.size} DM permissions`);
+      } catch (error) {
+        console.error('[Storage] Failed to save DM permissions:', error);
+      }
+    }
+
+    async loadDMPermissions() {
+      if (!this.db) return;
+      
+      try {
+        const transaction = this.db.transaction(['dmPermissions'], 'readonly');
+        const store = transaction.objectStore('dmPermissions');
+        const request = store.getAll();
+        
+        return new Promise((resolve) => {
+          request.onsuccess = () => {
+            const permissions = request.result;
+            permissions.forEach(perm => {
+              const { handle, ...data } = perm;
+              state.dmPermissions.set(handle, data);
+            });
+            console.log(`[Storage] Loaded ${permissions.length} DM permissions`);
+            resolve();
+          };
+          request.onerror = (event) => {
+            console.error("[Storage] Failed to load DM permissions:", event.target.error);
+            resolve();
+          };
+        });
+      } catch (error) {
+        console.error('[Storage] Failed to load DM permissions:', error);
+      }
+    }
   async clearLocalData() {
       if (confirm('This will clear all saved posts and reset your identity. Continue?')) {
         if (this.db) {
@@ -43,6 +101,13 @@ export class StateManager {
       
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
+        
+
+        //DM permissions
+        if (!db.objectStoreNames.contains('dmPermissions')) {
+          const permStore = db.createObjectStore('dmPermissions', { keyPath: 'handle' });
+          permStore.createIndex('status', 'status', { unique: false });
+        }
         
         // Posts store
         if (!db.objectStoreNames.contains('posts')) {
@@ -111,9 +176,9 @@ export class StateManager {
       // Include metadata about our explicit carries
       postData.wasExplicitlyCarried = state.explicitlyCarrying.has(id);
       postData.lastSeen = Date.now();
-        try {
+      try {
             store.add(postData);
-        } catch(e) {
+      } catch(e) {
             if (e.name === 'QuotaExceededError') {
                 console.error("Storage quota exceeded while saving posts. Aborting.");
                 notify("Storage is full. Cannot save session.", 5000);
@@ -255,12 +320,11 @@ async saveUserState() {
     const store = transaction.objectStore('userState');
     
     if (state.myIdentity) {
-     
       // Ensure we have a LocalIdentity instance
       const localIdentity = state.myIdentity instanceof LocalIdentity ?
         state.myIdentity : new LocalIdentity(state.myIdentity);
       
-      // Save the full identity (including private keys) for local storage
+      // The toJSON method now handles encrypted vs unencrypted properly
       await new Promise((resolve, reject) => {
         const req = store.put({ 
           key: 'identity', 
@@ -270,7 +334,7 @@ async saveUserState() {
         req.onerror = reject;
       });
       
-      console.log('Saved identity to storage');
+      console.log('Saved identity to storage (encrypted:', localIdentity.isEncrypted(), ')');
     }
 
     // Save theme preference
@@ -312,133 +376,45 @@ async saveUserState() {
   
     async loadUserState() {
       if (!this.db) return;
-      
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['userState'], 'readonly');
-        const store = transaction.objectStore('userState');
-
-        // Create requests for all user state items
-        const identityReq = store.get('identity');
-        const themeReq = store.get('theme');
-        const carryReq = store.get('explicitlyCarrying');
-
-        let identityLoaded = false;
-        let themeLoaded = false;
-        let carryLoaded = false;
-
-        const checkCompletion = () => {
-          if (identityLoaded && themeLoaded && carryLoaded) {
-            resolve();
-          }
-        };
-
-        // Load identity
-        identityReq.onsuccess = () => {
-          if (identityReq.result && identityReq.result.value) {
-            try {
-              const stored = JSON.parse(identityReq.result.value);         
-              
-              state.myIdentity = LocalIdentity.fromJSON(stored);
-              
-              // If the loaded identity has a profile, ensure it's complete
-              if (!state.myIdentity.profile || !state.myIdentity.profile.theme) {
-                state.myIdentity.profile = {
-                  handle: state.myIdentity.handle,
-                  bio: state.myIdentity.profile?.bio || '',
-                  profilePictureHash: state.myIdentity.profile?.profilePictureHash || null,
-                  theme: {
-                    backgroundColor: '#000000',
-                    fontColor: '#ffffff',
-                    accentColor: '#ff1493'
-                  },
-                  updatedAt: Date.now()
-                };
+      try {
+          const transaction = this.db.transaction(['userState'], 'readonly');
+          const store = transaction.objectStore('userState');
+  
+          const themePromise = new Promise((resolve, reject) => {
+              const req = store.get('theme');
+              req.onsuccess = () => resolve(req.result);
+              req.onerror = (event) => reject(event.target.error);
+          });
+  
+          const carryPromise = new Promise((resolve, reject) => {
+              const req = store.get('explicitlyCarrying');
+              req.onsuccess = () => resolve(req.result);
+              req.onerror = (event) => reject(event.target.error);
+          });
+  
+          const [themeResult, carryResult] = await Promise.all([themePromise, carryPromise]);
+  
+          // Process theme result
+          if (themeResult && themeResult.value) {
+              const theme = themeResult.value;
+              localStorage.setItem('ephemeral-theme', theme);
+              if (typeof applyTheme === 'function') {
+                  applyTheme(theme);
               }
-              
-              console.log('Loaded identity from storage:', {
-                handle: state.myIdentity.handle,
-                hasPublicKey: !!state.myIdentity.publicKey,
-                hasSecretKey: !!state.myIdentity.secretKey,
-                isRegistered: state.myIdentity.isRegistered,
-                hasProfile: !!state.myIdentity.profile
-              });
-              
-            } catch (e) {
-              console.error("Failed to parse stored identity:", e);
-              
-              // If we can't parse the stored identity, clear it
-              // This prevents repeated errors on every load
-              const clearTx = this.db.transaction(['userState'], 'readwrite');
-              const clearStore = clearTx.objectStore('userState');
-              clearStore.delete('identity');
-            }
+              console.log('Loaded theme:', theme);
+          }
+  
+          // Process explicitly carried posts result
+          if (carryResult && carryResult.value) {
+              state.explicitlyCarrying = new Set(carryResult.value);
+              console.log(`Loaded ${state.explicitlyCarrying.size} explicitly carried posts`);
           } else {
-            console.log('No stored identity found');
+              state.explicitlyCarrying = new Set();
           }
-          identityLoaded = true;
-          checkCompletion();
-        };
-
-        identityReq.onerror = (event) => {
-          console.error("Failed to load identity:", event.target.error);
-          identityLoaded = true;
-          checkCompletion();
-        };
-
-        // Load theme
-        themeReq.onsuccess = () => {
-          if (themeReq.result && themeReq.result.value) {
-            const theme = themeReq.result.value;
-            localStorage.setItem('ephemeral-theme', theme);
-            
-            // Apply theme if function is available
-            if (typeof applyTheme === 'function') {
-              applyTheme(theme);
-            }
-            
-            console.log('Loaded theme:', theme);
-          }
-          themeLoaded = true;
-          checkCompletion();
-        };
-
-        themeReq.onerror = (event) => {
-          console.error("Failed to load theme:", event.target.error);
-          themeLoaded = true;
-          checkCompletion();
-        };
-
-        // Load explicitly carried posts
-        carryReq.onsuccess = () => {
-          if (carryReq.result && carryReq.result.value) {
-            state.explicitlyCarrying = new Set(carryReq.result.value);
-            console.log(`Loaded ${state.explicitlyCarrying.size} explicitly carried posts`);
-          } else {
-            state.explicitlyCarrying = new Set();
-          }
-          carryLoaded = true;
-          checkCompletion();
-        };
-
-        carryReq.onerror = (event) => {
-          console.error("Failed to load explicitly carried posts:", event.target.error);
+      } catch (error) {
+          console.error("Error loading user state:", error);
           state.explicitlyCarrying = new Set();
-          carryLoaded = true;
-          checkCompletion();
-        };
-
-        // Handle transaction errors
-        transaction.onerror = (event) => {
-          console.error("Transaction error in loadUserState:", event.target.error);
-          // Ensure we still resolve to prevent hanging
-          resolve();
-        };
-
-        transaction.onabort = (event) => {
-          console.error("Transaction aborted in loadUserState:", event.target.error);
-          resolve();
-        };
-      });
+      }
     }
   
 async savePeerScores() {

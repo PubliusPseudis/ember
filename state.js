@@ -25,4 +25,5 @@ export const state = {
   pendingVerification: new Map(),
   viewingProfile: null,
   profileCache: new Map(),
+  dmPermissions: new Map(), // NEW: Map<handle, {status: 'approved'|'pending_outgoing'|'pending_incoming'|'blocked', timestamp: number}>
 };

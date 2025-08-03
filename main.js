@@ -16,6 +16,7 @@ import { VerificationQueue } from './verification-queue.js';
 import { KademliaDHT } from './p2p/dht.js';
 import { IdentityClaim } from './models/identity-claim.js';
 import { LocalIdentity } from './models/local-identity.js';
+import { createNewIdentity, unlockIdentity } from './identity/identity-flow.js';
 
 // --- 2. IMPORT SHARED STATE & SERVICES ---
 import { initializeServices, getServices } from './services.js';
@@ -39,7 +40,6 @@ import { StateManager } from './storage.js';
 import { MemoryManager } from './services/memory-manager.js';
 import { PeerManager } from './services/peer-manager.js';
 import { ContentAddressedImageStore } from './services/image-store.js';
-import { createNewIdentity } from './identity/identity-flow.js';
 import { IdentityRegistry } from './identity/identity-manager.js';
 import { ProgressiveVDF } from './identity/vdf.js';
 import { initNetwork, registerHandler, sendPeer, broadcast, handlePeerMessage } from './p2p/network-manager.js';
@@ -114,8 +114,17 @@ export {
   // Maintenance and Debugging
   startMaintenanceLoop,
   maintenanceInterval,
-  debugPostRemoval
+  debugPostRemoval,
+
+    //DM approvals
+      sendDMRequest,
+  approveDMRequest,
+  revokeDMPermission,
+  handleDMRequest,
+  handleDMApprove,
+  handleDMRevoke
 };
+
 
 // Trust evaluation system for incoming posts
 const trustEvaluationTimers = new Map(); // postId -> timer
@@ -454,10 +463,10 @@ async function generateAndBroadcastAttestation(post) {
   
   // Sign the attestation
   const dataToSign = JSON.stringify(attestationData);
-  const signature = nacl.sign(
-    new TextEncoder().encode(dataToSign),
-    state.myIdentity.secretKey
-  );
+const signature = nacl.sign(
+  new TextEncoder().encode(dataToSign),
+  new Uint8Array(state.myIdentity.secretKey) // Explicitly cast to Uint8Array
+);
   
   // Create attestation message
   const attestationMsg = {
@@ -730,18 +739,16 @@ function handleParentUpdate(msg) {
     }
 }
 
-async function createPostWithTopics() {
-    const input = document.getElementById("post-input");
-    const txt = input.value.trim();
+async function createPostWithTopics(txt, imageData) {
     if (!txt) return;
 
-    const imagePreview = document.getElementById('image-preview');
-    const imageData = imagePreview.dataset.imageData || null;
     const btn = document.getElementById("send-button");
     btn.disabled = true;
-    btn.textContent = "Mixing..."; // Updated UI text
+    btn.textContent = "Mixing...";
+    // Updated UI text
 
-    notify("Securing post for relay...", 10000); // Updated notification
+    notify("Securing post for relay...", 10000);
+    // Updated notification
 
     try {
         // --- Local pre-checks remain ---
@@ -759,7 +766,6 @@ async function createPostWithTopics() {
         }
 
         // --- Post Creation (Local) ---
-        // Create the post object, process the image, and sign it.
         // The post is now a self-contained, signed object ready for publishing.
         const p = new Post(txt, null, imageData);
         if (imageData) {
@@ -773,14 +779,20 @@ async function createPostWithTopics() {
         await getServices().privacyPublisher.publishPost(p);
 
         // --- UI Cleanup ---
-        input.value = "";
-        document.getElementById("char-current").textContent = 0;
+        // Clear the desktop input fields after a successful post
+        const input = document.getElementById("post-input");
+        if (input) {
+            input.value = "";
+        }
+        const charCurrent = document.getElementById("char-current");
+        if (charCurrent) {
+            charCurrent.textContent = 0;
+        }
         removeImage();
 
         btn.disabled = false;
         btn.textContent = "🔥";
         notify("Post sent to the mixing layer!");
-
     } catch (error) {
         console.error("Failed to publish post through privacy layer:", error);
         notify(`Could not publish post: ${error.message}`, 5000);
@@ -859,10 +871,10 @@ async function ratePost(postId, vote) {
             timestamp: ratingMsg.timestamp
         });
         
-        const signature = nacl.sign(
-            new TextEncoder().encode(msgStr),
-            state.myIdentity.secretKey
-        );
+const signature = nacl.sign(
+  new TextEncoder().encode(msgStr),
+  new Uint8Array(state.myIdentity.secretKey) // Explicitly cast to Uint8Array
+);
         
         ratingMsg.signature = arrayBufferToBase64(signature);
         ratingMsg.voterPublicKey = arrayBufferToBase64(state.myIdentity.publicKey);
@@ -1061,10 +1073,419 @@ async function storePendingMessage(recipientHandle, messageText, status = 'queue
   }
 }
 
+async function sendDMRequest(recipientHandle) {
+  console.log(`[DM] Sending DM request to ${recipientHandle}`);
+  
+  // Update local permissions
+  state.dmPermissions.set(recipientHandle, {
+    status: 'pending_outgoing',
+    timestamp: Date.now()
+  });
+  
+  // Create request message
+  const requestMsg = {
+    type: 'dm_request',
+    sender: state.myIdentity.handle,
+    recipient: recipientHandle,
+    timestamp: Date.now(),
+    publicKey: arrayBufferToBase64(state.myIdentity.publicKey)
+  };
+  
+  // Sign the request
+  const msgStr = JSON.stringify({
+    sender: requestMsg.sender,
+    recipient: requestMsg.recipient,
+    timestamp: requestMsg.timestamp
+  });
+  
+const signature = nacl.sign(
+  new TextEncoder().encode(msgStr),
+  new Uint8Array(state.myIdentity.secretKey) // Explicitly cast to Uint8Array
+);
+  
+  requestMsg.signature = arrayBufferToBase64(signature);
+  
+  // Try to send via existing DM routing mechanisms
+  const directPeer = await findPeerByHandle(recipientHandle);
+  if (directPeer) {
+    sendPeer(directPeer.wire, requestMsg);
+    notify(`DM request sent to ${recipientHandle}`);
+    return true;
+  }
+  
+  // Fall back to DHT routing
+  const recipientClaim = await state.identityRegistry.lookupHandle(recipientHandle);
+  if (recipientClaim && recipientClaim.nodeId) {
+    const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
+    const closestPeers = await state.dht.findNode(recipientNodeId);
+    
+    if (closestPeers.length > 0) {
+      sendPeer(closestPeers[0].wire, requestMsg);
+      notify(`DM request sent to ${recipientHandle}`);
+      return true;
+    }
+  }
+  
+  notify(`Could not reach ${recipientHandle}. They may be offline.`);
+  return false;
+}
+
+async function handleDMRequest(msg, fromWire) {
+  // Check if this message is for us
+  if (msg.recipient !== state.myIdentity.handle) {
+    // Forward if not for us using same logic as handleDirectMessage
+    console.log(`[DM] Request for ${msg.recipient}, attempting to forward`);
+    
+    // Try to forward using routing hint first
+    const routingInfo = await state.identityRegistry.lookupPeerLocation(msg.recipient);
+    if (routingInfo) {
+      // Check if recipient is directly connected to us
+      const directPeer = await findPeerByHandle(msg.recipient);
+      if (directPeer) {
+        console.log(`[DM] Forwarding request directly to ${msg.recipient}`);
+        sendPeer(directPeer.wire, msg);
+        return;
+      }
+    }
+    
+    // Fall back to DHT routing
+    const recipientClaim = await state.identityRegistry.lookupHandle(msg.recipient);
+    if (recipientClaim && recipientClaim.nodeId) {
+      const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
+      const closestPeers = state.dht.findClosestPeers(recipientNodeId, 3);
+      
+      for (const peer of closestPeers) {
+        if (peer.wire !== fromWire && peer.wire && !peer.wire.destroyed) {
+          sendPeer(peer.wire, msg);
+        }
+      }
+      console.log(`[DM] Forwarded request to ${closestPeers.length} peers via DHT`);
+    }
+    return;
+  }
+  
+  // Verify signature
+  try {
+    const dataToVerify = JSON.stringify({
+      sender: msg.sender,
+      recipient: msg.recipient,
+      timestamp: msg.timestamp
+    });
+    
+    const publicKey = base64ToArrayBuffer(msg.publicKey);
+    const sig = base64ToArrayBuffer(msg.signature);
+    
+    const verified = nacl.sign.open(sig, publicKey);
+    if (!verified) {
+      console.warn(`[DM] Invalid signature on DM request from ${msg.sender}`);
+      return;
+    }
+    
+    const decodedData = new TextDecoder().decode(verified);
+    if (decodedData !== dataToVerify) {
+      console.warn(`[DM] Signature mismatch on DM request from ${msg.sender}`);
+      return;
+    }
+  } catch (e) {
+    console.error('[DM] Failed to verify DM request signature:', e);
+    return;
+  }
+  
+  // Check if already have permission status
+  const existing = state.dmPermissions.get(msg.sender);
+  if (existing?.status === 'approved' || existing?.status === 'blocked') {
+    // Already decided, ignore new request
+    console.log(`[DM] Ignoring request from ${msg.sender} - already ${existing.status}`);
+    return;
+  }
+  
+  // Store as pending incoming
+  state.dmPermissions.set(msg.sender, {
+    status: 'pending_incoming',
+    timestamp: msg.timestamp
+  });
+  
+  // Notify user
+  notify(`📨 ${msg.sender} wants to send you messages`, 10000,
+    () => window.showDMRequest(msg.sender));
+  
+  // Update UI to show pending request
+  updateDMInbox();
+}
+
+async function approveDMRequest(handle) {
+  console.log(`[DM] Approving DM request from ${handle}`);
+  
+  // Update local state
+  state.dmPermissions.set(handle, {
+    status: 'approved',
+    timestamp: Date.now()
+  });
+  
+  // Send approval message
+  const approvalMsg = {
+    type: 'dm_approve',
+    sender: state.myIdentity.handle,
+    recipient: handle,
+    timestamp: Date.now()
+  };
+  
+  // Sign it
+  const msgStr = JSON.stringify({
+    sender: approvalMsg.sender,
+    recipient: approvalMsg.recipient,
+    timestamp: approvalMsg.timestamp
+  });
+  
+const signature = nacl.sign(
+  new TextEncoder().encode(msgStr),
+  new Uint8Array(state.myIdentity.secretKey) // Explicitly cast to Uint8Array
+);
+  
+  approvalMsg.signature = arrayBufferToBase64(signature);
+  approvalMsg.publicKey = arrayBufferToBase64(state.myIdentity.publicKey);
+  
+  // Send via DM routing
+  const directPeer = await findPeerByHandle(handle);
+  if (directPeer) {
+    sendPeer(directPeer.wire, approvalMsg);
+  } else {
+    // Use DHT routing as fallback
+    const recipientClaim = await state.identityRegistry.lookupHandle(handle);
+    if (recipientClaim && recipientClaim.nodeId) {
+      const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
+      const closestPeers = await state.dht.findNode(recipientNodeId);
+      if (closestPeers.length > 0) {
+        sendPeer(closestPeers[0].wire, approvalMsg);
+      }
+    }
+  }
+  
+  notify(`✅ Approved messages from ${handle}`);
+  updateDMInbox();
+}
+
+async function handleDMApprove(msg, fromWire) {
+  // Check if this message is for us
+  if (msg.recipient !== state.myIdentity.handle) {
+    // Forward if not for us using same logic as handleDirectMessage
+    console.log(`[DM] Approval for ${msg.recipient}, attempting to forward`);
+    
+    const routingInfo = await state.identityRegistry.lookupPeerLocation(msg.recipient);
+    if (routingInfo) {
+      const directPeer = await findPeerByHandle(msg.recipient);
+      if (directPeer) {
+        console.log(`[DM] Forwarding approval directly to ${msg.recipient}`);
+        sendPeer(directPeer.wire, msg);
+        return;
+      }
+    }
+    
+    const recipientClaim = await state.identityRegistry.lookupHandle(msg.recipient);
+    if (recipientClaim && recipientClaim.nodeId) {
+      const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
+      const closestPeers = state.dht.findClosestPeers(recipientNodeId, 3);
+      
+      for (const peer of closestPeers) {
+        if (peer.wire !== fromWire && peer.wire && !peer.wire.destroyed) {
+          sendPeer(peer.wire, msg);
+        }
+      }
+      console.log(`[DM] Forwarded approval to ${closestPeers.length} peers via DHT`);
+    }
+    return;
+  }
+  
+  // Verify signature
+  try {
+    const dataToVerify = JSON.stringify({
+      sender: msg.sender,
+      recipient: msg.recipient,
+      timestamp: msg.timestamp
+    });
+    
+    const publicKey = base64ToArrayBuffer(msg.publicKey);
+    const sig = base64ToArrayBuffer(msg.signature);
+    
+    const verified = nacl.sign.open(sig, publicKey);
+    if (!verified) {
+      console.warn(`[DM] Invalid signature on DM approval from ${msg.sender}`);
+      return;
+    }
+    
+    const decodedData = new TextDecoder().decode(verified);
+    if (decodedData !== dataToVerify) {
+      console.warn(`[DM] Signature mismatch on DM approval from ${msg.sender}`);
+      return;
+    }
+  } catch (e) {
+    console.error('[DM] Failed to verify DM approval signature:', e);
+    return;
+  }
+  
+  // Update permission status
+  state.dmPermissions.set(msg.sender, {
+    status: 'approved',
+    timestamp: Date.now()
+  });
+  
+  notify(`✅ ${msg.sender} has approved your DM request!`, 5000);
+  updateDMInbox();
+}
+
+async function revokeDMPermission(handle) {
+  console.log(`[DM] Revoking DM permission for ${handle}`);
+  
+  // Update local state
+  state.dmPermissions.delete(handle);
+  
+  // Send revoke message
+  const revokeMsg = {
+    type: 'dm_revoke',
+    sender: state.myIdentity.handle,
+    recipient: handle,
+    timestamp: Date.now()
+  };
+  
+  // Sign it
+  const msgStr = JSON.stringify({
+    sender: revokeMsg.sender,
+    recipient: revokeMsg.recipient,
+    timestamp: revokeMsg.timestamp
+  });
+  
+const signature = nacl.sign(
+  new TextEncoder().encode(msgStr),
+  new Uint8Array(state.myIdentity.secretKey) // Explicitly cast to Uint8Array
+);
+  
+  revokeMsg.signature = arrayBufferToBase64(signature);
+  revokeMsg.publicKey = arrayBufferToBase64(state.myIdentity.publicKey);
+  
+  // Send via DM routing
+  const directPeer = await findPeerByHandle(handle);
+  if (directPeer) {
+    sendPeer(directPeer.wire, revokeMsg);
+  } else {
+    // Use DHT routing as fallback
+    const recipientClaim = await state.identityRegistry.lookupHandle(handle);
+    if (recipientClaim && recipientClaim.nodeId) {
+      const recipientNodeId = base64ToArrayBuffer(recipientClaim.nodeId);
+      const closestPeers = await state.dht.findNode(recipientNodeId);
+      if (closestPeers.length > 0) {
+        sendPeer(closestPeers[0].wire, revokeMsg);
+      }
+    }
+  }
+  
+  notify(`Revoked DM permission for ${handle}`);
+  updateDMInbox();
+}
+
+async function handleDMRevoke(msg, fromWire) {
+  // Check if this message is for us
+  if (msg.recipient !== state.myIdentity.handle && msg.sender !== state.myIdentity.handle) {
+    // Forward if not for us
+    console.log(`[DM] Revoke message not for us, attempting to forward`);
+    
+    // Try forwarding to recipient
+    const recipientInfo = await state.identityRegistry.lookupPeerLocation(msg.recipient);
+    if (recipientInfo) {
+      const directPeer = await findPeerByHandle(msg.recipient);
+      if (directPeer) {
+        sendPeer(directPeer.wire, msg);
+        return;
+      }
+    }
+    
+    // Also try forwarding to sender
+    const senderInfo = await state.identityRegistry.lookupPeerLocation(msg.sender);
+    if (senderInfo) {
+      const directPeer = await findPeerByHandle(msg.sender);
+      if (directPeer) {
+        sendPeer(directPeer.wire, msg);
+        return;
+      }
+    }
+    
+    // Fall back to DHT routing for both
+    const targets = [msg.recipient, msg.sender];
+    for (const target of targets) {
+      const claim = await state.identityRegistry.lookupHandle(target);
+      if (claim && claim.nodeId) {
+        const nodeId = base64ToArrayBuffer(claim.nodeId);
+        const closestPeers = state.dht.findClosestPeers(nodeId, 3);
+        
+        for (const peer of closestPeers) {
+          if (peer.wire !== fromWire && peer.wire && !peer.wire.destroyed) {
+            sendPeer(peer.wire, msg);
+          }
+        }
+      }
+    }
+    return;
+  }
+  
+  // Verify signature
+  try {
+    const dataToVerify = JSON.stringify({
+      sender: msg.sender,
+      recipient: msg.recipient,
+      timestamp: msg.timestamp
+    });
+    
+    const publicKey = base64ToArrayBuffer(msg.publicKey);
+    const sig = base64ToArrayBuffer(msg.signature);
+    
+    const verified = nacl.sign.open(sig, publicKey);
+    if (!verified) {
+      console.warn(`[DM] Invalid signature on DM revoke`);
+      return;
+    }
+  } catch (e) {
+    console.error('[DM] Failed to verify DM revoke signature:', e);
+    return;
+  }
+  
+  // Handle revoke based on who sent it
+  if (msg.sender === state.myIdentity.handle) {
+    // We revoked permission for someone
+    state.dmPermissions.delete(msg.recipient);
+    notify(`You revoked DM permission for ${msg.recipient}`);
+  } else {
+    // Someone revoked our permission
+    state.dmPermissions.delete(msg.sender);
+    notify(`${msg.sender} revoked your DM permission`);
+  }
+  
+  updateDMInbox();
+}
+
 async function sendDirectMessage(recipientHandle, messageText) {
   console.log(`[DM] Initializing DM to ${recipientHandle}...`);
 
   try {
+    // Check DM permissions first
+    const permission = state.dmPermissions.get(recipientHandle);
+    const status = permission?.status;
+    
+    if (status === 'blocked') {
+      notify(`You have blocked ${recipientHandle}. Unblock them to send messages.`);
+      return false;
+    }
+    
+    if (status !== 'approved') {
+      // Need to send a request first
+      if (status === 'pending_outgoing') {
+        notify(`DM request to ${recipientHandle} is still pending.`);
+        return false;
+      }
+      
+      // Send DM request
+      await sendDMRequest(recipientHandle);
+      return false; // Don't send the actual message yet
+    }
+    
     // --- Step 1: Find and Validate Recipient's Identity ---
     let recipientClaim = null;
     const maxAttempts = 3;
@@ -1274,10 +1695,10 @@ async function broadcastProfileUpdate(profileData = null) {
   
   // Sign the profile data
   const profileStr = JSON.stringify(profile);
-  const signature = nacl.sign(
-    new TextEncoder().encode(profileStr),
-    state.myIdentity.secretKey
-  );
+const signature = nacl.sign(
+  new TextEncoder().encode(profileStr),
+  new Uint8Array(state.myIdentity.secretKey) // Explicitly cast to Uint8Array
+);
   
   const message = {
     type: 'PROFILE_UPDATE',
@@ -1453,6 +1874,7 @@ function startMaintenanceLoop() {
       garbageCollect();
       stateManager.savePosts();
       stateManager.saveUserState();
+      stateManager.saveDMPermissions();
       stateManager.savePeerScores();
       stateManager.saveImageChunks(); // Periodically save image data
       stateManager.saveDHTState(); 
@@ -1717,25 +2139,47 @@ async function init() {
     registerHandler('post_rating', handlePostRating);
     registerHandler('e2e_dm', handleDirectMessage);
     registerHandler('generate_attestation', generateAndBroadcastAttestation);
+    registerHandler('dm_request', handleDMRequest);
+    registerHandler('dm_approve', handleDMApprove);
+    registerHandler('dm_revoke', handleDMRevoke);
     setSendPeer(sendPeer);
 
     // --- Step 2: Initialize WASM and Base Network ---
     await wasmVDF.initialize();
     
     // --- Step 3: Load and verify identity BEFORE network init ---
-    const stored = localStorage.getItem("ephemeral-id");
-    let storedIdentity = null;
-    let identityValid = false;
+const stored = localStorage.getItem("ephemeral-id");
+let storedIdentity = null;
+let identityValid = false;
+
+if (stored) {
+  try {
+    const parsed = JSON.parse(stored);
+    storedIdentity = LocalIdentity.fromJSON(parsed);
+    console.log("[Identity] Found stored identity, checking if encrypted...");
     
-    if (stored) {
+    // Check if identity is encrypted
+    if (storedIdentity.isEncrypted()) {
+      console.log("[Identity] Identity is encrypted, prompting for password...");
+      
       try {
-        const parsed = JSON.parse(stored);
-        storedIdentity = LocalIdentity.fromJSON(parsed);
-        console.log("[Identity] Found stored identity, preparing to verify...");
-      } catch (e) { 
-        console.error("Failed to parse stored identity:", e); 
+        // Unlock the identity with password
+        storedIdentity = await unlockIdentity(storedIdentity);
+        console.log("[Identity] Identity successfully unlocked");
+      } catch (err) {
+        console.error("[Identity] Failed to unlock identity:", err);
+        
+        // If user forgot password or cancelled, create new identity
+        localStorage.removeItem("ephemeral-id");
+        storedIdentity = null;
       }
     }
+  } catch (e) { 
+    console.error("Failed to parse stored identity:", e);
+    localStorage.removeItem("ephemeral-id");
+  }
+}
+
     
     // Initialize network with temp node ID
     const tempNodeId = (storedIdentity && storedIdentity.nodeId instanceof Uint8Array) 
@@ -1829,6 +2273,8 @@ console.log("[Identity] Identity ready, processing queued messages...");
     await stateManager.init();
     await stateManager.loadDHTState();
     await stateManager.loadUserState();
+    await stateManager.loadDMPermissions();
+
     await stateManager.loadImageChunks();
     await stateManager.loadPosts();
     await stateManager.loadPeerScores();
@@ -2124,6 +2570,22 @@ function debugPostRemoval(postId, reason) {
     window.handleProfileUpdate = handleProfileUpdate;
     window.unsubscribeFromProfile =unsubscribeFromProfile;
 
+window.sendDMRequest = sendDMRequest;
+window.approveDMRequest = approveDMRequest;
+window.declineDMRequest = (handle) => {
+  state.dmPermissions.set(handle, {
+    status: 'blocked',
+    timestamp: Date.now()
+  });
+  notify(`Declined DM request from ${handle}`);
+  updateDMInbox();
+};
+window.unblockDMContact = (handle) => {
+  state.dmPermissions.delete(handle);
+  notify(`Unblocked ${handle}`);
+  updateDMInbox();
+};
+window.revokeDMPermission = revokeDMPermission;
 
 
 

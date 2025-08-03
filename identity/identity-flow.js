@@ -2,11 +2,101 @@ import nacl from 'tweetnacl';
 import { notify } from '../ui.js';
 import { serviceCallbacks } from '../services/callbacks.js';
 import { state } from '../state.js';
-import { arrayBufferToBase64, JSONStringifyWithBigInt } from '../utils.js';
+import { arrayBufferToBase64, JSONStringifyWithBigInt,  deriveKeyFromPassword, encryptVault, decryptVault } from '../utils.js';
 import { HyParView } from '../p2p/hyparview.js';
 import { LocalIdentity } from '../models/local-identity.js';
 
 import wasmVDF from '../vdf-wrapper.js';
+
+
+export async function unlockIdentity(encryptedIdentity) {
+  return new Promise((resolve, reject) => {
+    const overlay = document.getElementById('identity-creation-overlay');
+    overlay.style.display = 'flex';
+    
+    // Create unlock UI
+    overlay.innerHTML = `
+      <div class="identity-creation-content">
+        <div id="identity-unlock-step">
+          <h2>🔐 Unlock Your Identity</h2>
+          <p>Welcome back, <strong>${encryptedIdentity.handle}</strong>!</p>
+          <p>Enter your password to unlock your identity:</p>
+          
+          <input type="password" id="unlock-password" placeholder="Enter password" />
+          <div id="unlock-error" style="color: #ff6b4a; margin-top: 10px;"></div>
+          
+          <button id="unlock-button" class="primary-button">Unlock</button>
+          <button id="forgot-password" class="secondary-button" style="margin-top: 10px;">Forgot Password?</button>
+        </div>
+      </div>
+    `;
+    
+    const passwordInput = document.getElementById('unlock-password');
+    const errorDiv = document.getElementById('unlock-error');
+    const unlockButton = document.getElementById('unlock-button');
+    const forgotButton = document.getElementById('forgot-password');
+    
+    passwordInput.focus();
+    
+    // Handle enter key
+    passwordInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') unlockButton.click();
+    });
+
+    unlockButton.onclick = async () => {
+      const password = passwordInput.value;
+      if (!password) {
+        errorDiv.textContent = 'Please enter your password.';
+        return;
+      }
+      
+      unlockButton.disabled = true;
+      unlockButton.textContent = 'Decrypting...';
+      errorDiv.textContent = '';
+      
+      try {
+        // Derive key from password
+        const salt = new Uint8Array(encryptedIdentity.encryptedVault.salt);
+        const key = await deriveKeyFromPassword(password, salt);
+        
+        // Decrypt the vault
+        const decrypted = await decryptVault(encryptedIdentity.encryptedVault, key);
+
+        // --- FIX START ---
+        // Restore secret keys and ensure they are in the correct Uint8Array format.
+        encryptedIdentity.secretKey = new Uint8Array(Object.values(decrypted.secretKey));
+        encryptedIdentity.encryptionSecretKey = new Uint8Array(Object.values(decrypted.encryptionSecretKey));
+        // --- FIX END ---
+
+        // Success!
+        overlay.innerHTML = `
+          <div class="identity-creation-content">
+            <h3 style="color: #44ff44;">✓ Identity Unlocked!</h3>
+            <p>Welcome back, ${encryptedIdentity.handle}!</p>
+          </div>
+        `;
+        setTimeout(() => {
+          overlay.style.display = 'none';
+          resolve(encryptedIdentity);
+        }, 1500);
+      } catch (err) {
+        console.error('Decryption failed:', err);
+        errorDiv.textContent = 'Incorrect password. Please try again.';
+        unlockButton.disabled = false;
+        unlockButton.textContent = 'Unlock';
+        passwordInput.focus();
+        passwordInput.select();
+      }
+    };
+
+    forgotButton.onclick = () => {
+      if (confirm('If you forgot your password, you\'ll need to create a new identity. Your current identity will be lost. Continue?')) {
+        overlay.style.display = 'none';
+        reject(new Error('Password forgotten'));
+      }
+    };
+  });
+}
 
 export async function createNewIdentity() {
   // Safety check to prevent double creation
@@ -29,7 +119,99 @@ export async function createNewIdentity() {
     };
     
     overlay.style.display = 'flex';
-    
+
+
+
+    async function promptForPassword(identity, resolve, reject) {
+      const step2 = document.getElementById('identity-step-2-pow');
+      const step4 = document.getElementById('identity-step-4-password');
+      const passwordInput = document.getElementById('identity-password');
+      const confirmInput = document.getElementById('identity-password-confirm');
+      const errorDiv = document.getElementById('password-error');
+      const finishButton = document.getElementById('set-password-button');
+
+      step2.style.display = 'none';
+      step4.style.display = 'block';
+      passwordInput.focus();
+
+      finishButton.onclick = async () => {
+        const password = passwordInput.value;
+        const confirm = confirmInput.value;
+
+        if (!password || password.length < 8) {
+          errorDiv.textContent = 'Password must be at least 8 characters.';
+          return;
+        }
+        if (password !== confirm) {
+          errorDiv.textContent = 'Passwords do not match.';
+          return;
+        }
+        errorDiv.textContent = '';
+        finishButton.disabled = true;
+        finishButton.textContent = 'Encrypting...';
+
+        try {
+          // 1. Generate a salt
+          const salt = crypto.getRandomValues(new Uint8Array(16));
+
+          // 2. Derive the encryption key
+          const key = await deriveKeyFromPassword(password, salt);
+
+          // 3. Prepare the secret data for the vault
+          const secretData = {
+            secretKey: Array.from(identity.secretKey),
+            encryptionSecretKey: Array.from(identity.encryptionSecretKey),
+          };
+
+          // 4. Encrypt the data
+          const encryptedVault = await encryptVault(secretData, key);
+
+          // 5. Create the vault object to be stored
+          const vaultToStore = {
+            ...encryptedVault,
+            salt: Array.from(salt),
+            kdf: 'PBKDF2',
+            iterations: 310000,
+          };
+
+          // 6. Update the identity object for storage
+          // IMPORTANT: Remove raw secret keys and add the encrypted vault
+          state.myIdentity = new LocalIdentity({
+            ...identity,
+            secretKey: null, // Remove raw key
+            encryptionSecretKey: null, // Remove raw key
+            encryptedVault: vaultToStore, // Add vault
+          });
+
+          // 7. Save the now-secure identity object
+          localStorage.setItem("ephemeral-id", JSON.stringify(state.myIdentity.toJSON()));
+
+          // 8. Decrypt keys into memory for the current session
+          const decrypted = await decryptVault(vaultToStore, key);
+          state.myIdentity.secretKey = new Uint8Array(decrypted.secretKey);
+          state.myIdentity.encryptionSecretKey = new Uint8Array(decrypted.encryptionSecretKey);
+
+          // 9. Finish
+          step4.innerHTML = `<h3 style="color: #44ff44;">✓ Identity Secured!</h3><p>Welcome, <strong>${identity.handle}</strong>!</p>`;
+          await serviceCallbacks.broadcastProfileUpdate(state.myIdentity.profile);
+
+          setTimeout(() => {
+            document.getElementById('identity-creation-overlay').style.display = 'none';
+            notify(`Identity "${identity.handle}" successfully registered! 🎉`);
+            serviceCallbacks.initializeUserProfileSection();
+            resolve();
+          }, 2000);
+
+        } catch (err) {
+          errorDiv.textContent = `Encryption failed: ${err.message}`;
+          finishButton.disabled = false;
+          finishButton.textContent = 'Set Password & Finish';
+          reject(err);
+        }
+      };
+    }
+
+
     async function showHandleSelection() {
               console.log('[DEBUG] showHandleSelection called.'); //
 
@@ -172,193 +354,167 @@ export async function createNewIdentity() {
       handleInput.focus();
     }
     
-    async function computeVDFAndRegister(handle, resolve, reject) {
-      const step3 = document.getElementById('identity-step-3-prompt');
-      const step2 = document.getElementById('identity-step-2-pow');
-      
-      // Hide handle selection
-      step3.style.display = 'none';
-      
-      // Show VDF computation
-      step2.innerHTML = `
-        <div class="spinner"></div>
-        <div id="identity-status-text-2">
-          <strong>Computing proof of work for:</strong> ${handle}
-        </div>
-        <progress id="identity-progress-bar" value="0" max="100"></progress>
-        <div id="identity-progress-percent">0%</div>
-      `;
-      step2.style.display = 'block';
-      
-      try {
-        // Calibration (quick)
-        const calibrationIterations = 5000n;
-        const calibrationStart = performance.now();
-        await wasmVDF.computeVDFProofWithTimeout(
-            "calibration-test",
-            calibrationIterations,
-            () => {}
-        );
-        const calibrationTime = performance.now() - calibrationStart;
-        
-        const iterationsPerMs = Number(calibrationIterations) / calibrationTime;
-        const targetWorkTime = 30000;
-        const targetIterations = BigInt(Math.max(1000, Math.min(Math.floor(iterationsPerMs * targetWorkTime), 1000000)));
-        
-        // Compute VDF
-        const progressBar = document.getElementById('identity-progress-bar');
-        const progressPercent = document.getElementById('identity-progress-percent');
-        
-        const onProgress = (percentage) => {
-            if (progressBar) progressBar.value = percentage;
-            if (progressPercent) progressPercent.textContent = `${Math.round(percentage)}%`;
-        };
-        
-        const uniqueId = Math.random().toString(36).substr(2, 9);
-        const vdfInput = "ephemeral-identity-creation-" + handle + "-" + uniqueId;
-        
-        const wasmProof = await wasmVDF.computeVDFProofWithTimeout(
-            vdfInput, 
-            targetIterations, 
-            onProgress
-        );
-        
-        const proofResult = {
-            y: wasmProof.y,
-            pi: wasmProof.pi,
-            l: wasmProof.l,
-            r: wasmProof.r,
-            iterations: wasmProof.iterations
-        };
-        
-        // Generate keypair
-        const keyPair = nacl.sign.keyPair();
-        const encryptionKeyPair = nacl.box.keyPair(); // NEW: encryption keys
-        const nodeId = new Uint8Array(await crypto.subtle.digest('SHA-1', keyPair.publicKey));
-                const idKey = Array.from(nodeId).map(b => b.toString(16).padStart(2, '0')).join('');
 
-        // Create identity object with default profile
-             const identity = {
-            handle: handle,
-            publicKey: arrayBufferToBase64(keyPair.publicKey),
-            secretKey: keyPair.secretKey,
-            encryptionPublicKey: arrayBufferToBase64(encryptionKeyPair.publicKey), 
-            encryptionSecretKey: encryptionKeyPair.secretKey, 
-            vdfProof: proofResult,
+
     
-        vdfInput: vdfInput,
-            uniqueId: uniqueId,
-            nodeId: nodeId,
-            idKey: idKey, 
-            deviceCalibration: {
-                iterationsPerMs: iterationsPerMs,
-                calibrationTime: calibrationTime,
-                targetIterations: Number(targetIterations)
- 
-           },
-            profile: {
-                handle: handle,
-                bio: '',
-                profilePictureHash: null,
-                theme: {
-        
-            backgroundColor: '#000000',
-                    fontColor: '#ffffff',
-                    accentColor: '#ff1493'
-                },
-                updatedAt: Date.now()
-            
-            }
-        };
-        state.myIdentity = new LocalIdentity(identity);
 
-        // Register immediately in DHT
-        try {
-            const identityClaim = await state.identityRegistry.registerIdentity(
-                handle,
-                keyPair,
-                encryptionKeyPair.publicKey, 
-                proofResult,
-                vdfInput
-            );
-            state.myIdentity.identityClaim = identityClaim;
-            state.myIdentity.isRegistered = true;
-            state.myIdentity.registrationVerified = true;
-            state.myIdentity.signature = identityClaim.signature;
-            state.myIdentity.claimedAt = identityClaim.claimedAt;
-        } catch (e) {
-            // This will now correctly catch if a handle is already taken
-            notify(e.message);
-            // Re-show the handle selection screen so the user can pick another
-            step2.style.display = 'none';
-            showHandleSelection();
-            reject(e); // <--  Reject the main promise on registration failure
-            return; // Stop the process
-        }
-        
-        
-        // Update the DHT nodeId now that we have our real identity
-        if (state.dht && state.myIdentity.nodeId) {
-          state.dht.nodeId = state.myIdentity.nodeId;
-          state.dht.bootstrap().catch(e => console.error("DHT bootstrap failed:", e));
-          // Re-initialize HyParView with correct node ID
-          if (state.hyparview) {
-            state.hyparview.destroy();
-          }
-          state.hyparview = new HyParView(state.myIdentity.nodeId, state.dht);
-          // Don't await bootstrap here as it might block
-          state.hyparview.bootstrap().catch(e => 
-            console.error("HyParView bootstrap failed:", e)
-          );
-        }
-        
-        
-        // Save to localStorage
-        const serializableIdentity = {
-            ...state.myIdentity,
-            publicKey: arrayBufferToBase64(keyPair.publicKey),
-            secretKey: Array.from(keyPair.secretKey),
-            encryptionPublicKey: arrayBufferToBase64(encryptionKeyPair.publicKey), 
-            encryptionSecretKey: Array.from(encryptionKeyPair.secretKey), 
-            vdfProof: state.myIdentity.vdfProof,
-            deviceCalibration: state.myIdentity.deviceCalibration,
-            nodeId: Array.from(state.myIdentity.nodeId),
-            profile: state.myIdentity.profile
-        };
-        localStorage.setItem("ephemeral-id", JSON.stringify(state.myIdentity.toJSON()));
+async function computeVDFAndRegister(handle, resolve, reject) {
+  const step3 = document.getElementById('identity-step-3-prompt');
+  const step2 = document.getElementById('identity-step-2-pow');
+  
+  // Hide handle selection
+  step3.style.display = 'none';
+  
+  // Show VDF computation
+  step2.innerHTML = `
+    <div class="spinner"></div>
+    <div id="identity-status-text-2">
+      <strong>Computing proof of work for:</strong> ${handle}
+    </div>
+    <progress id="identity-progress-bar" value="0" max="100"></progress>
+    <div id="identity-progress-percent">0%</div>
+  `;
+  step2.style.display = 'block';
+  
+  try {
+    // Calibration (quick)
+    const calibrationIterations = 5000n;
+    const calibrationStart = performance.now();
+    await wasmVDF.computeVDFProofWithTimeout(
+        "calibration-test",
+        calibrationIterations,
+        () => {}
+    );
+    const calibrationTime = performance.now() - calibrationStart;
+    
+    const iterationsPerMs = Number(calibrationIterations) / calibrationTime;
+    const targetWorkTime = 30000;
+    const targetIterations = BigInt(Math.max(1000, Math.min(Math.floor(iterationsPerMs * targetWorkTime), 1000000)));
+    
+    // Compute VDF
+    const progressBar = document.getElementById('identity-progress-bar');
+    const progressPercent = document.getElementById('identity-progress-percent');
+    
+    const onProgress = (percentage) => {
+        if (progressBar) progressBar.value = percentage;
+        if (progressPercent) progressPercent.textContent = `${Math.round(percentage)}%`;
+    };
+    
+    const uniqueId = Math.random().toString(36).substr(2, 9);
+    const vdfInput = "ephemeral-identity-creation-" + handle + "-" + uniqueId;
+    
+    const wasmProof = await wasmVDF.computeVDFProofWithTimeout(
+        vdfInput, 
+        targetIterations, 
+        onProgress
+    );
+    
+    const proofResult = {
+        y: wasmProof.y,
+        pi: wasmProof.pi,
+        l: wasmProof.l,
+        r: wasmProof.r,
+        iterations: wasmProof.iterations
+    };
+    
+    // Generate keypair
+    const keyPair = nacl.sign.keyPair();
+    const encryptionKeyPair = nacl.box.keyPair();
+    const nodeId = new Uint8Array(await crypto.subtle.digest('SHA-1', keyPair.publicKey));
+    const idKey = Array.from(nodeId).map(b => b.toString(16).padStart(2, '0')).join('');
 
-        
-        // Success!
-        step2.innerHTML = `
-          <div style="text-align: center;">
-            <h3 style="color: #44ff44;">✓ Identity Registered!</h3>
-            <p>Welcome to Ember, <strong>${handle}</strong>!</p>
-          </div>
-        `;
-
-        // ADDED: Broadcast initial profile
-        console.log('[Identity] Broadcasting initial profile...');
-        await serviceCallbacks.broadcastProfileUpdate(state.myIdentity.profile);
-        console.log('[Identity] Initial profile broadcast complete');
-
-        setTimeout(() => {
-          document.getElementById('identity-creation-overlay').style.display = 'none';
-          notify(`Identity "${handle}" successfully registered! 🎉`);
-          serviceCallbacks.initializeUserProfileSection();
-          resolve();
-        }, 2000);
-        
-    } catch (error) {
-        console.error("Identity registration failed:", error);
-        step2.innerHTML = `
-          <div style="text-align: center;">
-            <h3 style="color: #ff6b4a;">Registration Failed</h3>
-            <p>${error.message}</p>
-            <button onclick="location.reload()" class="primary-button">Try Again</button>
-          </div>
-        `;
-        reject(error);
+    // Create identity object with default profile
+    const identity = {
+      handle: handle,
+      publicKey: arrayBufferToBase64(keyPair.publicKey),
+      secretKey: keyPair.secretKey,
+      encryptionPublicKey: arrayBufferToBase64(encryptionKeyPair.publicKey), 
+      encryptionSecretKey: encryptionKeyPair.secretKey, 
+      vdfProof: proofResult,
+      vdfInput: vdfInput,
+      uniqueId: uniqueId,
+      nodeId: nodeId,
+      idKey: idKey, 
+      deviceCalibration: {
+          iterationsPerMs: iterationsPerMs,
+          calibrationTime: calibrationTime,
+          targetIterations: Number(targetIterations)
+      },
+      profile: {
+          handle: handle,
+          bio: '',
+          profilePictureHash: null,
+          theme: {
+              backgroundColor: '#000000',
+              fontColor: '#ffffff',
+              accentColor: '#ff1493'
+          },
+          updatedAt: Date.now()
       }
+    };
+    
+    const createdIdentity = new LocalIdentity(identity);
+
+    try {
+      const identityClaim = await state.identityRegistry.registerIdentity(
+          handle,
+          keyPair,
+          encryptionKeyPair.publicKey,
+          proofResult,
+          vdfInput
+      );
+      createdIdentity.identityClaim = identityClaim;
+      createdIdentity.isRegistered = true;
+      createdIdentity.registrationVerified = true;
+      createdIdentity.signature = identityClaim.signature;
+      createdIdentity.claimedAt = identityClaim.claimedAt;
+      
+    } catch (e) {
+      // This will now correctly catch if a handle is already taken
+      notify(e.message);
+      // Re-show the handle selection screen so the user can pick another
+      step2.style.display = 'none';
+      showHandleSelection();
+      reject(e);
+      return;
     }
+    
+    // CRITICAL: DO NOT save to localStorage or state here!
+    // Just pass the identity to password creation
+    // The promptForPassword function will handle saving after encryption
+    
+    // Update the DHT nodeId now that we have our real identity
+    if (state.dht && createdIdentity.nodeId) {
+      state.dht.nodeId = createdIdentity.nodeId;
+      state.dht.bootstrap().catch(e => console.error("DHT bootstrap failed:", e));
+      // Re-initialize HyParView with correct node ID
+      if (state.hyparview) {
+        state.hyparview.destroy();
+      }
+      state.hyparview = new HyParView(createdIdentity.nodeId, state.dht);
+      // Don't await bootstrap here as it might block
+      state.hyparview.bootstrap().catch(e => 
+        console.error("HyParView bootstrap failed:", e)
+      );
+    }
+    
+    // REMOVED: All the localStorage saving code that was here
+    // REMOVED: The success UI that was here
+    
+    // Proceed directly to password creation
+    await promptForPassword(createdIdentity, resolve, reject);
+    
+  } catch (error) {
+    console.error("Identity registration failed:", error);
+    step2.innerHTML = `
+      <div style="text-align: center;">
+        <h3 style="color: #ff6b4a;">Registration Failed</h3>
+        <p>${error.message}</p>
+        <button onclick="location.reload()" class="primary-button">Try Again</button>
+      </div>
+    `;
+    reject(error);
+  }
+}
   });
 }

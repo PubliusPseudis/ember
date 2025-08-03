@@ -3,28 +3,28 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
   <title>🔥Ember - The Ephemeral Social Network – Where Posts Live and Die</title>
   <script type="module" src="main.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    
   <div id="identity-creation-overlay" class="loading-overlay" style="display: none;">
     <div id="identity-modal-content">
       <h2>Securing Your Identity</h2>
       <p>To protect the network, we need to perform a quick, one-time setup.</p>
       
       <div id="identity-step-0-disclaimer">
-          <div class="risk-disclaimer">
-              <h3>Welcome to a Public P2P Network</h3>
-              <p><strong>This is not a private messenger.</strong> Please acknowledge the following to continue:</p>
-              <ul>
-                  <li>Your IP address may be visible to other users.</li>
-                  <li>Messages are not end-to-end encrypted and can be read by peers who relay your posts.</li>
-                  <li>Your activity is traceable.</li>
-              </ul>
-          </div>
+        <div class="risk-disclaimer">
+            <h3>How Your Privacy is Protected</h3>
+            <p>Ember is a semi-anonymous P2P network. Please acknowledge the following:</p>
+            <ul>
+                <li>To shield your identity, your posts are sent through an <strong>automatic relay system</strong> using other reputable nodes on the network.</li>
+                <li>This hides your IP address from the post's final audience, who will only see the relay node's IP.</li>
+                <li>However, your IP address is still directly visible to the intermediate relay nodes you connect with.</li>
+            </ul>
+        </div>
           <button id="acknowledge-button" class="primary-button">I Understand, Continue</button>
       </div>
       
@@ -35,6 +35,31 @@
 
       <div id="identity-step-2-pow" style="display: none;"></div>
       <div id="identity-step-3-prompt" style="display: none;"></div>
+      
+      <div id="identity-step-4-password" style="display: none;">
+        <h3>Create a Password</h3>
+        <p>This password encrypts your identity. It cannot be recovered if you forget it.</p>
+        <div class="password-warning">
+          <strong>⚠️ Warning:</strong> Forgetting this password means your identity and all associated data will be permanently lost. Write it down and store it somewhere safe.
+        </div>
+        <input type="password" id="identity-password" placeholder="Enter a strong password">
+        <input type="password" id="identity-password-confirm" placeholder="Confirm password">
+        <div id="password-error" class="error-message"></div>
+        <button id="set-password-button" class="primary-button">Set Password & Finish</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="unlock-overlay" class="loading-overlay" style="display: none;">
+    <div id="unlock-modal-content">
+      <h2>🔥 Unlock Your Ember Identity</h2>
+      <p>Enter your password to decrypt your keys and connect to the network.</p>
+      <input type="password" id="unlock-password" placeholder="Your password">
+      <div id="unlock-error" class="error-message"></div>
+      <button id="unlock-button" class="primary-button">Unlock</button>
+      <hr class="divider">
+      <p class="small-text">Can't remember your password?</p>
+      <button id="reset-identity-button" class="secondary-button">Reset and Create New Identity</button>
     </div>
   </div>
 
@@ -46,162 +71,23 @@
     </div>
   </div>
 
-  <!-- =============================================== -->
-  <!-- == NEW: Profile Modal Overlay                == -->
-  <!-- =============================================== -->
   <div id="profile-modal-overlay" class="loading-overlay" style="display: none;">
     <div id="profile-modal">
       <button class="close-profile-button" onclick="closeProfile()">✕</button>
       <div id="profile-content">
-        <!-- Profile content will be rendered here by ui.js -->
         <div class="spinner"></div>
         <div>Loading profile...</div>
       </div>
     </div>
   </div>
 
-  <div id="app-container">
-
-    <div class="app-column" id="column-controls">
-     
-        <h1>🔥 Ember</h1>
-        <p class="tagline">Fan the flames or watch them die</p>
-        
-          <!-- User Profile Section -->
-          <div id="user-profile-section" class="user-profile-section" style="display: block;">
-            <div class="user-profile-header" onclick="window.openProfileForHandle(window.state.myIdentity.handle)">
-              <div id="user-profile-pic" class="user-profile-pic">
-                <div class="profile-picture-placeholder-small">👤</div>
-              </div>
-              <div class="user-profile-info">
-                <div id="user-profile-handle" class="user-profile-handle"></div>
-                <div class="user-profile-hint">View profile</div>
-              </div>
-            </div>
-          </div>
-              <div id="controls-footer">
-        <button id="theme-toggle-button" class="secondary-button">☀️ Light Mode</button>
-      </div>
-      
-              <div id="compose">
-          <textarea id="post-input" placeholder="Write something ephemeral…" maxlength="500"></textarea>
-          <div class="image-preview" id="image-preview" style="display:none;">
-            <img id="preview-img" />
-            <button onclick="removeImage()">✕</button>
-          </div>
-          <div class="compose-footer">
-            <input type="file" id="image-input" accept="image/*" style="display:none;" onchange="handleImageSelect(this)" />
-            <button onclick="document.getElementById('image-input').click()" class="image-button">📷</button>
-            <span class="char-count"><span id="char-current">0</span>/1120</span>
-            <button id="send-button" class="primary-button" onclick="createPostWithTopics()">🔥</button>
-          </div>
-        </div>
-      <div id="status">
-        <span><span class="status-indicator" id="status-dot"></span>Connected to <span id="peer-count">0</span> peers</span>
-        <span><span id="post-count">0</span> posts alive</span>
-      </div>
-      <div class="network-info" id="network-info" style="display:none">
-        <strong>Your Network ID:</strong> <code id="network-id"></code><br />
-        <small>Share this with friends to connect directly</small>
-      </div>
-
-        <button id="clear-data-button" class="secondary-button" onclick="clearLocalData()">
-  🗑️ Clear Local Data
-</button>
-
-        
-        <footer>
-    <p class="network-notice">
-        ⚠️ Public Network: Do not share sensitive information.
-    </p>
-</footer>
-        
-    </div>
-
-    <div class="app-column" id="column-feed">
-      <div class="column-header">
-        <h2>The Void</h2>
-      </div>
-      <div class="topics-section">
-        <h3>📡 Topics</h3>
-<div class="subscribed-topics" id="subscribed-topics">
-          </div>
-        <div class="topic-input-wrapper">
-          <input type="text" id="topic-input" placeholder="Subscribe to #topic" />
-          <button onclick="subscribeToTopic()" class="subscribe-button">+</button>
-        </div>
-        <div class="topic-stats" id="topic-stats"></div>
-      </div>
-
-      <div class="feed-controls">
-        <div class="topic-filter">
-          <label>Filter by topic:</label>
-          <select id="topic-filter" onchange="filterByTopic()">
-            <option value="">All Topics</option>
-            <option value="#general">#general</option>
-            <option value="#ember">#ember</option>
-          </select>
-        </div>
-        <div class="feed-mode">
-          <button class="mode-button active" onclick="setFeedMode('all')">All Posts</button>
-          <button class="mode-button" onclick="setFeedMode('topics')">My Topics</button>
-        </div>
-      </div>
-      
-      <div id="posts"></div>
-    </div>
-
-    <div class="app-column" id="column-bonfire">
-      <div class="column-header">
-        <h2 id="drawer-title">The Bonfire</h2>
-        <div class="drawer-tabs">
-          <button class="drawer-tab active" data-drawer="bonfire" onclick="switchDrawer('bonfire')">
-            <span class="tab-icon">🔥</span>
-            <span class="tab-label">Bonfire</span>
-          </button>
-          <button class="drawer-tab" data-drawer="inbox" onclick="switchDrawer('inbox')">
-            <span class="tab-icon">💌</span>
-            <span class="tab-label">Messages</span>
-            <span class="unread-badge" id="inbox-unread-badge" style="display: none;">0</span>
-          </button>
-          <button class="drawer-tab" data-drawer="network" onclick="switchDrawer('network')">
-            <span class="tab-icon">🌐</span>
-            <span class="tab-label">Network</span>
-          </button>
-        </div>
-      </div>
-      
-      <!-- Drawer Contents -->
-      <div class="drawer-container">
-        <!-- Bonfire Drawer -->
-        <div id="bonfire-drawer" class="drawer-content active">
-          <div id="bonfire-content"></div>
-        </div>
-        
-        <!-- Inbox Drawer -->
-        <div id="inbox-drawer" class="drawer-content">
-          <div id="dm-inbox">
-            <div class="dm-conversations" id="dm-conversations">
-              <div class="dm-empty-state">
-                No messages yet. Send a DM to start a conversation!
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Network Stats Drawer -->
-        <div id="network-drawer" class="drawer-content">
-          <div id="network-stats">
-            <div class="network-visualization">
-              <canvas id="network-canvas"></canvas>
-            </div>
-            <div class="network-details">
-              <h4>Network Health</h4>
-              <div id="network-metrics"></div>
-            </div>
-          </div>
-        </div>
-      </div>
+  <div id="privacy-modal-overlay" class="loading-overlay" style="display: none;">
+    <div id="privacy-modal">
+      <button class="close-profile-button" onclick="closePrivacyNotice()">✕</button>
+      <h3>How Your Privacy is Protected</h3>
+      <p>
+        To protect your privacy, posts are sent through an automatic relay system using other nodes on the network. This shields your IP address from the post's final audience, but it may still be visible to the intermediate relay nodes you connect with directly.
+      </p>
     </div>
   </div>
 
@@ -219,6 +105,215 @@
         onkeypress="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendDM(); }"
         oninput="autoResizeDMInput(this)"></textarea>
       <button onclick="sendDM()" class="primary-button">Send</button>
+    </div>
+  </div>
+
+  <!-- Mobile wrapper with header and bottom nav -->
+  <div id="app-wrapper">
+    <!-- Mobile header - only visible on mobile -->
+    <header class="app-header">
+      <div id="user-profile-section" class="user-profile-header" onclick="window.openProfileForHandle(window.state.myIdentity.handle)">
+        <div id="user-profile-pic" class="user-profile-pic">
+          <div class="profile-picture-placeholder-small">👤</div>
+        </div>
+      </div>
+      <h1 class="app-title">🔥 Ember</h1>
+    </header>
+
+    <!-- Main container -->
+    <main id="app-container">
+      <!-- View 1: Feed (The Void) -->
+      <div class="app-view active" id="column-feed">
+        <div class="column-header">
+          <h2>The Void</h2>
+        </div>
+        <div class="topics-section">
+          <h3>📡 Topics</h3>
+          <div class="subscribed-topics" id="subscribed-topics"></div>
+          <div class="topic-input-wrapper">
+            <input type="text" id="topic-input" placeholder="Subscribe to #topic" />
+            <button onclick="subscribeToTopic()" class="subscribe-button">+</button>
+          </div>
+          <div class="topic-stats" id="topic-stats"></div>
+        </div>
+
+        <div class="feed-controls">
+          <div class="topic-filter">
+            <label>Filter by topic:</label>
+            <select id="topic-filter" onchange="filterByTopic()">
+              <option value="">All Topics</option>
+              <option value="#general">#general</option>
+              <option value="#ember">#ember</option>
+            </select>
+          </div>
+          <div class="feed-mode">
+            <button class="mode-button active" onclick="setFeedMode('all')">All Posts</button>
+            <button class="mode-button" onclick="setFeedMode('topics')">My Topics</button>
+          </div>
+        </div>
+        
+        <div id="posts"></div>
+      </div>
+
+      <!-- View 2: Bonfire -->
+      <div class="app-view" id="column-bonfire">
+        <div class="column-header">
+          <h2 id="drawer-title">The Bonfire</h2>
+          <div class="drawer-tabs">
+            <button class="drawer-tab active" data-drawer="bonfire" onclick="switchDrawer('bonfire')">
+              <span class="tab-icon">🔥</span>
+              <span class="tab-label">Bonfire</span>
+            </button>
+            <button class="drawer-tab" data-drawer="inbox" onclick="switchDrawer('inbox')">
+              <span class="tab-icon">💌</span>
+              <span class="tab-label">Messages</span>
+              <span class="unread-badge" id="inbox-unread-badge" style="display: none;">0</span>
+            </button>
+            <button class="drawer-tab" data-drawer="network" onclick="switchDrawer('network')">
+              <span class="tab-icon">🌐</span>
+              <span class="tab-label">Network</span>
+            </button>
+          </div>
+        </div>
+        
+        <div class="drawer-container">
+          <div id="bonfire-drawer" class="drawer-content active">
+            <div id="bonfire-content"></div>
+          </div>
+          
+          <div id="inbox-drawer" class="drawer-content">
+            <div id="dm-inbox">
+              <div class="dm-conversations" id="dm-conversations">
+                <div class="dm-empty-state">
+                  No messages yet. Send a DM to start a conversation!
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div id="network-drawer" class="drawer-content">
+            <div id="network-stats">
+              <div class="network-visualization">
+                <canvas id="network-canvas"></canvas>
+              </div>
+              <div class="network-details">
+                <h4>Network Health</h4>
+                <div id="network-metrics"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    <!-- View 3: Controls (More) -->
+    <div class="app-view" id="column-controls">
+      <h1>🔥 Ember</h1>
+      <p class="tagline">Fan the flames or watch them die</p>
+      
+        <div id="user-profile-controls" class="user-profile-section" style="display: block;">
+
+        <div class="user-profile-header" onclick="window.openProfileForHandle(window.state.myIdentity.handle)">
+          <div id="user-profile-pic" class="user-profile-pic">
+            <div class="profile-picture-placeholder-small">👤</div>
+          </div>
+          <div class="user-profile-info">
+            <div id="user-profile-handle" class="user-profile-handle"></div>
+            <div class="user-profile-hint">View profile</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Topics section moved here for mobile -->
+      <div class="topics-section mobile-topics">
+        <h3>📡 Manage Topics</h3>
+        <div class="subscribed-topics" id="mobile-subscribed-topics"></div>
+        <div class="topic-input-wrapper">
+          <input type="text" id="mobile-topic-input" placeholder="Subscribe to #topic" />
+          <button onclick="subscribeToTopicMobile()" class="subscribe-button">+</button>
+        </div>
+        <div class="topic-stats" id="mobile-topic-stats"></div>
+      </div>
+
+      <div id="controls-footer">
+        <button id="theme-toggle-button" class="secondary-button">☀️ Light Mode</button>
+      </div>
+      
+      <!-- Desktop compose box (hidden on mobile) -->
+      <div id="compose" class="desktop-only">
+        <textarea id="post-input" placeholder="Write something ephemeral…" maxlength="500"></textarea>
+        <div class="image-preview" id="image-preview" style="display:none;">
+          <img id="preview-img" />
+          <button onclick="removeImage()">✕</button>
+        </div>
+        <div class="compose-footer">
+          <input type="file" id="image-input" accept="image/*" style="display:none;" onchange="handleImageSelect(this)" />
+          <button onclick="document.getElementById('image-input').click()" class="image-button">📷</button>
+          <span class="char-count"><span id="char-current">0</span>/1120</span>
+          <button id="send-button" class="primary-button" onclick="createPostWithTopics(document.getElementById('post-input').value, document.getElementById('image-preview').dataset.imageData)">🔥</button>
+
+
+        </div>
+      </div>
+
+      <div id="status">
+        <span><span class="status-indicator" id="status-dot"></span>Connected to <span id="peer-count">0</span> peers</span>
+        <span><span id="post-count">0</span> posts alive</span>
+      </div>
+
+      <div class="network-info" id="network-info" style="display:none">
+        <strong>Your Network ID:</strong> <code id="network-id"></code><br />
+        <small>Share this with friends to connect directly</small>
+      </div>
+
+      <button id="clear-data-button" class="secondary-button" onclick="clearLocalData()">
+        🗑️ Clear Local Data
+      </button>
+      
+      <footer>
+        <p class="network-notice">
+          <a href="#" onclick="openPrivacyNotice()">Privacy Notice</a> | Semi-Anonymous P2P Network
+        </p>
+      </footer>
+    </div>
+    </main>
+
+    <!-- Mobile bottom navigation -->
+    <nav class="bottom-nav">
+      <button class="nav-button active" data-view="column-feed">
+        <span class="nav-icon">🌌</span>
+        <span>The Void</span>
+      </button>
+      <button class="nav-button" data-view="column-bonfire">
+        <span class="nav-icon">🔥</span>
+        <span>Bonfire</span>
+      </button>
+      <button class="nav-button" data-view="column-controls">
+        <span class="nav-icon">⚙️</span>
+        <span>More</span>
+      </button>
+    </nav>
+          <button id="open-compose-button" class="primary-button compose-fab">🔥</button>
+
+  </div>
+
+  <!-- Mobile compose modal -->
+  <div id="compose-modal-overlay" class="loading-overlay" style="display: none;">
+    <div id="compose-modal">
+      <button class="close-compose-button" onclick="closeMobileCompose()">✕</button>
+      <div id="mobile-compose">
+        <textarea id="mobile-post-input" placeholder="Write something ephemeral…" maxlength="500"></textarea>
+        <div class="image-preview" id="mobile-image-preview" style="display:none;">
+          <img id="mobile-preview-img" />
+          <button onclick="removeMobileImage()">✕</button>
+        </div>
+        <div class="compose-footer">
+          <input type="file" id="mobile-image-input" accept="image/*" style="display:none;" onchange="handleMobileImageSelect(this)" />
+          <button onclick="document.getElementById('mobile-image-input').click()" class="image-button">📷</button>
+          <span class="char-count"><span id="mobile-char-current">0</span>/1120</span>
+          <button id="mobile-send-button" class="primary-button" onclick="createPostWithTopics(document.getElementById('mobile-post-input').value, document.getElementById('mobile-image-preview').dataset.imageData); closeMobileCompose();">🔥</button>
+
+        </div>
+      </div>
     </div>
   </div>
 </body>

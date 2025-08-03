@@ -145,17 +145,35 @@ export class Post {
           parentId: this.parentId,
           imageHash: this.imageHash,
           authorPublicKey: arrayBufferToBase64(this.authorPublicKey),
-          vdfInput: this.vdfInput,
-          vdfProof: this.vdfProof ? serializeVdfProof(this.vdfProof) : null
+ 
+           vdfInput: this.vdfInput,
+          vdfProof: this.vdfProof ?
+            serializeVdfProof(this.vdfProof) : null
         };
-
+        console.log(`secret key: ${secretKey}`);
         const messageBytes = new TextEncoder().encode(JSON.stringify(signableData));
         
-        // Ensure both arguments are proper Uint8Arrays
-        const messageArray = new Uint8Array(messageBytes);
-        const secretKeyArray = new Uint8Array(secretKey);
+        // --- FIX START: Robust key conversion and validation ---
+        let secretKeyArray;
+
+        if (secretKey instanceof Uint8Array) {
+            // Key is already in the correct format
+            secretKeyArray = secretKey;
+        } else if (Array.isArray(secretKey) || (typeof secretKey === 'object' && secretKey !== null)) {
+            // Key is a plain Array or an Object {"0": val, "1": val, ...} from JSON.parse
+            // Convert it to a Uint8Array.
+            secretKeyArray = new Uint8Array(Object.values(secretKey));
+        }
+
+        // Final validation before signing
+        if (!secretKeyArray || secretKeyArray.length !== nacl.sign.secretKeyLength) {
+            console.error(`[Post.sign] FATAL: Invalid secretKey provided for signing. Type: ${typeof secretKey}, Final Length: ${secretKeyArray?.length}.`);
+            throw new Error('bad secret key size');
+        }
+
+        this.signature = nacl.sign(messageBytes, secretKeyArray);
+        // --- FIX END ---
         
-        this.signature = nacl.sign(messageArray, secretKeyArray);
         console.log(`[Post] Post signed. Signature: ${arrayBufferToBase64(this.signature).substring(0, 16)}...`);
     }
 

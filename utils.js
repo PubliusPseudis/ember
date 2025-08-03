@@ -356,3 +356,80 @@ export const JSONParseWithBigInt = (str) => {
     });
 };
 export const isReply = (post) => post && post.parentId;
+
+
+// --- NEW: Password-Based Encryption Helpers ---
+
+/**
+ * Derives a cryptographic key from a password and salt using PBKDF2.
+ * @param {string} password - The user's password.
+ * @param {Uint8Array} salt - A random salt.
+ * @returns {Promise<CryptoKey>} A key suitable for AES-GCM encryption.
+ */
+export async function deriveKeyFromPassword(password, salt) {
+  const enc = new TextEncoder();
+  const importedKey = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: 310000, // OWASP recommended minimum for PBKDF2-SHA256
+      hash: 'SHA-256',
+    },
+    importedKey,
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Encrypts a data object containing secret keys using a derived key.
+ * @param {object} secretData - The object to encrypt (e.g., { secretKey, encryptionSecretKey }).
+ * @param {CryptoKey} key - The key derived from the user's password.
+ * @returns {Promise<{ciphertext: string, iv: string}>} The encrypted data and initialization vector, as Base64 strings.
+ */
+export async function encryptVault(secretData, key) {
+  const enc = new TextEncoder();
+  const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV is standard for AES-GCM
+  const ciphertextBuffer = await crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv: iv,
+    },
+    key,
+    enc.encode(JSON.stringify(secretData))
+  );
+
+  return {
+    ciphertext: arrayBufferToBase64(ciphertextBuffer),
+    iv: arrayBufferToBase64(iv),
+  };
+}
+
+/**
+ * Decrypts a vault using a derived key.
+ * @param {{ciphertext: string, iv: string}} encryptedVault - The encrypted data object.
+ * @param {CryptoKey} key - The key derived from the user's password.
+ * @returns {Promise<object>} The decrypted secret data object.
+ */
+export async function decryptVault(encryptedVault, key) {
+  const dec = new TextDecoder();
+  const decryptedBuffer = await crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv: base64ToArrayBuffer(encryptedVault.iv),
+    },
+    key,
+    base64ToArrayBuffer(encryptedVault.ciphertext)
+  );
+
+  return JSON.parse(dec.decode(decryptedBuffer));
+}

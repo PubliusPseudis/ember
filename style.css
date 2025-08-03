@@ -225,7 +225,18 @@ body {
   flex-direction: column;
   overflow: hidden;
 }
+.app-view {
+  display: none;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+  padding-bottom: 80px;
+}
 
+.app-view.active {
+  display: flex;
+}
 /* Column 1: Controls */
 #column-controls {
   flex: 0 0 320px; /* Fixed width for the control column */
@@ -1625,8 +1636,24 @@ body.light-mode .dm-messages::-webkit-scrollbar-thumb {
 body.light-mode .dm-messages::-webkit-scrollbar-thumb:hover {
   background: #ff8c42; /* Keep the orange on hover */
 }
+.primary-button:active, .secondary-button:active, .topic-tag:active {
+  transform: scale(0.96);
+  transition: transform 0.1s ease;
+}
+#topic-input, #mobile-topic-input, #dm-input {
+  background-color: var(--background-color-light);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text-primary);
+  font-size: 16px;
+}
 
-
+#topic-input:focus, #mobile-topic-input:focus, #dm-input:focus {
+  outline: none;
+  border-color: var(--text-accent);
+  box-shadow: 0 0 0 2px var(--shadow-color-accent);
+}
 /* Enhanced DM button animation in posts */
 .dm-button {
   position: relative;
@@ -2570,4 +2597,848 @@ body.light-mode .user-profile-header:hover .profile-picture-placeholder-small {
 /* Light mode adjustments */
 body.light-mode .author-profile-placeholder {
   background: var(--background-topic-tag);
+}
+
+/* =============================================== */
+/* == Modal Styles (for Profile & Privacy)      == */
+/* =============================================== */
+
+/* This is the main pop-up box for both modals */
+#privacy-modal {
+  background-color: var(--background-color-light);
+  padding: 25px 35px;
+  border-radius: 12px;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.4);
+  max-width: 550px;
+  width: 90%;
+  position: relative; /* Needed for the close button */
+  border: 1px solid var(--border-color);
+}
+
+/* Styles for the text inside the privacy notice */
+#privacy-modal h3 {
+  margin-top: 0;
+  color: var(--text-accent);
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+#privacy-modal p {
+  line-height: 1.6;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.dm-section {
+  margin-bottom: 20px;
+}
+
+.dm-section-title {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  padding: 0 10px;
+  font-weight: 600;
+}
+
+.dm-request-item {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background-color 0.2s;
+}
+
+.dm-request-item:hover {
+  background-color: var(--hover-bg);
+}
+
+.dm-request-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dm-request-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.approve-btn, .decline-btn {
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.2s;
+}
+
+.approve-btn {
+  background: var(--success-color, #4caf50);
+  color: white;
+}
+
+.approve-btn:hover {
+  opacity: 0.8;
+}
+
+.decline-btn {
+  background: var(--danger-color, #f44336);
+  color: white;
+}
+
+.decline-btn:hover {
+  opacity: 0.8;
+}
+
+.dm-contact-item, .dm-pending-item, .dm-blocked-item {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dm-contact-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.revoke-btn, .unblock-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: var(--danger-color, #f44336);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.revoke-btn-small {
+  background: transparent;
+  border: 1px solid var(--danger-color, #f44336);
+  color: var(--danger-color, #f44336);
+  padding: 2px 6px;
+  font-size: 12px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.message-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.dm-conversation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.dm-actions {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.dm-conversation-item:hover .dm-actions {
+  opacity: 1;
+}
+
+@keyframes pulse-border {
+  0%, 100% { 
+    border-color: var(--border-color-light);
+  }
+  50% { 
+    border-color: var(--text-accent-hot);
+    box-shadow: 0 0 10px var(--shadow-color-accent);
+  }
+}
+
+/* =============================================== */
+/* == Mobile First Layout & Structure           == */
+/* =============================================== */
+
+/* Mobile-only elements - hidden by default */
+.app-header,
+.bottom-nav,
+#open-compose-button,
+#compose-modal-overlay {
+  display: none;
+}
+
+/* App wrapper */
+#app-wrapper {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* App views (mobile) - hidden by default */
+.app-view {
+  display: none;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+  padding-bottom: 80px;
+}
+
+
+
+/* Keep desktop columns visible by default */
+.app-column {
+  display: flex;
+}
+
+/* =============================================== */
+/* == Mobile Layout (max-width: 767px)          == */
+/* =============================================== */
+@media (max-width: 767px) {
+  body {
+    overflow: hidden;
+  }
+
+  /* Show mobile elements */
+  .app-header,
+  .bottom-nav,
+  #open-compose-button {
+    display: flex;
+  }
+
+  /* Configure app wrapper for mobile */
+  #app-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    position: relative;
+  }
+
+  /* Configure main container for mobile */
+  #app-container {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    display: block !important;
+    height: calc(100vh - 60px - env(safe-area-inset-top));
+  }
+
+  /* Hide desktop columns on mobile */
+  .app-column {
+    display: none !important;
+  }
+
+  /* Show active app view on mobile */
+  .app-view {
+    display: none;
+  }
+
+  .app-view.active {
+    display: block !important;
+  }
+
+  /* Hide desktop compose on mobile */
+  #compose {
+    display: none !important;
+  }
+
+  /* Mobile header layout */
+  .app-header {
+    justify-content: space-between;
+    align-items: center;
+    background: var(--background-compose-area);
+    border-bottom: 1px solid var(--border-color-light);
+    padding: 10px 15px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(10px);
+  }
+
+  .app-header h1.app-title {
+    font-size: 1.5rem;
+    margin: 0;
+    animation: none;
+  }
+
+  .app-header .user-profile-header {
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: none;
+  }
+
+  .app-header .user-profile-pic {
+    width: 36px;
+    height: 36px;
+  }
+
+  .app-header .profile-picture-placeholder-small {
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+  }
+
+  /* Compose FAB for mobile */
+.compose-fab {
+  font-size: 24px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(45deg, var(--text-accent), #ff8c42);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  color: white;
+  border: none;
+  position: fixed; /* Make sure it's fixed */
+  bottom: 6rem;   /* Adjust to be above the new floating nav */
+  right: 1.5rem;
+  z-index: 100;
+}
+
+  /* Bottom Navigation */
+.bottom-nav {
+  position: fixed;
+  bottom: 0; /* Fixes the bar to the very bottom */
+  left: 0;
+  width: 100%;
+  
+  display: flex;
+  justify-content: space-around; /* Evenly space the buttons */
+  align-items: center;
+  
+  /* Add padding and account for the iPhone home bar "notch" */
+  padding: 0.5rem 0.5rem max(0.5rem, env(safe-area-inset-bottom));
+
+  /* Glassmorphism Effect */
+  background-color: rgba(40, 40, 40, 0.7); /* Dark, semi-transparent background */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px); /* For Safari */
+
+  /* A subtle top border to separate from content */
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.nav-button {
+  display: flex;
+  flex-direction: column; /* Stacks the icon on top of the text */
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 70px; /* Give buttons a consistent width */
+  height: 55px;
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background-color: transparent;
+  border: none;
+  transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+.nav-button .nav-icon {
+  font-size: 24px;
+}
+
+/* --- Active State Pill --- */
+.nav-button.active {
+  color: var(--text-primary);
+  background-color: rgba(255, 255, 255, 0.15); /* A subtle highlight for the active tab */
+}
+
+/* Optional: Add a subtle press effect for better feedback */
+.nav-button:active {
+  transform: scale(0.95);
+  transition: transform 0.1s ease;
+}
+
+/* Light Mode Adjustments */
+body.light-mode .bottom-nav {
+  background-color: rgba(255, 255, 255, 0.7);
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+body.light-mode .nav-button.active {
+    background-color: rgba(0, 0, 0, 0.1);
+}
+  /* Adjust post styles for mobile */
+  .post {
+    padding: 15px;
+    margin-bottom: 15px;
+  }
+
+  .post-footer {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .rating-buttons {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Topic section removed from mobile feed - now in More section */
+  #column-feed .topics-section {
+    display: none;
+  }
+
+  /* Feed controls mobile adjustments */
+  .feed-controls {
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+
+  .topic-filter {
+    width: 100%;
+  }
+
+  .topic-filter select {
+    width: 100%;
+  }
+
+  .feed-mode {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .mode-button {
+    flex: 1;
+  }
+  
+    /* Fix drawer container on mobile */
+  .drawer-container {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0; /* Important for flex children */
+  }
+
+  /* Fix drawer content positioning on mobile */
+  .drawer-content {
+    position: relative !important; /* Override absolute positioning */
+    transform: none !important;
+    opacity: 1 !important;
+    display: none;
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 10px;
+  }
+
+  .drawer-content.active {
+    display: flex !important;
+    flex-direction: column;
+  }
+
+  /* Ensure bonfire column takes full height minus header */
+  #column-bonfire {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 60px - 60px); /* Minus header and bottom nav */
+    padding-bottom: 0;
+  }
+
+  /* Fix the column header on mobile */
+  #column-bonfire .column-header {
+    flex-shrink: 0;
+  }
+
+  /* Ensure content containers are scrollable */
+  #bonfire-content,
+  #dm-conversations,
+  #network-stats {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  /* Remove animations that might interfere */
+  .drawer-content.slide-in-right,
+  .drawer-content.slide-out-left {
+    animation: none !important;
+  }
+  
+    /* Full screen compose modal for mobile */
+  #compose-modal-overlay {
+    padding: 0 !important;
+  }
+
+  #compose-modal {
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    display: flex;
+    flex-direction: column;
+    background: var(--background-compose-area);
+  }
+
+  /* Compose modal header */
+  .close-compose-button {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 10;
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    font-size: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Mobile compose content */
+  #mobile-compose {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    padding-top: 60px; /* Space for close button */
+    height: 100%;
+  }
+
+  /* Make textarea take most of the space */
+  #mobile-post-input {
+    flex: 1;
+    width: 100%;
+    font-size: 16px !important; /* Prevent zoom on iOS */
+    padding: 15px;
+    border-radius: 12px;
+    background: var(--background-input);
+    border: 1px solid var(--border-color-light);
+    color: var(--text-primary);
+    resize: none;
+    margin-bottom: 15px;
+  }
+
+  /* Image preview adjustments */
+  #mobile-image-preview {
+    max-height: 200px;
+    margin-bottom: 15px;
+  }
+
+  /* Compose footer at bottom */
+  #mobile-compose .compose-footer {
+    position: sticky;
+    bottom: 0;
+    background: var(--background-compose-area);
+    padding: 15px 0;
+    border-top: 1px solid var(--border-color-light);
+    display: flex;
+    align-items: center;
+    gap: 15px;
+  }
+
+  /* Larger buttons for mobile */
+  #mobile-compose .image-button {
+    font-size: 24px;
+    padding: 10px;
+  }
+
+  #mobile-send-button {
+    padding: 12px 24px;
+    font-size: 18px;
+  }
+
+  /* Ensure char count is visible */
+  #mobile-compose .char-count {
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+  .column-header {
+  position: sticky;
+  top: 0; /* Sticks to the top of its scrolling container */
+  background-color: var(--background-color); /* Needs a solid background */
+  z-index: 10;
+  padding-bottom: 10px; /* Add some padding to lift content below it */
+}
+  
+}
+
+/* =============================================== */
+/* == Tablet & Desktop Layout (min-width: 768px) == */
+/* =============================================== */
+@media (min-width: 768px) {
+  /* Ensure wrapper doesn't interfere with desktop layout */
+  #app-wrapper {
+    display: contents;
+  }
+
+  /* Standard three-column layout */
+  #app-container {
+    display: flex !important;
+    height: 100vh;
+  }
+
+  /* Reset app-view for desktop to work as columns */
+  .app-view {
+    display: flex !important;
+    padding: 20px;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Remove mobile active state behavior */
+  .app-view.active {
+    display: flex !important;
+  }
+
+  /* Column widths */
+  #column-controls {
+    flex: 0 0 320px;
+    border-right: 1px solid var(--border-color-dark);
+  }
+
+  #column-feed {
+    flex: 2;
+    border-right: 1px solid var(--border-color-dark);
+  }
+
+  #column-bonfire {
+    flex: 1;
+  }
+
+  /* Hide mobile navigation elements */
+  .app-header,
+  .bottom-nav,
+  #compose-modal-overlay {
+    display: none !important;
+  }
+
+  /* Show desktop compose */
+  #compose {
+    display: block !important;
+  }
+
+  /* Show topics section on desktop */
+  .topics-section {
+    display: block !important;
+  }
+  
+  /* Hide mobile-specific elements */
+  #open-compose-button {
+    display: none !important;
+  }
+  
+  /* Ensure column headers are visible */
+  .column-header {
+    display: flex !important;
+  }
+  
+}
+
+/* =============================================== */
+/* == Additional Mobile Enhancements            == */
+/* =============================================== */
+
+/* Pull to refresh indicator */
+.pull-to-refresh {
+  position: absolute;
+  top: -50px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s;
+}
+
+.pull-to-refresh.active {
+  top: 20px;
+}
+
+.pull-to-refresh .spinner {
+  width: 30px;
+  height: 30px;
+}
+
+/* Loading skeleton for mobile */
+@media (max-width: 767px) {
+  .post-skeleton {
+    background: linear-gradient(90deg, 
+      var(--background-bonfire-item) 25%, 
+      var(--border-color-light) 50%, 
+      var(--background-bonfire-item) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s infinite;
+    height: 100px;
+    border-radius: 12px;
+    margin-bottom: 15px;
+  }
+
+  @keyframes skeleton-loading {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+}
+
+/* Swipe indicator */
+.swipe-indicator {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--background-button-primary);
+  color: var(--text-button-primary);
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+
+.swipe-indicator.show {
+  opacity: 1;
+}
+
+/* Ensure safe areas are respected */
+@supports (padding: max(0px)) {
+  .app-header {
+    padding-top: max(10px, env(safe-area-inset-top));
+  }
+
+  .bottom-nav {
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+  }
+
+  #compose-modal {
+    padding-bottom: max(20px, calc(20px + env(safe-area-inset-bottom)));
+  }
+}
+
+/* Prevent text selection on navigation */
+.nav-button,
+.app-header {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Optimize touch targets */
+@media (max-width: 767px) {
+  button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .carry-button,
+  .reply-button,
+  .dm-button,
+  .rate-up,
+  .rate-down {
+    padding: 8px 12px;
+  }
+
+  .post-topic-tag {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+}
+
+/* Fix drawer content scrolling on mobile */
+@media (max-width: 767px) {
+  .drawer-content {
+    height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #bonfire-content,
+  #dm-conversations,
+  #network-metrics {
+    height: auto;
+    max-height: none;
+  }
+}
+/* Mobile topics styling */
+@media (max-width: 767px) {
+  .mobile-topics {
+    margin: 20px 0;
+    padding: 15px;
+    background: var(--background-topic-section);
+    border-radius: 12px;
+    border: 1px solid var(--border-color-topic-section);
+  }
+
+  .mobile-topics h3 {
+    margin-bottom: 15px;
+    font-size: 18px;
+    color: var(--text-accent);
+  }
+
+  .mobile-topics .subscribed-topics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 15px;
+  }
+
+  .mobile-topics .topic-input-wrapper {
+    display: flex;
+    gap: 10px;
+  }
+
+  .mobile-topics input {
+    flex: 1;
+    padding: 10px;
+    font-size: 16px;
+  }
+
+  .mobile-topics .subscribe-button {
+    width: auto;
+    padding: 10px 20px;
+    font-size: 18px;
+  }
+}
+
+/* Compose modal overlay base styles */
+#compose-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 20px;
+}
+
+#compose-modal {
+  background: var(--background-compose-area);
+  border-radius: 12px;
+  max-width: 600px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  position: relative;
+}
+
+/* Hide desktop topics section on all screens */
+@media (min-width: 768px) {
+  .mobile-topics {
+    display: none !important;
+  }
 }
