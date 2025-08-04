@@ -4494,14 +4494,14 @@ div#posts {
   /* FIX: DM Panel on mobile - make it fullscreen and properly positioned */
   #dm-panel {
     position: fixed;
-    top: 44px !important; /* Start below header */
+    top: 55px !important; /* Start below header */
     left: 0 !important;
     right: 0 !important;
     bottom: 0 !important;
     width: 100% !important;
-    height: calc(100vh - 44px) !important; /* Full height minus header */
+    height: calc(100vh - 55px - 55px) !important; /* Full height minus header minus footer*/
     max-width: 100% !important;
-    max-height: calc(100vh - 44px) !important;
+    max-height: calc(100vh - 55px) !important;
     border-radius: 0 !important;
     resize: none !important;
   }
@@ -4523,7 +4523,7 @@ div#posts {
   .dm-messages {
     flex: 1 1 auto;
     overflow-y: auto;
-    max-height: calc(100vh - 44px - 60px - 60px) !important; /* viewport - header - dm header - compose area */
+    max-height: calc(100vh - 55px - 60px - 60px) !important; /* viewport - header - dm header - compose area */
   }
 
   /* DM compose stays at bottom */
@@ -4540,6 +4540,35 @@ div#posts {
   #dm-panel.minimized {
     height: 60px !important;
     top: auto !important;
-    bottom: 48px !important; /* Above bottom nav */
+    bottom: 55px !important; /* Above bottom nav */
+  }
+  /* FIX: Give more space for Bonfire title */
+  #column-bonfire {
+    padding-top: 70px !important; /* Increased from 60px */
+  }
+  
+  /* Specifically target the drawer title */
+  #drawer-title {
+    margin-top: 10px; /* Push it down a bit more */
+  }
+
+  /* FIX: Ensure posts container has enough bottom padding for images */
+  #posts {
+    padding-bottom: 120px !important; /* Increased from 100px to account for FAB and nav */
+  }
+  
+  /* Make sure images in posts don't get cut off */
+  .post {
+    margin-bottom: 15px; /* Ensure spacing between posts */
+  }
+  
+  .post-image {
+    max-height: 300px; /* Limit image height on small screens */
+    object-fit: contain;
+  }
+
+  /* Adjust FAB position to not overlap content as much */
+  .compose-fab {
+    bottom: 4.5rem; /* Slightly higher */
   }
 }
