@@ -112,47 +112,53 @@
   <!-- Mobile wrapper with header and bottom nav -->
   <div id="app-wrapper">
     <!-- Mobile header - only visible on mobile -->
-    <header class="app-header">
+<header class="app-header">
       <div id="user-profile-section" class="user-profile-header" onclick="window.openProfileForHandle(window.state.myIdentity.handle)">
         <div id="user-profile-pic" class="user-profile-pic">
           <div class="profile-picture-placeholder-small">👤</div>
         </div>
       </div>
+   
       <h1 class="app-title">🔥 Ember</h1>
-    </header>
+      <button id="toggle-filters-button" class="header-icon-button" onclick="toggleMobileFilters()">📶</button>
+      </header>
 
     <!-- Main container -->
     <main id="app-container">
       <!-- View 1: Feed (The Void) -->
-      <div class="app-view active" id="column-feed">
-        <div class="column-header">
-          <h2>The Void</h2>
-        </div>
-        <div class="topics-section">
-          <h3>📡 Topics</h3>
-          <div class="subscribed-topics" id="subscribed-topics"></div>
-          <div class="topic-input-wrapper">
-            <input type="text" id="topic-input" placeholder="Subscribe to #topic" />
-            <button onclick="subscribeToTopic()" class="subscribe-button">+</button>
+<div class="app-view active" id="column-feed">
+        <div id="collapsible-feed-header">
+          <div class="column-header">
+            <h2>The Void</h2>
           </div>
-          <div class="topic-stats" id="topic-stats"></div>
-        </div>
+          <div class="topics-section">
+            <h3>📡 Topics</h3>
+            
+            <div class="subscribed-topics" id="subscribed-topics"></div>
+            <div class="topic-input-wrapper">
+              <input type="text" id="topic-input" placeholder="Subscribe to #topic" />
+              <button onclick="subscribeToTopic()" class="subscribe-button">+</button>
+            </div>
+            <div class="topic-stats" id="topic-stats"></div>
+          </div>
 
-        <div class="feed-controls">
-          <div class="topic-filter">
-            <label>Filter by topic:</label>
-            <select id="topic-filter" onchange="filterByTopic()">
-              <option value="">All Topics</option>
-              <option value="#general">#general</option>
-              <option value="#ember">#ember</option>
-            </select>
-          </div>
-          <div class="feed-mode">
-            <button class="mode-button active" onclick="setFeedMode('all')">All Posts</button>
-            <button class="mode-button" onclick="setFeedMode('topics')">My Topics</button>
+          <div class="feed-controls">
+            <div class="topic-filter">
+      
+              <label>Filter by topic:</label>
+              <select id="topic-filter" onchange="filterByTopic()">
+                <option value="">All Topics</option>
+                <option value="#general">#general</option>
+                <option value="#ember">#ember</option>
+              </select>
+            </div>
+          
+            <div class="feed-mode">
+              <button class="mode-button active" onclick="setFeedMode('all')">All Posts</button>
+              <button class="mode-button" onclick="setFeedMode('topics')">My Topics</button>
+            </div>
           </div>
         </div>
-        
         <div id="posts"></div>
       </div>
 

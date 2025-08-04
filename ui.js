@@ -2030,6 +2030,14 @@ window.showDMRequest = function(handle) {
   }, 300);
 };
 
+
+window.toggleMobileFilters = function() {
+  const filters = document.getElementById('collapsible-feed-header');
+  if (filters) {
+    filters.classList.toggle('visible');
+  }
+};
+
 // ===============================================
 // == Mobile Navigation Functions
 // ===============================================

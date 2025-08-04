@@ -3443,3 +3443,79 @@ body.light-mode .nav-button.active {
     display: none !important;
   }
 }
+
+/* Style for the new filter toggle button in the header */
+.header-icon-button {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--text-color);
+  padding: 0 10px;
+  margin-left: auto; /* Pushes it to the right */
+}
+
+/* --- Mobile-Only Styles for Collapsible Filters --- */
+@media (max-width: 767px) {
+  #collapsible-feed-header {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+    border-bottom: 1px solid transparent; /* Prepare for transition */
+    padding-top: 10px; /* Adds space from header when open */
+  }
+
+  #collapsible-feed-header.visible {
+    max-height: 500px; /* Adjust if your content is taller */
+    transition: max-height 0.4s ease-in;
+    border-bottom-color: var(--border-color-light); /* Show border only when open */
+  }
+  
+
+main#app-container {
+  padding-bottom: 0;
+}
+
+
+div#posts {
+  /* Adjust this value to match the height of your bottom nav bar + a little extra space */
+  padding-bottom: 80px; 
+}
+  @media (max-width: 767px) {
+  .app-view {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  #posts,
+  #bonfire-content {
+    max-height: none !important;
+  }
+}
+
+#collapsible-feed-header {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+    border-bottom: 1px solid transparent;
+    flex: 0 0 auto; /* Prevent shrinking */
+  }
+
+  #collapsible-feed-header.visible {
+    max-height: 100vh; /* Increased to handle larger content */
+    border-bottom-color: var(--border-color-light);
+  }
+
+  .app-view {
+    overflow: hidden !important; /* Prevent double scrolling */
+    padding: 0 !important;
+  }
+
+  #posts {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    max-height: none !important;
+    padding: 0 20px 80px 20px !important; /* Add horizontal padding, bottom for nav */
+  }
+
+}
