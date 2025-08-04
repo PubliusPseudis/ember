@@ -2301,7 +2301,7 @@ function setupPullToRefresh() {
       e.preventDefault();
       
       // Show pull to refresh indicator
-      if (pullDistance > 100) {
+      if (pullDistance > 200) {
         showPullToRefreshIndicator();
       }
     }
@@ -2311,7 +2311,7 @@ function setupPullToRefresh() {
     if (!isPulling) return;
 
     const pullDistance = e.changedTouches[0].clientY - pullStartY;
-    if (pullDistance > 100) {
+    if (pullDistance > 200) {
       // Trigger refresh
       location.reload();
     }
