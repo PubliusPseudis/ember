@@ -1484,13 +1484,14 @@ body.light-mode h1 {
 /* Mobile responsiveness */
 @media (max-width: 600px) {
   #dm-panel {
+  top: 55px; /* Added to leave space for the main app header */
     right: 0;
     bottom: 0;
     left: 0;
     width: 100%;
     max-width: 100%;
-    height: 100vh;
-    max-height: 100vh;
+    height: calc(100vh - 55px); /* Adjusted to fill remaining height */
+    max-height: calc(100vh - 55px); /* Adjusted to fill remaining height */
     border-radius: 0;
     resize: none;
   }
