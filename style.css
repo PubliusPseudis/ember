@@ -4409,4 +4409,72 @@ div#posts {
   .reply-image-preview {
     max-width: 150px;
   }
+  /* Calculate header height and adjust content */
+  .app-view {
+    padding-top: 44px !important; /* Height of mobile header */
+    height: calc(100vh - 44px - 48px); /* header height - bottom nav height */
+  }
+
+  /* Feed specific - remove extra padding, content should start right under header */
+  #column-feed {
+    padding-top: 44px !important;
+  }
+
+  /* The collapsible feed header should start immediately under the app header */
+  #collapsible-feed-header {
+    padding-top: 0px !important;
+    margin-top: 0px !important;
+  }
+
+  /* Posts container adjustment */
+  #posts {
+    padding-top: 0px !important; /* No extra top padding needed */
+  }
+
+  /* FIX: Bonfire drawer tabs positioning */
+  #column-bonfire {
+    padding-top: 44px !important;
+  }
+
+  /* Move the column header down to avoid overlap with app header */
+  #column-bonfire .column-header {
+    margin-top: 0;
+    padding-top: 10px; /* Small padding from app header */
+  }
+
+  /* FIX: More/Controls panel */
+  #column-controls {
+    padding-top: 44px !important;
+  }
+
+  /* The h1 ember logo needs to be below the header */
+  #column-controls > h1:first-child {
+    margin-top: 10px !important; /* Push it down from header */
+    margin-bottom: 10px !important;
+  }
+
+  /* Ensure all app views handle the header correctly */
+  .app-view > *:first-child {
+    margin-top: 0; /* Reset any default margins */
+  }
+
+  /* Make sure the mobile header stays on top */
+  .app-header {
+    position: fixed !important; /* Changed from sticky to fixed */
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000; /* Higher z-index to stay above content */
+    height: 44px; /* Explicit height */
+  }
+
+  /* Adjust the app wrapper to account for fixed header */
+  #app-wrapper {
+    padding-top: 44px; /* Push entire content down */
+  }
+
+  /* Fix the main container */
+  #app-container {
+    height: calc(100vh - 44px); /* Full height minus header */
+  }
 }
