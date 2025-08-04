@@ -3518,7 +3518,12 @@ div#posts {
     max-height: none !important;
     padding: 0 20px 80px 20px !important; /* Add horizontal padding, bottom for nav */
   }
-
+#column-controls {
+  overflow-y: auto !important; /* Allow this specific view to scroll vertically */
+  -webkit-overflow-scrolling: touch; /* Adds smooth, momentum-based scrolling on iOS */
+  padding-top: 60px !important; /* Prevents content from hiding under the fixed header */
+  padding-bottom: 80px !important; /* Prevents content from hiding under the bottom nav bar */
+}
 }
 
 
