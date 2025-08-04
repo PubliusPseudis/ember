@@ -3527,7 +3527,8 @@ div#posts {
 /* == Only applies to screens 380px and smaller == */
 /* =============================================== */
 
-@media (max-width: 380px) {
+@media (max-width: 415px) {
+
   /* Base font size adjustment for very small screens */
   body {
     font-size: 14px;
