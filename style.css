@@ -4477,4 +4477,69 @@ div#posts {
   #app-container {
     height: calc(100vh - 44px); /* Full height minus header */
   }
+  /* FIX: Add more space under header for feed and bonfire */
+  #column-feed {
+    padding-top: 60px !important; /* Increased from 44px */
+  }
+
+  #column-bonfire {
+    padding-top: 60px !important; /* Increased from 44px */
+  }
+
+  /* Adjust the column header in bonfire to account for extra padding */
+  #column-bonfire .column-header {
+    padding-top: 0px; /* Reset since parent has more padding now */
+  }
+
+  /* FIX: DM Panel on mobile - make it fullscreen and properly positioned */
+  #dm-panel {
+    position: fixed;
+    top: 44px !important; /* Start below header */
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: calc(100vh - 44px) !important; /* Full height minus header */
+    max-width: 100% !important;
+    max-height: calc(100vh - 44px) !important;
+    border-radius: 0 !important;
+    resize: none !important;
+  }
+
+  /* Ensure DM panel flex layout works with new constraints */
+  #dm-panel {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* DM header stays at top */
+  .dm-header {
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* DM messages take available space */
+  .dm-messages {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    max-height: calc(100vh - 44px - 60px - 60px) !important; /* viewport - header - dm header - compose area */
+  }
+
+  /* DM compose stays at bottom */
+  .dm-compose {
+    flex-shrink: 0;
+    position: sticky;
+    bottom: 0;
+    background: var(--background-compose-area);
+    border-top: 1px solid rgba(255, 140, 66, 0.3);
+    z-index: 1;
+  }
+
+  /* Ensure minimized state works on mobile */
+  #dm-panel.minimized {
+    height: 60px !important;
+    top: auto !important;
+    bottom: 48px !important; /* Above bottom nav */
+  }
 }
