@@ -125,6 +125,10 @@
 
     <!-- Main container -->
     <main id="app-container">
+        
+
+        
+        
       <!-- View 1: Feed (The Void) -->
 <div class="app-view active" id="column-feed">
         <div id="collapsible-feed-header">
@@ -156,6 +160,7 @@
             <div class="feed-mode">
               <button class="mode-button active" onclick="setFeedMode('all')">All Posts</button>
               <button class="mode-button" onclick="setFeedMode('topics')">My Topics</button>
+              <button class="mode-button" onclick="setFeedMode('forYou')">✨ For You</button>
             </div>
           </div>
         </div>
@@ -237,6 +242,13 @@
         <div class="topic-input-wrapper">
           <input type="text" id="mobile-topic-input" placeholder="Subscribe to #topic" />
           <button onclick="subscribeToTopicMobile()" class="subscribe-button">+</button>
+        </div>
+        
+        <div class="topic-suggestions-container">
+          <h4>Suggested for You</h4>
+          <div id="topic-suggestions-list">
+            <div class="empty-state">Finding suggestions...</div>
+          </div>
         </div>
         <div class="topic-stats" id="mobile-topic-stats"></div>
       </div>

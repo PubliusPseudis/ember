@@ -849,7 +849,9 @@ async function ratePost(postId, vote) {
             scoreEl.classList.add('updating');
             setTimeout(() => scoreEl.classList.remove('updating'), 300);
         }
-        
+        if (vote === 'up') {
+          getServices().activityProfile.updateAuthorAffinity(post.author, 'upvote');
+        }
         // Update UI
         refreshPost(post);
         
@@ -924,7 +926,8 @@ async function createReply(parentId) {
             btn.disabled = false;
             return;
         }
-        
+          getServices().activityProfile.updateAuthorAffinity(parentPost.author, 'reply');
+
         // --- Reply Creation (Local) ---
         // Create the reply Post object with the parentId, process image, and sign it.
         const reply = new Post(txt, parentId, imageData);
@@ -1689,7 +1692,10 @@ async function broadcastProfileUpdate(profileData = null) {
   
   const profile = profileData || state.myIdentity.profile;
   if (!profile) return;
-  
+
+  // Add the user's public subscriptions to their profile before broadcasting.
+  profile.subscriptions = Array.from(state.subscribedTopics);
+
   const topic = '@' + state.myIdentity.handle;
   console.log(`[Profile] Broadcasting profile update to topic: ${topic}`);
   
@@ -1953,40 +1959,56 @@ function startMaintenanceLoop() {
     }
     
     
-        if (tick % 180 === 0) { // Every 3 minutes
-      const hotTopics = new Map();
-      let topicsProcessed = 0;
-      
-      // Iterate through Scribe's known topics to find active ones
-      if (state.scribe) {
-        state.scribe.subscribedTopics.forEach((info, topic) => {
-            const children = info.children ? info.children.size : 0;
-            const score = 1 + children; // Simple score: 1 + number of children
-            if (score > 1) {
-                hotTopics.set(topic, { score });
+if (tick % 180 === 0) { // Every 3 minutes
+      // This async block now contributes to a GLOBAL topic index.
+      (async () => {
+        if (!state.scribe || !state.dht) return;
+
+        const GLOBAL_INDEX_KEY = 'global-topic-index:v1';
+        const MAX_TOPICS_IN_INDEX = 200;
+
+        try {
+          // Step 1: Fetch the current global index from the DHT.
+          const existingIndexData = await state.dht.get(GLOBAL_INDEX_KEY);
+          const globalTopics = new Map(existingIndexData || []);
+
+          // Step 2: Get this node's locally observed active topics.
+          const localActiveTopics = new Map();
+          for (const topic of state.scribe.subscribedTopics.keys()) {
+            const activityData = await state.dht.get(`topic-activity:${topic}`);
+            if (activityData) {
+              const now = Date.now();
+              const ageHours = (now - activityData.lastSeen) / 3600000;
+              const decayFactor = Math.pow(0.5, ageHours);
+              const decayedScore = activityData.score * decayFactor;
+              if (decayedScore > 0.1) {
+                localActiveTopics.set(topic, { score: decayedScore });
+              }
             }
-            topicsProcessed++;
-        });
-      }
-      
-      console.log(`[Maintenance] Processed ${topicsProcessed} topics for hotness score.`);
+          }
 
-      if (hotTopics.size > 0) {
-        const sortedTopics = Array.from(hotTopics.entries())
+          // Step 3: Merge local knowledge into the global index.
+          localActiveTopics.forEach((info, topic) => {
+            const existingScore = globalTopics.has(topic) ? globalTopics.get(topic).score : 0;
+            // Update with the higher score to keep the index fresh.
+            if (info.score > existingScore) {
+              globalTopics.set(topic, info);
+            }
+          });
+          
+          // Step 4: Sort and prune the merged list.
+          const sortedTopics = Array.from(globalTopics.entries())
             .sort((a, b) => b[1].score - a[1].score)
-            .slice(0, 50); // Store top 50 topics
-        
-        const dataToStore = {
-            topics: sortedTopics,
-            updatedAt: Date.now()
-        };
+            .slice(0, MAX_TOPICS_IN_INDEX);
 
-        if (state.dht) {
-            state.dht.store('hot-topics:v1', dataToStore)
-                .then(() => console.log(`[Maintenance] Published ${sortedTopics.length} hot topics to the DHT.`))
-                .catch(e => console.error('[Maintenance] Failed to publish hot topics:', e));
+          // Step 5: Store the updated index back to the DHT for others to see.
+          await state.dht.store(GLOBAL_INDEX_KEY, sortedTopics);
+          console.log(`[Maintenance] 🌐 Updated and published global index with ${sortedTopics.length} topics.`);
+
+        } catch (e) {
+          console.error('[Maintenance] Failed to update global topic index:', e);
         }
-      }
+      })();
     }
     
     
@@ -2317,6 +2339,10 @@ console.log("[Identity] Identity ready, processing queued messages...");
     } catch(e) { 
       console.error("[Init] Failed to start Relay Coordinator:", e); 
     }
+
+  // Start the activity profile service to begin finding similar users.
+  getServices().activityProfile.start();
+
 
     if (!localStorage.getItem("ephemeral-tips")) {
       setTimeout(() => notify("💡 Tip: Posts live only while carried by peers"), 1000);

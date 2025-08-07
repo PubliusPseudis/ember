@@ -13,6 +13,7 @@ import { MixingNode } from './p2p/mixing-node.js';
 import { RelayCoordinator } from './p2p/relay-coordinator.js';
 import { StateManager } from './storage.js';
 import { setServices } from './services/instances.js';
+import { activityProfile } from './services/activity-profile.js';
 
 // --- SERVICE INSTANCES ---
 export function initializeServices(dependencies = {}) {
@@ -36,7 +37,8 @@ export function initializeServices(dependencies = {}) {
     trafficMixer: new TrafficMixer(),
     privacyPublisher: new PrivacyPublisher(),
     mixingNode: new MixingNode(),
-    relayCoordinator: new RelayCoordinator() 
+    relayCoordinator: new RelayCoordinator(),
+    activityProfile: activityProfile
   };
   
   // First, make all services globally available.

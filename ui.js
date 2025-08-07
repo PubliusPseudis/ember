@@ -4,7 +4,7 @@
 // interacting with the DOM, rendering content, and handling UI events.
 
 // --- IMPORTS ---
-import { getImageStore } from './services/instances.js';
+import { getImageStore, getServices } from './services/instances.js'; 
 import { state } from './state.js';
 import { sanitize, sanitizeDM } from './utils.js';
 import { CONFIG } from './config.js';
@@ -534,28 +534,29 @@ function updateBonfire() {
  async function updateHotTopics() {
     const bonfireContentEl = document.getElementById('bonfire-content');
     if (!bonfireContentEl) return;
-
     bonfireContentEl.innerHTML = '<div class="empty-state">Looking for hot topics on the network...</div>';
-
     if (!state.dht) {
         bonfireContentEl.innerHTML = '<div class="empty-state">Connect to the network to find topics.</div>';
         return;
     }
 
     try {
-        const data = await state.dht.get('hot-topics:v1');
-        if (!data || !data.topics || data.topics.length === 0) {
+        // --- CHANGE THIS LINE ---
+        const data = await state.dht.get('global-topic-index:v1'); 
+        // --- END CHANGE ---
+
+        if (!data || data.length === 0) { // It's an array now
             bonfireContentEl.innerHTML = '<div class="empty-state">No hot topics found yet. Check back soon!</div>';
             return;
         }
 
-        const topicsHtml = data.topics.map(([topic, info]) => `
+        // The data is already an array of [topic, info] pairs.
+        const topicsHtml = data.map(([topic, info]) => `
             <div class="bonfire-item" onclick="renderHotPostsForTopic('${topic}')">
                 <span class="bonfire-heat">${Math.round(info.score)} 📈</span>
                 <span class="bonfire-preview">${topic}</span>
             </div>
         `).join('');
-
         bonfireContentEl.innerHTML = `<div class="bonfire-posts">${topicsHtml}</div>`;
         document.getElementById('drawer-title').textContent = 'Hot Topics';
 
@@ -563,6 +564,73 @@ function updateBonfire() {
         console.error("Failed to fetch hot topics:", e);
         bonfireContentEl.innerHTML = '<div class="empty-state">Error fetching topics from the network.</div>';
     }
+}
+
+async function generateTopicSuggestions() {
+  if (!state.myIdentity || !state.dht) return;
+
+  const myTopics = state.subscribedTopics;
+  if (myTopics.size === 0) return;
+
+  const suggestions = new Map(); // topic -> { score, from: Set<handle> }
+  const peers = Array.from(state.peers.values());
+  const profilesToFetch = peers.slice(0, 20); // Check up to 20 random peers
+
+  const fetchPromises = profilesToFetch.map(peer => {
+    if (peer.handle) {
+      return state.dht.get(`profile:${peer.handle}`);
+    }
+    return null;
+  }).filter(p => p);
+
+  const profiles = await Promise.all(fetchPromises);
+
+  profiles.forEach(profileData => {
+    const profile = profileData ? (profileData.value || profileData) : null;
+    if (profile && profile.handle && profile.subscriptions) {
+      const userTopics = new Set(profile.subscriptions);
+      
+      // Find intersection (shared topics)
+      const intersection = new Set([...myTopics].filter(t => userTopics.has(t)));
+      
+      // If we share at least one topic, they are a similar user
+      if (intersection.size > 0) {
+        // Find topics they have that we don't
+        userTopics.forEach(topic => {
+          if (!myTopics.has(topic)) {
+            const suggestion = suggestions.get(topic) || { score: 0, from: new Set() };
+            suggestion.score += 1; // Simple score: +1 for each user who has it
+            suggestion.from.add(profile.handle);
+            suggestions.set(topic, suggestion);
+          }
+        });
+      }
+    }
+  });
+
+  const sortedSuggestions = Array.from(suggestions.entries())
+    .sort((a, b) => b[1].score - a[1].score)
+    .slice(0, 5); // Get top 5 suggestions
+
+  displayTopicSuggestions(sortedSuggestions);
+}
+
+function displayTopicSuggestions(suggestions) {
+  const container = document.getElementById('topic-suggestions-list');
+  if (!container) return;
+
+  if (suggestions.length === 0) {
+    container.innerHTML = '<div class="empty-state">No new suggestions right now.</div>';
+    return;
+  }
+
+  container.innerHTML = suggestions.map(([topic, info]) => `
+    <div class="topic-suggestion-item">
+      <span class="topic-tag">${topic}</span>
+      <span class="suggestion-reason">Popular with ${info.score} similar users</span>
+      <button class="subscribe-button" onclick="discoverAndFilterTopic('${topic}')">+</button>
+    </div>
+  `).join('');
 }
 
 function renderHotPostsForTopic(topic) {
@@ -1056,7 +1124,14 @@ function setFeedMode(mode) {
         btn.classList.remove('active');
     });
     event.target.classList.add('active');
-    applyTopicFilter();
+
+    // --- ADD THIS LOGIC ---
+    if (mode === 'forYou') {
+        renderForYouFeed();
+    } else {
+        applyTopicFilter(); // Fall back to the original filter for 'all' and 'topics'
+    }
+    // --- END CHANGE ---
 }
 
 function applyTopicFilter() {
@@ -1703,7 +1778,84 @@ export function updateDMInbox() {
     conversationsEl.innerHTML = html;
   }
 }
+/**
+ * Calculates a relevance score for a post based on the user's activity profile.
+ * @param {Post} post The post to score.
+ * @returns {number} The calculated relevance score.
+ */
+function calculateRelevanceScore(post) {
+    if (!state.myIdentity) return 0;
+    
+    const { activityProfile } = getServices();
+    if (!activityProfile) return 0;
 
+    let score = 0;
+    const WEIGHTS = {
+        SUBSCRIBED_TOPIC: 10,
+        SIMILAR_USER_UPVOTE: 5,
+        AUTHOR_AFFINITY: 8,
+        POST_HEAT: 0.5,
+    };
+
+    // 1. Topic Subscription
+    const postTopics = state.scribe ? state.scribe.extractTopics(post.content) : [];
+    if (postTopics.some(t => state.subscribedTopics.has(t))) {
+        score += WEIGHTS.SUBSCRIBED_TOPIC;
+    }
+
+    // 2. Author Affinity
+    const affinity = activityProfile.authorAffinities.get(post.author) || 0;
+    if (affinity > 0) {
+        score += WEIGHTS.AUTHOR_AFFINITY * Math.log1p(affinity); // Use log to prevent huge scores
+    }
+
+    // 3. Collaborative Filtering (Similar User Upvotes)
+    let similarUserUpvotes = 0;
+    for (const [voterHandle, rating] of post.ratings.entries()) {
+        if (rating.vote === 'up' && activityProfile.similarUsers.has(voterHandle)) {
+            similarUserUpvotes++;
+        }
+    }
+    score += WEIGHTS.SIMILAR_USER_UPVOTE * similarUserUpvotes;
+
+    // 4. Post Heat (General Popularity)
+    const heat = post.carriers.size + post.replies.size;
+    score += WEIGHTS.POST_HEAT * heat;
+
+    // 5. Time Decay (more recent is better)
+    const ageHours = (Date.now() - post.timestamp) / 3600000;
+    const decayFactor = Math.exp(-0.05 * ageHours); // Gentle exponential decay
+    score *= decayFactor;
+
+    return score;
+}
+
+/**
+ * Renders the "For You" feed by scoring and sorting all known posts.
+ */
+function renderForYouFeed() {
+    const postsContainer = document.getElementById('posts');
+    postsContainer.innerHTML = '<div class="empty-state">✨ Curating your feed...</div>';
+
+    const scoredPosts = Array.from(state.posts.values())
+        .map(post => ({
+            post: post,
+            score: calculateRelevanceScore(post)
+        }))
+        .filter(item => item.score > 0) // Only show posts with some relevance
+        .sort((a, b) => b.score - a.score); // Sort from highest to lowest score
+
+    // Clear the container and render the sorted posts
+    postsContainer.innerHTML = '';
+    if (scoredPosts.length === 0) {
+        postsContainer.innerHTML = '<div class="empty-state">Not enough activity to curate your feed yet. Interact with some posts!</div>';
+        return;
+    }
+
+    scoredPosts.forEach(item => {
+        renderPost(item.post, postsContainer);
+    });
+}
 function getTimeAgo(timestamp) {
   const seconds = Math.floor((Date.now() - timestamp) / 1000);
   if (seconds < 60) return 'just now';
@@ -2108,6 +2260,7 @@ navButtons.forEach(button => {
             }
         } else if (viewId === 'column-controls') {
             syncTopics();
+            generateTopicSuggestions(); // Kick off the suggestion process
         }
     });
 });
