@@ -4,6 +4,7 @@ import { state } from '../state.js';
 class ActivityProfile {
     constructor() {
         this.authorAffinities = new Map(); // handle -> score
+        this.positiveInteractions = new Set(); // Set of post IDs
         this.similarUsers = new Set(); // Set of handles
         this.updateInterval = null;
     }
@@ -20,17 +21,29 @@ class ActivityProfile {
         if (this.updateInterval) clearInterval(this.updateInterval);
     }
 
+
+    /**
+     * Returns the set of post IDs the user has positively engaged with.
+     * @returns {Set<string>}
+     */
+    getPositiveInteractionPostIds() {
+        return this.positiveInteractions;
+    }
+
+
     /**
      * Updates affinity for an author based on user actions.
-     * @param {string} authorHandle The handle of the post's author.
+     *  @param {Post} post The post object of the interaction.
      * @param {'upvote' | 'reply'} action The action taken by the user.
      */
-    updateAuthorAffinity(authorHandle, action) {
-        if (authorHandle === state.myIdentity.handle) return; // Don't track affinity for self
-
-        let score = this.authorAffinities.get(authorHandle) || 0;
+    updateAuthorAffinity(post, action) {
+        if (post.author === state.myIdentity.handle) return; // Don't track affinity for self
+        
+        this.positiveInteractions.add(post.id); 
+        
+        let score = this.authorAffinities.get(post.author) || 0;
         const increment = action === 'upvote' ? 1 : 2; // Replies are a stronger signal
-        this.authorAffinities.set(authorHandle, score + increment);
+         this.authorAffinities.set(post.author, score + increment);
     }
 
     /**

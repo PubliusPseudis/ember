@@ -1138,6 +1138,25 @@ function applyTopicFilter() {
     const posts = document.querySelectorAll('.post');
     let visibleCount = 0;
 
+
+    // If in 'All Posts' mode, explicitly sort by timestamp first
+    if (state.feedMode === 'all') {
+        const container = document.getElementById('posts');
+        // Get only top-level posts for sorting
+        const postsToSort = Array.from(container.querySelectorAll('.post:not(.reply)'));
+
+        postsToSort.sort((a, b) => {
+            const postA = state.posts.get(a.id.replace('post-', ''));
+            const postB = state.posts.get(b.id.replace('post-', ''));
+            if (!postA || !postB) return 0;
+            // Sort descending for newest first
+            return postB.timestamp - a.timestamp;
+        });
+
+        // Re-append all sorted posts to the container in the correct order
+        postsToSort.forEach(el => container.appendChild(el));
+    }
+
     const currentFeedMode = state.feedMode;
     const topicDropdownFilter = state.topicFilter;
 
@@ -1786,45 +1805,77 @@ export function updateDMInbox() {
 function calculateRelevanceScore(post) {
     if (!state.myIdentity) return 0;
     
-    const { activityProfile } = getServices();
-    if (!activityProfile) return 0;
+     const { activityProfile, peerManager, contentSimilarity } = getServices();
+    if (!activityProfile || !peerManager) return 0;
 
     let score = 0;
+    //nuanced weights incorporating reputation and negative feedback
     const WEIGHTS = {
         SUBSCRIBED_TOPIC: 10,
-        SIMILAR_USER_UPVOTE: 5,
         AUTHOR_AFFINITY: 8,
+        AUTHOR_REPUTATION: 12, // Author's general reputation
+        COLLABORATIVE_FILTERING: 5, // Multiplier for voter reputation
+        NEGATIVE_FEEDBACK: -15, // Negative weight for downvotes
         POST_HEAT: 0.5,
+           CONTENT_SIMILARITY: 15,
     };
 
-    // 1. Topic Subscription
+    // 1. Topic Subscription (Unchanged)
     const postTopics = state.scribe ? state.scribe.extractTopics(post.content) : [];
     if (postTopics.some(t => state.subscribedTopics.has(t))) {
         score += WEIGHTS.SUBSCRIBED_TOPIC;
     }
 
-    // 2. Author Affinity
+    // 2. Author Affinity (Unchanged)
     const affinity = activityProfile.authorAffinities.get(post.author) || 0;
     if (affinity > 0) {
-        score += WEIGHTS.AUTHOR_AFFINITY * Math.log1p(affinity); // Use log to prevent huge scores
+        score += WEIGHTS.AUTHOR_AFFINITY * Math.log1p(affinity);
     }
 
-    // 3. Collaborative Filtering (Similar User Upvotes)
-    let similarUserUpvotes = 0;
+    // 3. NEW: Author Reputation
+    const authorReputation = getReputationByHandle(post.author);
+    // Use a logarithmic scale to prevent extreme scores from single high-rep users
+    score += WEIGHTS.AUTHOR_REPUTATION * Math.log1p(authorReputation / 100);
+
+    // 4. MODIFIED: Collaborative Filtering & Negative Feedback
+    let collaborativeScore = 0;
     for (const [voterHandle, rating] of post.ratings.entries()) {
-        if (rating.vote === 'up' && activityProfile.similarUsers.has(voterHandle)) {
-            similarUserUpvotes++;
+        if (activityProfile.similarUsers.has(voterHandle)) {
+            // The 'weight' in the rating is a log-scaled reputation score of the voter
+            const voterWeight = rating.weight || 1; 
+
+            if (rating.vote === 'up') {
+                collaborativeScore += WEIGHTS.COLLABORATIVE_FILTERING * voterWeight;
+            } else if (rating.vote === 'down') {
+                // Incorporate negative feedback from downvotes
+                collaborativeScore += WEIGHTS.NEGATIVE_FEEDBACK * voterWeight;
+            }
         }
     }
-    score += WEIGHTS.SIMILAR_USER_UPVOTE * similarUserUpvotes;
+    score += collaborativeScore;
 
-    // 4. Post Heat (General Popularity)
+
+    // 5. NEW: Content-Based Similarity
+    let maxSimilarity = 0;
+    const positivePosts = activityProfile.getPositiveInteractionPostIds();
+    if (positivePosts.size > 0 && contentSimilarity) {
+        for (const likedPostId of positivePosts) {
+            const similarity = contentSimilarity.getCosineSimilarity(post.id, likedPostId);
+            if (similarity > maxSimilarity) {
+                maxSimilarity = similarity;
+            }
+        }
+        // The score is boosted by its similarity to the user's most-liked content type
+        score += WEIGHTS.CONTENT_SIMILARITY * maxSimilarity;
+    }
+
+    // 6. Post Heat (Unchanged)
     const heat = post.carriers.size + post.replies.size;
     score += WEIGHTS.POST_HEAT * heat;
 
-    // 5. Time Decay (more recent is better)
+    // 7. Time Decay (Unchanged)
     const ageHours = (Date.now() - post.timestamp) / 3600000;
-    const decayFactor = Math.exp(-0.05 * ageHours); // Gentle exponential decay
+    const decayFactor = Math.exp(-0.05 * ageHours);
     score *= decayFactor;
 
     return score;
@@ -1837,25 +1888,60 @@ function renderForYouFeed() {
     const postsContainer = document.getElementById('posts');
     postsContainer.innerHTML = '<div class="empty-state">✨ Curating your feed...</div>';
 
+    if (state.posts.size === 0) {
+        postsContainer.innerHTML = '<div class="empty-state">Not enough posts on the network to curate a feed.</div>';
+        return;
+    }
+
+    // STAGE 1: Scoring all posts
     const scoredPosts = Array.from(state.posts.values())
         .map(post => ({
             post: post,
             score: calculateRelevanceScore(post)
         }))
-        .filter(item => item.score > 0) // Only show posts with some relevance
-        .sort((a, b) => b.score - a.score); // Sort from highest to lowest score
+        .filter(item => item.score > 0)
+        .sort((a, b) => b.score - a.score);
 
-    // Clear the container and render the sorted posts
-    postsContainer.innerHTML = '';
     if (scoredPosts.length === 0) {
         postsContainer.innerHTML = '<div class="empty-state">Not enough activity to curate your feed yet. Interact with some posts!</div>';
         return;
     }
 
-    scoredPosts.forEach(item => {
+    // STAGE 2: Diversification & Exploration
+    let finalFeed = [];
+    const authorCounts = new Map();
+    const heldForDiversity = [];
+    const MAX_POSTS_PER_AUTHOR_IN_TOP_20 = 2;
+
+    // Get and inject exploration posts to introduce novelty
+    const explorationPosts = getExplorationPosts(new Set(scoredPosts.map(p => p.post.id)));
+    if (explorationPosts.length > 0) scoredPosts.splice(5, 0, explorationPosts[0]);
+    if (explorationPosts.length > 1) scoredPosts.splice(12, 0, explorationPosts[1]);
+
+    // Apply source diversity to prevent single-author dominance
+    for (const item of scoredPosts) {
+        const author = item.post.author;
+        const count = authorCounts.get(author) || 0;
+
+        if (finalFeed.length < 20 && count >= MAX_POSTS_PER_AUTHOR_IN_TOP_20) {
+            heldForDiversity.push(item);
+        } else {
+            finalFeed.push(item);
+            authorCounts.set(author, count + 1);
+        }
+    }
+
+    // Add the posts that were held back to the end of the feed
+    finalFeed = finalFeed.concat(heldForDiversity);
+
+    // STAGE 3: Rendering the final, curated feed
+    postsContainer.innerHTML = '';
+    finalFeed.forEach(item => {
         renderPost(item.post, postsContainer);
     });
 }
+
+
 function getTimeAgo(timestamp) {
   const seconds = Math.floor((Date.now() - timestamp) / 1000);
   if (seconds < 60) return 'just now';
@@ -2431,6 +2517,54 @@ function showSwipeIndicator(direction) {
   }, 500);
 }
 
+
+// Helper function to get a user's reputation score by their handle.
+function getReputationByHandle(handle) {
+    const { peerManager } = getServices();
+    if (!peerManager || !state.peerIdentities) return 0;
+
+    // Find the peerId associated with the handle
+    for (const [peerId, identity] of state.peerIdentities) {
+        if (identity.handle === handle) {
+            return peerManager.getScore(peerId);
+        }
+    }
+    // Check if the handle belongs to the current user
+    if (state.myIdentity && state.myIdentity.handle === handle) {
+        // PeerManager doesn't score the local user, so we can assign a default medium score.
+        return 500; // Default reputation for self
+    }
+
+    return 0; // Return 0 if handle not found among connected peers
+}
+
+// Helper to find popular posts from outside a user's typical topics for feed diversification.
+function getExplorationPosts(existingFeedIds) {
+    const myTopics = state.subscribedTopics;
+    const candidates = Array.from(state.posts.values())
+        .filter(post => {
+            if (existingFeedIds.has(post.id)) return false;
+            const postTopics = state.scribe ? state.scribe.extractTopics(post.content) : [];
+            return !postTopics.some(t => myTopics.has(t));
+        })
+        .map(post => ({
+            post: post,
+            score: (post.carriers.size + post.replies.size * 2) // Score by "heat"
+        }))
+        .sort((a, b) => b.score - a.score);
+
+    if (candidates.length === 0) return [];
+    if (candidates.length === 1) return [candidates[0]];
+
+    const topTwo = [candidates[0]];
+    const secondCandidate = candidates.slice(1).find(c => c.post.author !== topTwo[0].post.author);
+    if (secondCandidate) {
+        topTwo.push(secondCandidate);
+    }
+
+    return topTwo;
+}
+
 // Pull to refresh
 function setupPullToRefresh() {
   const feedView = document.getElementById('column-feed');
@@ -2454,7 +2588,7 @@ function setupPullToRefresh() {
       e.preventDefault();
       
       // Show pull to refresh indicator
-      if (pullDistance > 200) {
+      if (pullDistance > 400) {
         showPullToRefreshIndicator();
       }
     }
@@ -2464,7 +2598,7 @@ function setupPullToRefresh() {
     if (!isPulling) return;
 
     const pullDistance = e.changedTouches[0].clientY - pullStartY;
-    if (pullDistance > 200) {
+    if (pullDistance > 400) {
       // Trigger refresh
       location.reload();
     }

@@ -199,6 +199,7 @@ export class StateManager {
       return new Promise((resolve) => {
         request.onsuccess = () => {
           const posts = request.result;
+          posts.sort((a, b) => a.timestamp - b.timestamp);  //sort posts by timestamp normally
           const now = Date.now();
           let loadedCount = 0;
           

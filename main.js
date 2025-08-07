@@ -436,6 +436,7 @@ async function handleVerificationResults(results) {
 
             state.posts.set(post.id, post);
             renderPost(post);
+            getServices().contentSimilarity.addPost(post);
             newlyVerifiedCount++;
             generateAndBroadcastAttestation(post);
             console.log(`[Attestation] Would update peer reputation for valid post`);
@@ -850,7 +851,7 @@ async function ratePost(postId, vote) {
             setTimeout(() => scoreEl.classList.remove('updating'), 300);
         }
         if (vote === 'up') {
-          getServices().activityProfile.updateAuthorAffinity(post.author, 'upvote');
+          getServices().activityProfile.updateAuthorAffinity(post, 'upvote');
         }
         // Update UI
         refreshPost(post);
@@ -926,7 +927,7 @@ async function createReply(parentId) {
             btn.disabled = false;
             return;
         }
-          getServices().activityProfile.updateAuthorAffinity(parentPost.author, 'reply');
+          getServices().activityProfile.updateAuthorAffinity(parentPost, 'reply');
 
         // --- Reply Creation (Local) ---
         // Create the reply Post object with the parentId, process image, and sign it.
@@ -2108,7 +2109,9 @@ function garbageCollect() {
         if (!shouldKeep && threadCarriers.size === 1 && threadAge > 1800000) {
             threadPosts.forEach(postId => {
                 const post = state.posts.get(postId);
-                if (post && post.carriers.has(state.myIdentity.handle) && post.carriers.size === 1 && !isReply(post)) {
+                if (post && post.carriers.has(state.myIdentity.handle) && post.carriers.size === 1 && !isReply(post)) {  
+                    getServices().contentSimilarity.removePost(post); // + ADD THIS LINE
+
                     toggleCarry(postId, false);
                 }
             });
