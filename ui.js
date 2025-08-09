@@ -403,7 +403,14 @@ async function updateInner(el, p) {
               const cvs = container.querySelector('canvas[data-lp-canvas]');
               if (cvs) {
                 const st = JSON.parse(p.lpState || '{}');
-                if (st && st.gfx) drawGfxIntoCanvas(cvs, st.gfx);
+                if (st && st.sim && st.sim.type === 'platformer') {
+                  const mod = await import('./engine-sim-platformer.js');
+                  if (mod && typeof mod.mountPlatformer === 'function') {
+                    await mod.mountPlatformer(cvs, st.sim, { /* no postId: local sim */ });
+                  }
+                } else if (st && st.gfx) {
+                  drawGfxIntoCanvas(cvs, st.gfx, { postId: p.id });
+                }
               }
             } catch (e) {
               console.warn('[LP feed] canvas draw failed:', e);
@@ -2862,8 +2869,18 @@ function updateLpPreview() {
       const doc = frame.contentDocument;
       if (!doc) return;
       const cvs = doc.querySelector('canvas[data-lp-canvas]');
-      if (cvs && lpState && lpState.gfx) {
-        try { drawGfxIntoCanvas(cvs, lpState.gfx); } catch (e) { console.warn('[LP preview] canvas draw failed:', e); }
+                   if (!cvs) return;
+            
+            if (lpState && lpState.sim && lpState.sim.type === 'platformer') {
+              import('./engine-sim-platformer.js').then(mod => {
+                if (mod && typeof mod.mountPlatformer === 'function') {
+                  mod.mountPlatformer(cvs, lpState.sim, {});
+                }
+              });
+            } else if (lpState && lpState.gfx) {
+              drawGfxIntoCanvas(cvs, lpState.gfx, { onInput: (ev) => console.debug('[LP preview input]', ev) });
+            }
+        } catch (e) { console.warn('[LP preview] canvas draw failed:', e); }
       }
     }, 0);
   } catch (e) {
