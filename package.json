@@ -24,9 +24,12 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "codemirror": "^5.65.16",
     "dompurify": "^3.2.6",
     "fs": "^0.0.1-security",
     "http-server": "^14.1.1",
+    "js-interpreter": "^6.0.1",
+    "mustache": "^4.2.0",
     "nsfwjs": "^4.2.1",
     "process": "^0.11.10",
     "tweetnacl": "^1.0.3",
@@ -45,39 +48,39 @@
     "vite-plugin-node-polyfills": "^0.23.0",
     "web-streams-polyfill": "^4.1.0"
   },
-"jest": {
-  "testEnvironment": "jest-environment-jsdom",
-  "transformIgnorePatterns": [
-    "/node_modules/(?!webtorrent|web-streams-polyfill)/"
-  ],
-  "setupFilesAfterEnv": [
-    "<rootDir>/tests/jest.setup.js"
-  ],
-  "testMatch": [
-    "**/__tests__/**/*.test.js",
-    "**/?(*.)+(spec|test).js"
-  ],
-  "transform": {
-    "^.+\\.jsx?$": "babel-jest"
-  },
-  "moduleNameMapper": {
-    "webtorrent": "<rootDir>/node_modules/webtorrent/dist/webtorrent.min.js",
-    "^@/(.*)$": "<rootDir>/$1"
-  },
-  "collectCoverageFrom": [
-    "**/*.js",
-    "!**/node_modules/**",
-    "!**/coverage/**",
-    "!**/__tests__/**",
-    "!**/tests/jest.setup.js"
-  ],
-  "coverageThreshold": {
-    "global": {
-      "branches": 60,
-      "functions": 70,
-      "lines": 70,
-      "statements": 70
+  "jest": {
+    "testEnvironment": "jest-environment-jsdom",
+    "transformIgnorePatterns": [
+      "/node_modules/(?!webtorrent|web-streams-polyfill)/"
+    ],
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/jest.setup.js"
+    ],
+    "testMatch": [
+      "**/__tests__/**/*.test.js",
+      "**/?(*.)+(spec|test).js"
+    ],
+    "transform": {
+      "^.+\\.jsx?$": "babel-jest"
+    },
+    "moduleNameMapper": {
+      "webtorrent": "<rootDir>/node_modules/webtorrent/dist/webtorrent.min.js",
+      "^@/(.*)$": "<rootDir>/$1"
+    },
+    "collectCoverageFrom": [
+      "**/*.js",
+      "!**/node_modules/**",
+      "!**/coverage/**",
+      "!**/__tests__/**",
+      "!**/tests/jest.setup.js"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 60,
+        "functions": 70,
+        "lines": 70,
+        "statements": 70
+      }
     }
   }
-}
 }

@@ -303,17 +303,6 @@ h1 {
   border: 1px solid var(--border-color-light);
 }
 
-/* Flickering Flame on Status */
-#status::before {
-  content: '🔥';
-  position: absolute;
-  right: 0;
-  top: 10px;
-  font-size: 20px;
-  opacity: 0.6;
-  animation: flicker 3s ease-in-out infinite;
-}
-
 .status-indicator {
   width: 8px;
   height: 8px;
@@ -2445,11 +2434,11 @@ body.light-mode .rate-down:hover {
 
 /* User Profile Section in Control Panel */
 .user-profile-section {
-  margin: 20px 0;
-  padding: 15px;
+  margin: 0px 0;
+  padding: 0px;
   background: var(--background-compose-area);
-  border-radius: 12px;
-  border: 1px solid var(--border-color-light);
+  border-radius: 0px;
+  border: 0px solid var(--border-color-light);
   transition: all 0.3s ease;
 }
 
@@ -2802,6 +2791,10 @@ body.light-mode .author-profile-placeholder {
 /* == Mobile Layout (max-width: 767px)          == */
 /* =============================================== */
 @media (max-width: 767px) {
+  /* FIX: Add this rule to hide desktop-specific elements on mobile */
+  .desktop-only {
+    display: none !important;
+  }
   body {
     overflow: hidden;
   }
@@ -4578,3 +4571,296 @@ div#posts {
     bottom: 4.5rem; /* Slightly higher */
   }
 }
+/* -- Desktop shell: titlebar + footer framing the 3 columns -- */
+@media (min-width: 768px) {
+  #app-wrapper { 
+    display: flex; 
+    flex-direction: column; 
+    height: 100vh; 
+  }
+  #titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-color-light);
+    background: var(--background-compose-area);
+  }
+  #app-container { 
+    flex: 1;       /* let the columns fill remaining height */
+    height: auto;  /* override previous 100vh so it fits between header/footer */
+  }
+  #app-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 20px;
+    border-top: 1px solid var(--border-color-light);
+    background: var(--background-compose-area);
+  }
+}
+
+/* Put topics controls in the LEFT column on desktop; hide them in the feed column */
+@media (min-width: 768px) {
+  #column-feed .topics-section { display: none !important; }    /* hide feed-side topics */
+  #column-controls .mobile-topics { display: block !important; }/* show the controls' topics block */
+}
+
+/* Middle column small niceties */
+@media (min-width: 768px) {
+  /* Composer sits above a scrollable #posts, so no sticky needed, but a tad of separation helps */
+  #column-feed #compose { margin-bottom: 16px; }
+}
+/* Desktop: let the shell define the height */
+@media (min-width: 768px) {
+  /* Full-height app with header+footer */
+  #app-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  /* The 3-column area should flex between header/footer */
+  #app-container {
+    flex: 1;
+    min-height: 0;            /* <-- crucial for inner scrolling */
+  }
+  /* Make columns shrinkable inside the container */
+  .app-view {
+    min-height: 0;            /* <-- also crucial */
+  }
+
+  /* Left column gets its own scrollbar */
+  #column-controls {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding-right: 6px;       /* avoids text under overlay scrollbars */
+    scrollbar-gutter: stable both-edges;
+  }
+}
+@media (min-width: 768px) {
+  /*  Explicitly hide the entire mobile filter header on desktop */
+  #collapsible-feed-header {
+    display: none !important;
+  }
+
+
+  /* Kill "The Void" title on desktop */
+  #column-feed .column-header { display: none !important; }
+
+  /* Hide the in-feed controls on desktop (we use the titlebar version) */
+  #column-feed .feed-controls { display: none !important; }
+
+  /* Style the titlebar controls */
+  #titlebar .feed-controls--desktop {
+    display: flex; align-items: center; gap: 14px;
+  }
+  #titlebar .topic-filter label {
+    font-size: 12px; color: var(--text-secondary); margin-right: 6px;
+  }
+  #titlebar select { height: 32px; }
+
+  /* Pull the column content up a bit */
+  #column-feed { padding-top: 10px; }
+
+  /* Composer pinned near the top so posts start immediately below */
+  #column-feed #compose {
+    position: sticky; top: 10px; z-index: 2;
+    margin-bottom: 12px;
+  }
+
+  /* Ensure sticky works (no vertical overflow hidden on the column) */
+  .app-view { overflow-x: hidden; }
+}
+/*
+  ==========================================================================
+  DESKTOP COMPOSER TABS
+  ==========================================================================
+*/
+
+.compose-tabs {
+  /* Pulls tabs up to overlap the main composer's top border */
+  margin: -21px -21px 20px -21px; 
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-color-light);
+  display: flex;
+}
+
+.compose-tab {
+  /* Reset default button styles */
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  
+  color: var(--text-secondary);
+  padding: 10px 15px;
+  cursor: pointer;
+  position: relative;
+  
+  /* Pushes tabs down 1px to align with the bottom border of the container */
+  transform: translateY(1px); 
+  
+  /* Creates the classic tab shape */
+  border-radius: 6px 6px 0 0;
+  
+  font-size: 14px;
+  font-weight: 500;
+  
+  transition: all 0.2s ease-in-out;
+}
+
+.compose-tab:hover {
+  background: var(--background-bonfire-item);
+  color: var(--text-accent);
+}
+
+.compose-tab.active {
+  /* Make the active tab's border visible */
+  border-color: var(--border-color-light); 
+  
+  /* Make the background match the composer to "cut out" the bottom line */
+  background: var(--background-compose-area); 
+  
+  /* This "erases" the container's border below the tab, creating the connection */
+  border-bottom: 1px solid var(--background-compose-area); 
+
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Light mode adjustments for the new styles */
+body.light-mode .compose-tab:hover {
+  background: var(--background-bonfire-item-hover);
+}
+
+body.light-mode .compose-tab.active {
+  background: var(--background-compose-area);
+  border-bottom-color: var(--background-compose-area);
+}
+
+/* Living Post Composer Styles */
+.lp-title-input {
+	width: 100%;
+	padding: 12px;
+	background: var(--background-input);
+	border: 1px solid var(--border-color-light);
+	color: var(--text-primary);
+	border-radius: 8px;
+	margin-bottom: 15px;
+	font-size: 16px
+}
+
+.lp-title-input:focus {
+	outline: none;
+	border-color: var(--border-color-accent);
+	box-shadow: 0 0 10px var(--shadow-color-accent)
+}
+
+.lp-editor-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	grid-template-rows: auto auto;
+	gap: 15px;
+	height: 500px
+}
+
+.lp-editor-pane {
+	display: flex;
+	flex-direction: column;
+	background: var(--background-input);
+	border: 1px solid var(--border-color-dark);
+	border-radius: 8px;
+	overflow: hidden;
+	transition: all .3s ease
+}
+
+.lp-preview-pane {
+	grid-column: 2 / 3;
+	grid-row: 1 / 3
+}
+
+.lp-editor-header {
+	padding: 8px 12px;
+	background: var(--background-bonfire-item);
+	border-bottom: 1px solid var(--border-color-light);
+	color: var(--text-secondary);
+	font-weight: 500;
+	font-size: 13px;
+	display: flex;
+	justify-content: space-between;
+	align-items: center
+}
+
+.lp-preview-error {
+	color: var(--text-accent-hot);
+	font-weight: bold
+}
+
+#lp-preview-frame {
+	flex-grow: 1;
+	width: 100%;
+	height: 100%;
+	border: none;
+	background: white
+}
+
+.lp-editor-pane .CodeMirror {
+	flex-grow: 1;
+	height: 100%;
+	font-size: 14px
+}
+
+.cm-s-material-darker.CodeMirror {
+	background-color: var(--background-input);
+	color: var(--text-primary)
+}
+
+.cm-s-material-darker .CodeMirror-gutters {
+	background: var(--background-input);
+	border-right: 1px solid var(--border-color-dark)
+}
+
+.cm-s-material-darker .CodeMirror-cursor {
+	border-left-color: var(--text-accent)
+}
+
+.cm-s-material-darker .CodeMirror-activeline-background {
+	background: var(--background-bonfire-item)
+}
+
+.cm-s-material-darker .CodeMirror-selected {
+	background: rgba(255, 140, 66, .2)
+}
+
+.lp-maximize-btn {
+	background: 0 0;
+	border: none;
+	cursor: pointer;
+	color: var(--text-secondary);
+	padding: 2px
+}
+
+.lp-maximize-btn svg {
+	width: 14px;
+	height: 14px;
+	stroke: currentColor;
+	stroke-width: 2;
+	fill: none
+}
+
+.lp-editor-grid.is-maximized {
+	grid-template-columns: 1fr;
+	grid-template-rows: 1fr
+}
+
+.lp-editor-grid.is-maximized .lp-editor-pane:not(.maximized) {
+	display: none
+}
+
+.lp-editor-grid .lp-editor-pane.maximized {
+	grid-column: 1 / -1 !important;
+	grid-row: 1 / -1 !important
+}
+

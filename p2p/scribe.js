@@ -165,28 +165,38 @@ export class Scribe {
   }
   
   // Handle incoming Scribe messages
-  handleMessage(msg, fromWire) {
-    switch (msg.subtype) {
-      case 'JOIN':
-        this.handleJoin(msg, fromWire);
-        break;
-      case 'LEAVE':
-        this.handleLeave(msg, fromWire);
-        break;
-      case 'MULTICAST':
-        this.handleMulticast(msg, fromWire);
-        break;
-      case 'HEARTBEAT':
-        this.handleHeartbeat(msg, fromWire);
-        break;
-      case 'PARENT_FAILED':
-        this.handleParentFailed(msg, fromWire);
-        break;
-    }
+handleMessage(msg, fromWire) {
+  switch (msg.subtype) {
+    case 'JOIN':        this.handleJoin(msg, fromWire); break;
+    case 'JOIN_ACK':    this.handleJoinAck(msg, fromWire); break;   // <—
+    case 'JOIN_REJECT': this.handleJoinReject(msg, fromWire); break; // <—
+    case 'LEAVE':       this.handleLeave(msg, fromWire); break;
+    case 'MULTICAST':   this.handleMulticast(msg, fromWire); break;
+    case 'HEARTBEAT':   this.handleHeartbeat(msg, fromWire); break;
+    case 'PARENT_FAILED': this.handleParentFailed(msg, fromWire); break;
   }
+}
   
-  
-  
+  // When a parent accepts us:
+handleJoinAck(msg, fromWire) {
+  const { topic } = msg;
+  let info = this.subscribedTopics.get(topic);
+  if (!info) {
+    info = { rendezvousId: null, parent: null, children: new Set(), lastRefresh: Date.now() };
+    this.subscribedTopics.set(topic, info);
+  }
+  info.parent = { wire: fromWire, joinedAt: Date.now() };
+  info.lastRefresh = Date.now();
+  console.log(`[Scribe] Joined ${topic}; parent set.`);
+}
+
+// If a node is full, retry via next hop toward rendezvous:
+async handleJoinReject(msg, fromWire) {
+  const { topic } = msg;
+  const rendezvousId = await this.getRendezvousNode(topic);
+  const route = await this.dht.findNode(rendezvousId);
+  if (route.length > 0) this.sendJoinRequest(topic, route[0]);
+}
   
   // Handle JOIN request
   async handleJoin(msg, fromWire) {
@@ -357,27 +367,21 @@ export class Scribe {
   }
   
   // Deliver message to local application
-deliverMessage(topic, message) {
-    // This function is the endpoint for messages received via Scribe multicast.
-    // It's responsible for handing off the message to the main application logic.
-    if (!message || !message.type) return;
+deliverMessage(topic, message, fromPeer) {
+  if (!message || !message.type) return;
 
-    console.log(`[Scribe] Delivering message of type "${message.type}" on topic ${topic}`);
-
-    try {
-        if (message.type === 'new_post' && message.post) {
-            // Don't process our own posts that have been echoed back to us
-            if (message.post.author === state.myIdentity.handle) return;
-            messageBus.handleMessage('scribe:new_post', { topic, message }, null);
-        } else if (message.type === 'PROFILE_UPDATE') {
-            messageBus.handleMessage('scribe:PROFILE_UPDATE', { topic, message }, null);
-        } else if (message.type === 'parent_update') {
-            messageBus.handleMessage('scribe:parent_update', { topic, message }, null);
-        }
-    } catch (e) {
-        console.error(`[Scribe] Error delivering message of type ${message.type}:`, e);
-    }
+  // Forward to the app bus with the expected envelope + scribe: prefix
+  try {
+  messageBus.handleMessage(
+    `scribe:${message.type}`,
+    { topic, message, fromPeer },
+    null
+  );
+  } catch (e) {
+    console.error(`[Scribe] Error delivering message via messageBus:`, e);
+  }
 }
+
   
   // Start maintenance tasks
   startMaintenance() {

@@ -34,7 +34,9 @@ import {
     discoverAndFilterTopic, filterByTopic, setFeedMode, completeTopicSuggestion, 
     scrollToPost, subscribeToTopic, handleReplyImageSelect, removeReplyImage, 
     storeDMLocallyAndUpdateUI, updateDMInbox, updateUnreadBadge, toggleThread,
-    openProfileForHandle, renderProfile, closeProfile, updateProfilePicturesInPosts, initializeUserProfileSection, setSendPeer,updateHotTopics
+    openProfileForHandle, renderProfile, closeProfile, updateProfilePicturesInPosts, 
+    initializeUserProfileSection, setSendPeer,updateHotTopics,getLivingPostValues, 
+    initializeLivingPostComposer, clearLivingPostEditors
 } from './ui.js';
 import { StateManager } from './storage.js';
 import { MemoryManager } from './services/memory-manager.js';
@@ -435,6 +437,9 @@ async function handleVerificationResults(results) {
             }
 
             state.posts.set(post.id, post);
+            if (post.postType === 'living') {
+              state.scribe?.subscribe(`#lp:${post.id}`);
+            }
             renderPost(post);
             getServices().contentSimilarity.addPost(post);
             newlyVerifiedCount++;
@@ -553,7 +558,10 @@ function evaluatePostTrust(postId) {
     // Give attesters credit
     for (const attesterHandle of post.attesters) {
       for (const [peerId, peer] of state.peers) {
-        peerManager.updateScore(peerId, 'correct_attestation', 0.1);
+        if (peer.handle === attesterHandle) {
+          peerManager.updateScore(peerId, 'correct_attestation', 0.1);
+          break;
+        }
       }
     }
     
@@ -618,10 +626,14 @@ function scheduleTrustEvaluation(post) {
     
     // If still pending after timeout, send to verification
     if (state.pendingVerification.has(postId)) {
-      const post = state.pendingVerification.get(postId);
-      verificationQueue.addBatch([post], 'normal', (results) => {
-        handleVerificationResults(results);
-      });
+        const post = state.pendingVerification.get(postId);
+        if (!post) return;
+        if (verificationQueue) {
+          verificationQueue.addBatch([post], 'normal', handleVerificationResults);
+        } else {
+          console.warn('[Trust] VQ not ready, retrying in 250ms');
+          setTimeout(() => evaluatePostTrust(postId), 250);
+        }
     }
   }, 10000);
   
@@ -716,13 +728,20 @@ function handleCarrierUpdate(msg) {
     if (!p) return;
     const handle = msg.peer || msg.fromIdentityHandle;
     if (!handle) return;
+
     if (msg.carrying) {
         p.carriers.add(handle);
-    } else {
+        if (handle === state.myIdentity.handle) state.scribe?.subscribe(`#lp:${p.id}`); // NEW
+            } else {
         p.carriers.delete(handle);
+        if (handle === state.myIdentity.handle) state.scribe?.unsubscribe(`#lp:${p.id}`); // NEW
     }
     if (p.carriers.size === 0 && !isReply(p)) {
         if (!debugPostRemoval(p.id, 'carrier update - no carriers')) {
+
+                if (p?.postType === 'living') {
+                  state.scribe?.unsubscribe(`#lp:${p.id}`);
+                }
             state.posts.delete(p.id);
             dropPost(p.id);
         }
@@ -740,67 +759,544 @@ function handleParentUpdate(msg) {
     }
 }
 
-async function createPostWithTopics(txt, imageData) {
-    if (!txt) return;
-
+async function createPostWithTopics() {
     const btn = document.getElementById("send-button");
-    btn.disabled = true;
-    btn.textContent = "Mixing...";
-    // Updated UI text
+        const mobileBtn = document.getElementById("mobile-send-button"); // <-- FIX: ADD THIS LINE
 
-    notify("Securing post for relay...", 10000);
-    // Updated notification
+    const isLivingPost = document.getElementById('living-compose-content').style.display === 'block';
 
-    try {
-        // --- Local pre-checks remain ---
+    const mobileComposeModal = document.getElementById('compose-modal-overlay');
+    const isMobile = mobileComposeModal && mobileComposeModal.style.display === 'flex';
+
+
+    let txt, imageData = null;
+    let p; 
+
+    if (isLivingPost) {
+        const lpData = getLivingPostValues();
+        const title = document.getElementById('lp-title-input').value;
+
+        if (!title || !lpData.code || !lpData.state || !lpData.renderer) {
+            notify("All fields are required for a Living Post.");
+            return;
+        }
+
+        // Moderation (balanced): ONLY scan human-visible text.
+        // 1) Literal text from the renderer (drop tags & {{mustache}}), 2) string values from JSON state, 3) title.
+        const plainFromRenderer = (() => {
+          try {
+            const tpl = lpData.renderer || '';
+            // remove mustache tags, then scripts/styles, then all HTML tags
+            const stripped = tpl
+              .replace(/{{[\s\S]*?}}/g, ' ')
+              .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+              .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+              .replace(/<[^>]+>/g, ' ');
+            return stripped.replace(/\s+/g, ' ').trim();
+          } catch { return ''; }
+        })();
+
+        let stringsFromState = '';
+        try {
+          const obj = JSON.parse(lpData.state || '{}');
+          const collect = (v) => {
+            if (typeof v === 'string') stringsFromState += ' ' + v;
+            else if (v && typeof v === 'object') Object.values(v).forEach(collect);
+          };
+          collect(obj);
+        } catch {}
+
+        const humanVisible = [title, plainFromRenderer, stringsFromState]
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 4000); // cap to avoid weird classifier behavior on huge inputs
+
+        if (CONFIG.LP_MODERATION !== 'off' && humanVisible && await isToxic(humanVisible)) {
+          notify('Your Living Post appears to contain disallowed visible text. Please revise the title/renderer/state strings.');
+          return;
+        }
+
+
+        try {
+            JSON.parse(lpData.state);
+        } catch (e) {
+            notify("Initial State is not valid JSON.");
+            return;
+        }
+
+        p = new Post(title);
+        p.postType = 'living';
+        p.lpCode = lpData.code;
+        p.lpState = lpData.state;
+        p.lpRenderer = lpData.renderer;
+        p.lpCode = p.lpCode.replace(/\u00A0/g, ' '); //pesky invisible chars
+        
+        try {
+            const vm = getServices().livingPostManager;
+            const newState = await vm.run(p.id, p.lpCode, 'onLoad', p.lpState);
+
+            p.lpState = newState;
+            p.carriers ||= new Set();
+            p.carriers.add(state.myIdentity.handle);   // author carries by default
+            state.scribe?.subscribe(`#lp:${p.id}`);    // so we receive proposals
+        } catch (e) {
+            notify(`Error in your onLoad function: ${e.message}`);
+            console.error(e);
+            return;
+        }
+
+    
+
+    } else {
+        // Standard post logic (now context-aware)
+        if (isMobile) {
+            txt = document.getElementById('mobile-post-input').value;
+            imageData = document.getElementById('mobile-image-preview').dataset.imageData;
+        } else {
+            txt = document.getElementById('post-input').value;
+            imageData = document.getElementById('image-preview').dataset.imageData;
+        }
+
+        if (!txt) return;
+
         if (await isToxic(txt)) {
             notify(`Your post may be seen as toxic. Please rephrase.`);
-            btn.disabled = false;
-            btn.textContent = "🔥";
+            if(isMobile) mobileBtn.disabled = false; else btn.disabled = false;
             return;
         }
         if (imageData && await isImageToxic(imageData)) {
             notify("Image content not allowed");
-            btn.disabled = false;
-            btn.textContent = "🔥";
+            if(isMobile) mobileBtn.disabled = false; else btn.disabled = false;
             return;
         }
 
-        // --- Post Creation (Local) ---
-        // The post is now a self-contained, signed object ready for publishing.
-        const p = new Post(txt, null, imageData);
+        p = new Post(txt, null, imageData);
         if (imageData) {
             await p.processImage();
         }
-        p.sign(state.myIdentity.secretKey);
+    }
+    
+    // Disable the correct button
+    if (isMobile) {
+      mobileBtn.disabled = true;
+      mobileBtn.textContent = "Mixing...";
+    } else if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Mixing...";
+    }
+    notify("Securing post for relay...", 10000);
 
-        // --- Hand off to Privacy Layer ---
-        // The privacy publisher handles all the complex parts:
-        // VDF generation, encryption, and relaying.
+    try {
+        p.sign(state.myIdentity.secretKey);
         await getServices().privacyPublisher.publishPost(p);
 
-        // --- UI Cleanup ---
-        // Clear the desktop input fields after a successful post
-        const input = document.getElementById("post-input");
-        if (input) {
-            input.value = "";
+        // UI Cleanup
+        if (isLivingPost) {
+          if (typeof clearLivingPostEditors === 'function') {
+            clearLivingPostEditors();
+          } else {
+            // Fallback: clear title + preview
+            const titleEl = document.getElementById('lp-title-input');
+            if (titleEl) titleEl.value = '';
+            const frame = document.getElementById('lp-preview-frame');
+            if (frame) frame.srcdoc = '';
+            const errEl = document.getElementById('lp-preview-error');
+            if (errEl) errEl.textContent = '';
+          }
+        } else {
+          const postEl = document.getElementById('post-input');
+          if (postEl) postEl.value = '';
+          const charEl = document.getElementById('char-current');
+          if (charEl) charEl.textContent = '0';
+          if (typeof removeImage === 'function') removeImage();
         }
-        const charCurrent = document.getElementById("char-current");
-        if (charCurrent) {
-            charCurrent.textContent = 0;
-        }
-        removeImage();
 
-        btn.disabled = false;
-        btn.textContent = "🔥";
+        // Re-enable the correct button
+        if (isMobile) {
+          if (typeof mobileBtn !== 'undefined' && mobileBtn) {
+            mobileBtn.disabled = false;
+            mobileBtn.textContent = '🔥';
+          }
+        } else if (typeof btn !== 'undefined' && btn) {
+          btn.disabled = false;
+          btn.textContent = '🔥';
+        }
         notify("Post sent to the mixing layer!");
     } catch (error) {
-        console.error("Failed to publish post through privacy layer:", error);
+        console.error("Failed to publish post:", error);
         notify(`Could not publish post: ${error.message}`, 5000);
         btn.disabled = false;
         btn.textContent = "🔥";
     }
 }
+
+// Called from the UI when a user clicks an interactive element
+async function interactWithLivingPost(postId, inputDataString) {
+  const post = state.posts.get(postId);
+  if (!post) return;
+
+  let inputData;
+  try {
+    inputData = JSON.parse(inputDataString);
+  } catch (e) {
+    console.error("Invalid input data on element:", e);
+    return;
+  }
+
+  // Create the interaction object, which will be proposed to the carriers.
+  const interaction = {
+    user: { handle: state.myIdentity.handle },
+    input: inputData
+  };
+
+  // The proposal is the interaction plus metadata, which we sign.
+  const proposalPayload = {
+    postId: postId,
+    interaction: interaction,
+    timestamp: Date.now()
+  };
+
+ // const payloadStr = JSON.stringify(proposalPayload);
+ // const signature = nacl.sign.detached(new TextEncoder().encode(payloadStr), state.myIdentity.secretKey);
+
+    const payloadStr = JSON.stringify(proposalPayload);
+    const payloadBytes = new TextEncoder().encode(payloadStr);
+    const sk = state.myIdentity.secretKey instanceof Uint8Array
+      ? state.myIdentity.secretKey
+      : new Uint8Array(state.myIdentity.secretKey);
+    const signature = nacl.sign.detached(payloadBytes, sk);
+
+
+  const proposalMsg = {
+    type: 'lp_interaction_proposal',
+    payload: proposalPayload,
+    signature: arrayBufferToBase64(signature),
+    publicKey: arrayBufferToBase64(state.myIdentity.publicKey)
+  };
+
+  // Broadcast the proposal to the post's dedicated Scribe topic.
+  const topic = `#lp:${postId}`;
+  try {
+    await state.scribe.multicast(topic, proposalMsg);
+    notify("Interaction proposed to carriers.");
+  } catch (error) {
+    console.error("Failed to broadcast interaction proposal:", error);
+    notify("Could not send interaction to the network.");
+  }
+}
+
+// This runs on the host's machine to update the state
+async function processLivingPostInput(post, interaction) {
+    try {
+        const vm = getServices().livingPostManager;
+        const newStateJson = await vm.run(post.id, post.lpCode, 'onInteract', post.lpState, interaction);
+
+        if (newStateJson !== post.lpState) {
+            post.lpState = newStateJson;
+
+            // Monotonic revision and canonical signing
+            const nextRev = (typeof post.lpRev === 'number' ? post.lpRev : 0) + 1;
+            const canonical = JSON.stringify({ postId: post.id, rev: nextRev, state: post.lpState });
+            const sk2 = state.myIdentity.secretKey instanceof Uint8Array
+              ? state.myIdentity.secretKey
+              : new Uint8Array(state.myIdentity.secretKey);
+            const sig = nacl.sign.detached(new TextEncoder().encode(canonical), sk2);
+
+            const updateMsg = {
+                type: 'lp_state_update',
+                postId: post.id,
+                newState: post.lpState,
+                rev: nextRev,
+                executorHandle: state.myIdentity.handle,
+                executorPublicKey: arrayBufferToBase64(state.myIdentity.publicKey),
+                signature: arrayBufferToBase64(sig)
+            };
+            post.lpRev = nextRev;
+
+            // Broadcast the update on the post's Scribe topic.
+            const topic = `#lp:${post.id}`;
+            await state.scribe.multicast(topic, updateMsg);
+            
+            refreshPost(post);
+        }
+    } catch (e) {
+        console.error(`Living Post execution error for ${post.id}:`, e);
+        notify(`LP Error: ${e.message}`);
+    }
+}
+
+// --- NEW MESSAGE HANDLERS ---
+
+async function handle_lp_interaction_proposal(msg, fromWire) {
+  const { payload, signature, publicKey } = msg;
+  const { postId, interaction } = payload;
+
+  const post = state.posts.get(postId);
+  if (!post) return; // We don't have this post, so we can't act as executor.
+
+  // 1. Verify the signature of the user who proposed the interaction.
+  const payloadStr = JSON.stringify(payload);
+  const payloadBytes = new TextEncoder().encode(payloadStr);
+  const signatureBytes = base64ToArrayBuffer(signature);
+  const publicKeyBytes = base64ToArrayBuffer(publicKey);
+
+  if (!nacl.sign.detached.verify(payloadBytes, signatureBytes, publicKeyBytes)) {
+    console.warn(`Invalid signature on lp_interaction_proposal from ${interaction.user.handle}`);
+    return;
+  }
+
+  // 2. Deterministically elect the current executor for this post.
+  const carriers = getCarriersForPost(postId);
+  if (carriers.length === 0) {
+    console.warn(`[LP] No carriers for ${postId}; ignoring proposal.`);
+    return;
+  }
+  const executor = electExecutor(carriers, postId);
+  console.debug(`[LP] post=${postId} carriers=[${carriers.map(c=>c.handle).join(',')}] elected=${executor?.handle}`);
+  if (!executor) {
+    console.warn(`No valid executor found for post ${postId}`);
+    return;
+  }
+
+  // 3. Check if *I* am the elected executor.
+  if (executor.handle === state.myIdentity.handle) {
+    console.log(`[LP Executor] I am the elected executor for post ${postId}. Processing interaction.`);
+    // If so, process the interaction and broadcast the state update.
+    await processLivingPostInput(post, interaction);
+  }
+}
+
+
+
+
+/**
+ * Gets a list of carrier objects with their IDs, handles, and peer data.
+ * - De-duplicates strictly by handle so every node sees the same carrier set.
+ * @param {string} postId - The ID of the post.
+ * @returns {Array<object>} A list of carrier peers.
+ */
+function getCarriersForPost(postId) {
+  const post = state.posts.get(postId);
+  if (!post) return [];
+
+  const carriers = [];
+  const seenHandles = new Set();
+
+  const pushOnce = (peerId, handle, peer) => {
+    if (!handle) return;
+    if (!post.carriers.has(handle)) return;
+    if (seenHandles.has(handle)) return;
+    carriers.push({ id: peerId ?? null, handle, peer: peer ?? null });
+    seenHandles.add(handle);
+  };
+
+  // 1) From identities (prefer identities first so metadata is consistent)
+  for (const [peerId, identity] of state.peerIdentities) {
+    const handle = identity?.handle;
+    const peer   = state.peers.get(peerId) || null;
+    pushOnce(peerId, handle, peer);
+  }
+
+  // 2) From peers that have a handle but no identity (fills gaps)
+  for (const [peerId, peer] of state.peers) {
+    const handle = peer?.handle || null;
+    pushOnce(peerId, handle, peer);
+  }
+
+  // 3) Add self if carrying (won’t duplicate because we dedupe by handle)
+  if (state.myIdentity?.handle && post.carriers.has(state.myIdentity.handle)) {
+    // If you track a concrete connection id for self, use it; otherwise null is fine.
+    const selfPeerId = state.selfPeerId ?? null;
+    pushOnce(selfPeerId, state.myIdentity.handle, { isSelf: true });
+  }
+
+  return carriers;
+}
+
+/**
+ * Deterministically elects an executor from a list of carriers based on reputation.
+ * @param {Array<object>} carriers - A list of carrier peers from getCarriersForPost.
+ * @returns {object|null} The elected executor peer object or null.
+ */
+function electExecutor(carriers, postId) {
+  if (!carriers || carriers.length === 0) return null;
+
+  // tiny deterministic 32-bit djb2
+  const stableHash = (s) => {
+    let h = 5381 >>> 0;
+    for (let i = 0; i < s.length; i++) {
+      h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+    }
+    return h;
+  };
+
+  const scored = carriers.map(c => ({
+    ...c,
+    _h: stableHash(`${postId}:${c.handle}`)
+  }));
+
+  // Sort by hash, then by handle as a tie-breaker
+  scored.sort((a, b) => (a._h - b._h) || a.handle.localeCompare(b.handle));
+
+  return scored[0];
+}
+
+/**
+ * Handle a living-post state update broadcast.
+ * Accepts the update if:
+ *  - the signer is (currently) a carrier for the post, and
+ *  - the signature verifies (supports both legacy "state-only" payload and canonical payload with rev)
+ * Then applies the state and refreshes the UI.
+ *
+ * @param {Object} msg
+ * @param {boolean} fromWire  // true if came from network transport
+ *
+ * Expected msg shape:
+ * {
+ *   postId: string,
+ *   executorHandle: string,          // claimed signer
+ *   executorPublicKey: string,       // base64
+ *   newState: string,                // JSON string
+ *   signature: string,               // base64
+ *   rev?: number,                    // optional monotonic revision
+ *   carriersHash?: string            // optional hint to detect membership skew
+ * }
+ */
+async function handle_lp_state_update(msg, fromWire) {
+  try {
+    // basic validation
+    if (!msg || !msg.postId || !msg.executorHandle || !msg.executorPublicKey || !msg.newState || !msg.signature) {
+      console.warn('[LP] state_update: missing fields', msg);
+      return;
+    }
+
+    // fetch post
+    const post = state.posts?.get ? state.posts.get(msg.postId) : (state.posts || {})[msg.postId];
+    if (!post) {
+      // unknown post: we can ignore, or queue for later. For now just log.
+      console.warn('[LP] state_update: post not found', msg.postId);
+      return;
+    }
+
+    // enforce "only carriers can influence state"
+    const isSignerCarrier = (() => {
+      const carriers = post.carriers;
+      if (!carriers) return false;
+
+      // carriers might be: Set<string>, Array<string>, Array<{handle:string}>, Map/Record of handles
+      if (carriers instanceof Set) return carriers.has(msg.executorHandle);
+      if (Array.isArray(carriers)) {
+        return carriers.some(c => (typeof c === 'string' ? c === msg.executorHandle : c?.handle === msg.executorHandle));
+      }
+      if (carriers instanceof Map) return carriers.has(msg.executorHandle);
+      if (typeof carriers === 'object') return Object.prototype.hasOwnProperty.call(carriers, msg.executorHandle);
+      return false;
+    })();
+
+    if (!isSignerCarrier) {
+      console.warn(`[LP] state_update: signer ${msg.executorHandle} is not a current carrier; ignoring.`);
+      return;
+    }
+
+    // identity binding (executorHandle -> executorPublicKey)
+    if (state.identityRegistry && typeof state.identityRegistry.lookupHandle === 'function') {
+      try {
+        const claim = await state.identityRegistry.lookupHandle(msg.executorHandle);
+        if (!claim) {
+          console.warn('[LP] state_update: no identity claim for', msg.executorHandle);
+          return;
+        }
+        const claimedKeyB64 = (typeof claim.publicKey === 'string')
+          ? claim.publicKey
+          : arrayBufferToBase64(claim.publicKey);
+        if (claimedKeyB64 !== msg.executorPublicKey) {
+          console.warn('[LP] state_update: publicKey mismatch for', msg.executorHandle);
+          return;
+        }
+      } catch (e) {
+        console.warn('[LP] state_update: identity lookup failed', e);
+        return;
+      }
+    }
+
+
+    // signature verification
+    const encoder = new TextEncoder();
+    const pubKeyBytes = base64ToArrayBuffer(msg.executorPublicKey);
+    const sigBytes = base64ToArrayBuffer(msg.signature);
+
+    // 1) legacy payload: sign( newState )
+    const stateBytes = encoder.encode(msg.newState);
+    let verified = false;
+    try {
+      verified = nacl.sign.detached.verify(stateBytes, sigBytes, pubKeyBytes);
+    } catch (e) {
+      console.warn('[LP] state_update: legacy verify threw', e);
+    }
+
+    // 2) canonical payload (if rev present): sign( JSON.stringify({postId, rev, state}) )
+    if (!verified && typeof msg.rev === 'number') {
+      const canonical = JSON.stringify({ postId: msg.postId, rev: msg.rev, state: msg.newState });
+      const canonicalBytes = encoder.encode(canonical);
+      try {
+        verified = nacl.sign.detached.verify(canonicalBytes, sigBytes, pubKeyBytes);
+      } catch (e) {
+        console.warn('[LP] state_update: canonical verify threw', e);
+      }
+    }
+
+    if (!verified) {
+      console.warn('[LP] state_update: signature verification failed for', msg.postId, 'from', msg.executorHandle);
+      return;
+    }
+
+    // drop duplicates / out-of-order updates when rev is available
+    if (typeof msg.rev === 'number') {
+      const currentRev = typeof post.lpRev === 'number' ? post.lpRev : 0;
+      if (msg.rev <= currentRev) {
+        // stale or duplicate — ignore quietly
+        return;
+      }
+      post.lpRev = msg.rev;
+    }
+
+    // apply state (keep the string; parse for convenience if needed)
+    post.lpState = msg.newState;
+    try {
+      post.lpStateObj = JSON.parse(msg.newState);
+    } catch {
+      // keep as string if not valid JSON
+      delete post.lpStateObj;
+    }
+
+    // (optional) note executor for UI/debugging
+    post.lpLastExecutor = msg.executorHandle;
+    post.lpUpdatedAt = Date.now();
+
+    // surface carriers membership skew for diagnostics (do not reject!)
+    if (msg.carriersHash && typeof computeCarriersHash === 'function') {
+      const localHash = computeCarriersHash(post.carriers);
+      if (localHash !== msg.carriersHash) {
+        console.debug('[LP] state_update: carriers hash mismatch (accepting update anyway). remote=', msg.carriersHash, 'local=', localHash);
+        // you could trigger a resync here:
+        // enqueueCarriersResync(msg.postId);
+      }
+    }
+
+    // refresh UI
+    if (typeof refreshPost === 'function') {
+      refreshPost(post);
+    } else if (typeof renderPost === 'function') {
+      renderPost(post);
+    }
+
+  } catch (err) {
+    console.error('[LP] state_update: unhandled error', err, msg);
+  }
+}
+
+
 
 function toggleCarry(id, isManual = true) {
     const p = state.posts.get(id);
@@ -812,18 +1308,27 @@ function toggleCarry(id, isManual = true) {
         state.explicitlyCarrying.add(id);
         broadcast({ type: "carrier_update", postId: id, peer: state.myIdentity.handle, carrying: true });
         refreshPost(p);
+        state.scribe?.subscribe(`#lp:${id}`);
     } else {
         p.carriers.delete(state.myIdentity.handle);
         state.explicitlyCarrying.delete(id);
         broadcast({ type: "carrier_update", postId: id, peer: state.myIdentity.handle, carrying: false });
         if (p.carriers.size === 0 && !isReply(p)) {
             if (!debugPostRemoval(p.id, 'toggleCarry - withdrawn')) {
+                
+                const post = state.posts.get(id);
+                if (post?.postType === 'living') {
+                  state.scribe?.unsubscribe(`#lp:${id}`);
+                }               
+                
                 state.posts.delete(p.id);
+                
                 dropPost(id);
             }
         } else {
             refreshPost(p);
         }
+        state.scribe?.unsubscribe(`#lp:${id}`);
     }
 }
 
@@ -896,22 +1401,27 @@ async function createReply(parentId) {
     const input = document.getElementById(`reply-input-${parentId}`);
     if (!input) return;
 
-    const btn = input.parentElement.querySelector('button');
+    // --- Note: This next line correctly finds the button within the reply form ---
+    const btn = input.parentElement.querySelector('button.primary-button');
     btn.disabled = true;
+    btn.textContent = 'Mixing...'; // <-- ADD THIS LINE
 
     try {
         const txt = input.value.trim();
         if (!txt) {
             btn.disabled = false;
-            return; // Exit silently if there is no text
+            btn.textContent = '🔥'; // <-- ADD THIS LINE TO RESET ON EMPTY INPUT
+            return; 
         }
         
         const parentPost = state.posts.get(parentId);
         if (!parentPost) {
             notify("Parent post no longer exists!");
             btn.disabled = false;
+            btn.textContent = '🔥'; // <-- AND THIS ONE
             return;
         }
+
 
         // --- Local pre-checks ---
         if (await isToxic(txt)) {
@@ -948,7 +1458,7 @@ async function createReply(parentId) {
         input.value = "";
         document.getElementById(`reply-char-${parentId}`).textContent = 0;
         removeReplyImage(parentId);
-        toggleReplyForm(parentId); // Hide the form after successfully sending
+        toggleReplyForm(parentId); 
         notify("Reply sent to the mixing layer!");
 
     } catch (error) {
@@ -957,6 +1467,7 @@ async function createReply(parentId) {
     } finally {
         // IMPORTANT: Always re-enable the button, whether it succeeded or failed.
         btn.disabled = false;
+        btn.textContent = '🔥'; // <-- ADD THIS LINE
     }
 }
 
@@ -2136,7 +2647,8 @@ async function init() {
       broadcastProfileUpdate,
       initializeUserProfileSection
     });
-    
+        registerHandler('scribe', handleScribeMessage);
+
     // Set up handlers but DON'T process network messages yet
     messageBus.registerHandler('scribe:new_post', (data) => {
       if (identityReady) {
@@ -2153,7 +2665,13 @@ async function init() {
         handleParentUpdate(data.message);
       }
     });
-    
+    messageBus.registerHandler('scribe:lp_interaction_proposal', (data) => {
+      if (identityReady) handle_lp_interaction_proposal(data.message, null);
+    });
+    messageBus.registerHandler('scribe:lp_state_update', (data) => {
+      if (identityReady) handle_lp_state_update(data.message, null);
+    });
+
     registerHandler('new_post', handleNewPost);
     registerHandler('provisional_identity_claim', async (msg) => await handleProvisionalClaim(msg.claim));
     registerHandler('identity_confirmation_slip', async (msg) => await handleConfirmationSlip(msg.slip));
@@ -2167,8 +2685,11 @@ async function init() {
     registerHandler('dm_request', handleDMRequest);
     registerHandler('dm_approve', handleDMApprove);
     registerHandler('dm_revoke', handleDMRevoke);
+    registerHandler('lp_interaction_proposal', handle_lp_interaction_proposal);
+    registerHandler('lp_state_update', handle_lp_state_update);
     setSendPeer(sendPeer);
-
+    messageBus.setSendPeer(sendPeer);
+    
     // --- Step 2: Initialize WASM and Base Network ---
     await wasmVDF.initialize();
     
@@ -2307,7 +2828,7 @@ console.log("[Identity] Identity ready, processing queued messages...");
     // --- Step 7: Finalize UI and start background tasks ---
     await initContentFilter();
     await initImageFilter();
-    
+    initializeLivingPostComposer();
     document.getElementById("loading").style.display = "none";
     startMaintenanceLoop();
     initTopics();
@@ -2360,6 +2881,26 @@ console.log("[Identity] Identity ready, processing queued messages...");
   document.getElementById("loading").innerHTML = `<div class="loading-content"><h2>Init Failed</h2><p>${e.message}</p><button onclick="location.reload()">Try Again</button></div>`;
 }
 }
+
+function processLpTemplate(template) {
+    // Convert <# ... #> into valid JS for string building
+    let code = 'let html = "";\n';
+    code += 'const lines = `' + template.replace(/`/g, '\\`') + '`.split("\\n");\n';
+    code += 'for (const line of lines) {\n';
+    code += '  let processedLine = line';
+
+    // Replace ${...} with template literal syntax
+    code += ".replace(/\\$\\{([^\\}]+)\\}/g, (match, expr) => `${eval(expr)}`);\n";
+    
+    // Handle <# ... #> for logic
+    code += 'processedLine = processedLine.replace(/<#\\s*(.*?)\\s*#>/g, (match, logic) => eval(logic) || "");\n';
+
+    code += '  html += processedLine + "\\n";\n';
+    code += '}\n';
+    code += 'return html;\n';
+    return code;
+}
+
 
 async function handlePostRating(msg, fromWire) {
     const { postId, voter, vote, reputation, timestamp, signature, voterPublicKey } = msg;
@@ -2441,27 +2982,12 @@ function initializeP2PProtocols() {
   // Initialize Scribe
   try {
     state.scribe = new Scribe(state.myIdentity.nodeId, state.dht);
-    state.scribe.deliverMessage = (topic, message) => {
-      if (message.type === 'new_post' && message.post) {
-        handleNewPost(message.post, null);
-      } else if (message.type === 'PROFILE_UPDATE') {
-        handleProfileUpdate(message, null);
-      } else if (message.type === 'parent_update') {
-        // New handler for reply notifications
-        handleParentUpdate(message);
-      }
-    };
+    state.scribe.startMaintenance();
+
   } catch (e) {
     console.error("Failed to initialize Scribe:", e);
   }
 
-  // Initialize Plumtree
- // state.plumtree = new Plumtree(state.myIdentity.nodeId, state.hyparview);
- // state.plumtree.deliver = (message) => {
- //   if (message.type === 'post') {
- //     handleNewPost(message.data, null);
- //   }
- // };
   
   console.log("P2P protocol (Scribe) initialized.");
   // Start routing manager
@@ -2598,6 +3124,7 @@ function debugPostRemoval(postId, reason) {
         window.updateHotTopics = updateHotTopics;
     window.handleProfileUpdate = handleProfileUpdate;
     window.unsubscribeFromProfile =unsubscribeFromProfile;
+window.interactWithLivingPost = interactWithLivingPost;
 
 window.sendDMRequest = sendDMRequest;
 window.approveDMRequest = approveDMRequest;

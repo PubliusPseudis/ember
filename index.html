@@ -122,55 +122,189 @@
       <h1 class="app-title">🔥 Ember</h1>
       <button id="toggle-filters-button" class="header-icon-button" onclick="toggleMobileFilters()">📶</button>
       </header>
+<!-- Desktop title bar -->
+<div id="titlebar" class="desktop-only">
+<h1 class="app-title">🔥 Ember</h1> 
 
+<div class="title-actions desktop-only">
+  <div class="feed-controls feed-controls--desktop">
+    <div class="topic-filter">
+      <label>Filter by topic:</label>
+      <select id="topic-filter-desktop" onchange="syncDesktopTopicFilter(this.value)">
+        <option value="">All Topics</option>
+        <option value="#general">#general</option>
+        <option value="#ember">#ember</option>
+      </select>
+    </div>
+    <div class="feed-mode">
+      <button class="mode-button active" onclick="setFeedMode('all')">All Posts</button>
+      <button class="mode-button" onclick="setFeedMode('topics')">My Topics</button>
+      <button class="mode-button" onclick="setFeedMode('forYou')">✨ For You</button>
+    </div>
+  </div>
+</div>
+    <div id="user-profile-controls" class="user-profile-section" style="display: block;">
+
+        <div class="user-profile-header" onclick="window.openProfileForHandle(window.state.myIdentity.handle)">
+            <div class="user-profile-pic">
+              <div class="profile-picture-placeholder-small">👤</div>
+            </div>
+            <div class="user-profile-info">
+                <div id="user-profile-handle" class="user-profile-handle"></div>
+                <div class="user-profile-hint">View profile</div>
+            </div>
+        </div>
+    </div>
+</div>
     <!-- Main container -->
     <main id="app-container">
         
+        
+                <!-- View 3: Controls (More) -->
+<div class="app-view" id="column-controls">
 
-        
-        
+      
+
+
+      <!-- Topics section moved here for mobile -->
+    <div class="topics-section mobile-topics">
+        <h3>📡 Manage Topics</h3>
+        <div class="subscribed-topics" id="subscribed-topics"></div>
+        <div class="topic-input-wrapper">
+          <input type="text" id="topic-input" placeholder="Subscribe to #topic" />
+          <button onclick="subscribeToTopic()" class="subscribe-button">+</button>
+        </div>
+                    <div class="topic-stats" id="topic-stats"></div>
+        <div class="topic-suggestions-container">
+          <h4>Suggested for You</h4>
+          <div id="topic-suggestions-list">
+            <div class="empty-state">Finding suggestions...</div>
+          </div>
+        </div>
+        <div class="topic-stats" id="mobile-topic-stats"></div>
+    </div>
+
+    <div id="controls-footer">
+        <button id="theme-toggle-button" class="secondary-button">☀️ Light Mode</button>
+    </div>
+    
+    
+          <div id="status">
+        <span><span class="status-indicator" id="status-dot"></span>Connected to <span id="peer-count">0</span> peers</span>
+        <span><span id="post-count">0</span> posts alive</span>
+      </div>
+
+
+
+      <div class="network-info" id="network-info" style="display:none">
+        <strong>Your Network ID:</strong> <code id="network-id"></code><br />
+        <small>Share this with friends to connect directly</small>
+      </div>
+
+      <button id="clear-data-button" class="secondary-button" onclick="clearLocalData()">
+        🗑️ Clear Local Data
+      </button>
+      
+
+    
+    
+    
+    
+</div>
+      
       <!-- View 1: Feed (The Void) -->
 <div class="app-view active" id="column-feed">
+
         <div id="collapsible-feed-header">
           <div class="column-header">
             <h2>The Void</h2>
           </div>
-          <div class="topics-section">
-            <h3>📡 Topics</h3>
-            
-            <div class="subscribed-topics" id="subscribed-topics"></div>
-            <div class="topic-input-wrapper">
-              <input type="text" id="topic-input" placeholder="Subscribe to #topic" />
-              <button onclick="subscribeToTopic()" class="subscribe-button">+</button>
-            </div>
-            <div class="topic-stats" id="topic-stats"></div>
-          </div>
 
-          <div class="feed-controls">
-            <div class="topic-filter">
-      
-              <label>Filter by topic:</label>
-              <select id="topic-filter" onchange="filterByTopic()">
-                <option value="">All Topics</option>
-                <option value="#general">#general</option>
-                <option value="#ember">#ember</option>
-              </select>
-            </div>
+
+            <div class="feed-controls">
+                <div class="topic-filter">
           
-            <div class="feed-mode">
-              <button class="mode-button active" onclick="setFeedMode('all')">All Posts</button>
-              <button class="mode-button" onclick="setFeedMode('topics')">My Topics</button>
-              <button class="mode-button" onclick="setFeedMode('forYou')">✨ For You</button>
+                    <label>Filter by topic:</label>
+                    <select id="topic-filter" onchange="filterByTopic()">
+                        <option value="">All Topics</option>
+                        <option value="#general">#general</option>
+                        <option value="#ember">#ember</option>
+                    </select>
+                </div>
+              
+                <div class="feed-mode">
+                  <button class="mode-button active" onclick="setFeedMode('all')">All Posts</button>
+                  <button class="mode-button" onclick="setFeedMode('topics')">My Topics</button>
+                  <button class="mode-button" onclick="setFeedMode('forYou')">✨ For You</button>
+                </div>
             </div>
-          </div>
         </div>
+              <!-- Desktop compose box (hidden on mobile) -->
+    <div id="compose" class="desktop-only">
+        <div class="compose-tabs">
+            <button class="compose-tab active" onclick="switchComposeTab('standard')">Standard</button>
+            <button class="compose-tab" onclick="switchComposeTab('living')">Living Post</button>
+        </div>
+
+        <div id="standard-compose-content">
+            <textarea id="post-input" placeholder="Write something ephemeral…" maxlength="500"></textarea>
+            <div class="image-preview" id="image-preview" style="display:none;">
+                <img id="preview-img" />
+                <button onclick="removeImage()">✕</button>
+            </div>
+        </div>
+
+        <div id="living-compose-content" style="display:none;">
+            <input type="text" id="lp-title-input" class="lp-title-input" placeholder="Title for your Living Post..." />
+            <div class="lp-editor-grid">
+                <div class="lp-editor-pane" data-pane="code">
+                    <div class="lp-editor-header">
+                        <span>Code (JavaScript)</span>
+                        <button class="lp-maximize-btn" data-pane="code" title="Toggle Maximize"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg></button>
+                    </div>
+                    <textarea id="lp-code-editor-textarea"></textarea>
+                </div>
+                <div class="lp-editor-pane" data-pane="state">
+                    <div class="lp-editor-header">
+                        <span>Initial State (JSON)</span>
+                        <button class="lp-maximize-btn" data-pane="state" title="Toggle Maximize"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg></button>
+                    </div>
+                    <textarea id="lp-state-editor-textarea"></textarea>
+                </div>
+                <div class="lp-editor-pane" data-pane="renderer">
+                   <div class="lp-editor-header">
+                        <span>Renderer (HTML Template)</span>
+                        <button class="lp-maximize-btn" data-pane="renderer" title="Toggle Maximize"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg></button>
+                    </div>
+                    <textarea id="lp-renderer-editor-textarea"></textarea>
+                </div>
+                <div class="lp-editor-pane lp-preview-pane" data-pane="preview">
+                    <div class="lp-editor-header">
+                        <span>Live Preview</span>
++                        <div>
++                            <span id="lp-preview-error" class="lp-preview-error"></span>
++                            <button class="lp-maximize-btn" data-pane="preview" title="Toggle Maximize"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg></button>
++                        </div>
+                    </div>
+                    <iframe id="lp-preview-frame" sandbox="allow-scripts"></iframe>
+                </div>
+            </div>
+        </div>
+        
+        <div class="compose-footer">
+            <input type="file" id="image-input" accept="image/*" style="display:none;" onchange="handleImageSelect(this)" />
+            <button id="image-upload-button" onclick="document.getElementById('image-input').click()" class="image-button">📷</button>
+            <span class="char-count"><span id="char-current">0</span>/1120</span>
+            <button id="send-button" class="primary-button" onclick="createPostWithTopics()">🔥</button>
+        </div>
+    </div>
+    <br />
         <div id="posts"></div>
       </div>
 
       <!-- View 2: Bonfire -->
       <div class="app-view" id="column-bonfire">
         <div class="column-header">
-          <h2 id="drawer-title">The Bonfire</h2>
           <div class="drawer-tabs">
             <button class="drawer-tab active" data-drawer="bonfire" onclick="switchDrawer('bonfire')">
               <span class="tab-icon">🔥</span>
@@ -217,84 +351,21 @@
         </div>
       </div>
 
-    <!-- View 3: Controls (More) -->
-    <div class="app-view" id="column-controls">
-      <h1>🔥 Ember</h1>
-      <p class="tagline">Fan the flames or watch them die</p>
+
       
-        <div id="user-profile-controls" class="user-profile-section" style="display: block;">
-
-        <div class="user-profile-header" onclick="window.openProfileForHandle(window.state.myIdentity.handle)">
-          <div id="user-profile-pic" class="user-profile-pic">
-            <div class="profile-picture-placeholder-small">👤</div>
-          </div>
-          <div class="user-profile-info">
-            <div id="user-profile-handle" class="user-profile-handle"></div>
-            <div class="user-profile-hint">View profile</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Topics section moved here for mobile -->
-      <div class="topics-section mobile-topics">
-        <h3>📡 Manage Topics</h3>
-        <div class="subscribed-topics" id="mobile-subscribed-topics"></div>
-        <div class="topic-input-wrapper">
-          <input type="text" id="mobile-topic-input" placeholder="Subscribe to #topic" />
-          <button onclick="subscribeToTopicMobile()" class="subscribe-button">+</button>
-        </div>
-        
-        <div class="topic-suggestions-container">
-          <h4>Suggested for You</h4>
-          <div id="topic-suggestions-list">
-            <div class="empty-state">Finding suggestions...</div>
-          </div>
-        </div>
-        <div class="topic-stats" id="mobile-topic-stats"></div>
-      </div>
-
-      <div id="controls-footer">
-        <button id="theme-toggle-button" class="secondary-button">☀️ Light Mode</button>
-      </div>
-      
-      <!-- Desktop compose box (hidden on mobile) -->
-      <div id="compose" class="desktop-only">
-        <textarea id="post-input" placeholder="Write something ephemeral…" maxlength="500"></textarea>
-        <div class="image-preview" id="image-preview" style="display:none;">
-          <img id="preview-img" />
-          <button onclick="removeImage()">✕</button>
-        </div>
-        <div class="compose-footer">
-          <input type="file" id="image-input" accept="image/*" style="display:none;" onchange="handleImageSelect(this)" />
-          <button onclick="document.getElementById('image-input').click()" class="image-button">📷</button>
-          <span class="char-count"><span id="char-current">0</span>/1120</span>
-          <button id="send-button" class="primary-button" onclick="createPostWithTopics(document.getElementById('post-input').value, document.getElementById('image-preview').dataset.imageData)">🔥</button>
 
 
-        </div>
-      </div>
 
-      <div id="status">
-        <span><span class="status-indicator" id="status-dot"></span>Connected to <span id="peer-count">0</span> peers</span>
-        <span><span id="post-count">0</span> posts alive</span>
-      </div>
+ 
 
-      <div class="network-info" id="network-info" style="display:none">
-        <strong>Your Network ID:</strong> <code id="network-id"></code><br />
-        <small>Share this with friends to connect directly</small>
-      </div>
-
-      <button id="clear-data-button" class="secondary-button" onclick="clearLocalData()">
-        🗑️ Clear Local Data
-      </button>
-      
-      <footer>
-        <p class="network-notice">
-          <a href="#" onclick="openPrivacyNotice()">Privacy Notice</a> | Semi-Anonymous P2P Network
-        </p>
-      </footer>
-    </div>
+    
     </main>
+    <!-- Desktop footer -->
+<footer id="app-footer" class="desktop-only">
+  <p class="network-notice">
+    <a href="#" onclick="openPrivacyNotice()">Privacy Notice</a> · Semi-Anonymous P2P Network
+  </p>
+</footer>
 
     <!-- Mobile bottom navigation -->
     <nav class="bottom-nav">
@@ -329,7 +400,7 @@
           <input type="file" id="mobile-image-input" accept="image/*" style="display:none;" onchange="handleMobileImageSelect(this)" />
           <button onclick="document.getElementById('mobile-image-input').click()" class="image-button">📷</button>
           <span class="char-count"><span id="mobile-char-current">0</span>/1120</span>
-          <button id="mobile-send-button" class="primary-button" onclick="createPostWithTopics(document.getElementById('mobile-post-input').value, document.getElementById('mobile-image-preview').dataset.imageData); closeMobileCompose();">🔥</button>
+            <button id="mobile-send-button" class="primary-button" onclick="createPostWithTopics(); closeMobileCompose();">🔥</button>
 
         </div>
       </div>

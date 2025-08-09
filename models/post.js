@@ -24,10 +24,7 @@ export class Post {
             throw new Error('Post content must be a non-empty string');
         }
         
-        if (content.length > CONFIG.MAX_POST_SIZE) {
-            throw new Error(`Post content too long: ${content.length} characters (max ${CONFIG.MAX_POST_SIZE})`);
-        }
-        
+       
         // Core post data
         this.id = generateId();
         this.content = sanitize(content);
@@ -35,6 +32,13 @@ export class Post {
         this.parentId = parentId;
         this.imageData = imageData; // Temporary storage for base64 before processing
         this.imageHash = null; // Will be populated by processImage()
+
+        // Living Post properties
+        this.postType = 'standard';
+        this.lpCode = null;       // The user's JavaScript code
+        this.lpState = null;      // The current state as a JSON string
+        this.lpRenderer = null;   // The HTML template for rendering
+
 
         // Author's identity information
         if (!state.myIdentity || !state.myIdentity.handle) {
@@ -85,8 +89,26 @@ export class Post {
         this.trustScore = 0;
         this.attesters = new Set();
         this.attestationTimestamps = new Map();
+        
+        // This check runs AFTER all properties have been assigned.
+        // It will be checked again before sending, but this provides early feedback.
+        if (this.getTotalSize() > CONFIG.MAX_POST_SIZE) {
+            throw new Error(`Post is too large: ${this.getTotalSize()} bytes (max ${CONFIG.MAX_POST_SIZE})`);
+        }
+        
     }
-
+    getTotalSize() {
+        if (this.postType === 'living') {
+            // For Living Posts, calculate the combined size of all components.
+            return (this.content?.length || 0) +
+                   (this.lpCode?.length || 0) +
+                   (this.lpState?.length || 0) +
+                   (this.lpRenderer?.length || 0);
+        } else {
+            // For standard posts, just check the content length.
+            return this.content?.length || 0;
+        }
+    }
     async processImage() {
         if (this.imageData && !this.imageHash) {
             const imageStore = getImageStore();
@@ -126,7 +148,11 @@ export class Post {
         imageHash: this.imageHash,
         authorPublicKey: publicKeyBase64,
         vdfInput: this.vdfInput, // Add VDF input to the signature
-        vdfProof: this.vdfProof ? serializeVdfProof(this.vdfProof) : null // Add serialized VDF proof
+        vdfProof: this.vdfProof ? serializeVdfProof(this.vdfProof) : null, // Add serialized VDF proof
+          postType: this.postType,
+          lpCode: this.lpCode,
+          lpState: this.lpState,
+          lpRenderer: this.lpRenderer
       };
       const signedString = JSON.stringify(signableData);
       return new TextEncoder().encode(signedString);
@@ -148,7 +174,11 @@ export class Post {
  
            vdfInput: this.vdfInput,
           vdfProof: this.vdfProof ?
-            serializeVdfProof(this.vdfProof) : null
+            serializeVdfProof(this.vdfProof) : null,
+                      postType: this.postType,
+          lpCode: this.lpCode,
+          lpState: this.lpState,
+          lpRenderer: this.lpRenderer
         };
         console.log(`secret key: ${secretKey}`);
         const messageBytes = new TextEncoder().encode(JSON.stringify(signableData));
@@ -195,7 +225,11 @@ export class Post {
           imageHash: this.imageHash,
           authorPublicKey: arrayBufferToBase64(this.authorPublicKey),
           vdfInput: this.vdfInput,
-          vdfProof: this.vdfProof ? serializeVdfProof(this.vdfProof) : null
+          vdfProof: this.vdfProof ? serializeVdfProof(this.vdfProof) : null,
+          postType: this.postType,
+          lpCode: this.lpCode,
+          lpState: this.lpState,
+          lpRenderer: this.lpRenderer
         };
         
         const messageToVerifyBytes = new TextEncoder().encode(JSON.stringify(signableData));
@@ -415,6 +449,10 @@ export class Post {
             carriers: [...this.carriers],
             replies: [...this.replies],
             depth: this.depth,
+            postType: this.postType,
+            lpCode: this.lpCode,
+            lpState: this.lpState,
+            lpRenderer: this.lpRenderer,
             ratings: Array.from(this.ratings.entries()).map(([handle, data]) => ({
                 handle,
                 vote: data.vote,
@@ -464,6 +502,13 @@ export class Post {
         p.authorVdfInput = j.authorVdfInput || null;
         p.vdfInput = j.vdfInput || null;
         p.depth = typeof j.depth === 'number' ? j.depth : 0;
+
+
+        p.postType = j.postType || 'standard';
+        p.lpCode = j.lpCode || null;
+        p.lpState = j.lpState || null;
+        p.lpRenderer = j.lpRenderer || null;
+
 
         // Deserialize VDF proofs with validation
         if (j.authorVdfProof && typeof j.authorVdfProof === 'object') {

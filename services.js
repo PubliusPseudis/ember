@@ -15,6 +15,7 @@ import { StateManager } from './storage.js';
 import { setServices } from './services/instances.js';
 import { activityProfile } from './services/activity-profile.js';
 import { contentSimilarity } from './services/content-similarity.js';
+import { LivingPostManager } from './services/living-post-vm.js';
 
 // --- SERVICE INSTANCES ---
 export function initializeServices(dependencies = {}) {
@@ -40,7 +41,8 @@ export function initializeServices(dependencies = {}) {
     mixingNode: new MixingNode(),
     relayCoordinator: new RelayCoordinator(),
     activityProfile: activityProfile,
-    contentSimilarity: contentSimilarity
+    contentSimilarity: contentSimilarity,
+    livingPostManager: new LivingPostManager()
   };
   
   // First, make all services globally available.

@@ -1,8 +1,8 @@
 export const CONFIG = {
   MAX_POSTS: 1000,
-  MAX_POST_SIZE: 1120,
+  MAX_POST_SIZE: 112000,
   MAX_PEERS: 50,
-  MAX_MESSAGE_SIZE: 1 * 1024 * 1024, // 1MB
+  MAX_MESSAGE_SIZE: 10 * 1024 * 1024, // 10MB
   RATE_LIMIT_MESSAGES: 250,
   RATE_LIMIT_WINDOW: 60_000,
   GARBAGE_COLLECT_INTERVAL: 60_000,
@@ -14,6 +14,10 @@ export const CONFIG = {
   TRUST_THRESHOLD: 30, // Minimum trust score to skip verification
   ATTESTATION_TIMEOUT: 15000, // Max time to wait for attestations (15 second)
   MAX_PENDING_MESSAGES: 100, // Max messages to queue per peer before handshake
+
+ // LP moderation mode: 'balanced' or 'off'
+  LP_MODERATION: 'balanced',
+
 
   // --- NEW: Universal Privacy Mixing Layer ---
   PRIVACY_CONFIG: {

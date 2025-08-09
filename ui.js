@@ -9,6 +9,16 @@ import { state } from './state.js';
 import { sanitize, sanitizeDM } from './utils.js';
 import { CONFIG } from './config.js';
 import DOMPurify from 'dompurify';
+import Mustache from 'mustache';
+import CodeMirror from 'codemirror';
+import 'codemirror/lib/codemirror.css';
+import 'codemirror/theme/material-darker.css';
+import 'codemirror/mode/javascript/javascript.js';
+import 'codemirror/mode/xml/xml.js';
+import 'codemirror/mode/htmlmixed/htmlmixed.js';
+
+//canvas engine for lp games
+import { drawGfxIntoCanvas } from './engine-canvas.js';
 
 // Dynamic sendPeer injection
 let sendPeerFunction = null;
@@ -26,6 +36,7 @@ let bonfireUpdateTimeout;
 let showAllShards = true;
 
 export let currentDMRecipient = null;
+let lpCodeEditor, lpStateEditor, lpRendererEditor;
 
 const animationObserver = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
@@ -178,6 +189,13 @@ function getHeatLevel(carrierCount) {
 async function updateInner(el, p) {
   if (!p) return;
 
+  if (p.postType === 'living' && state.scribe) {
+    const topic = `#lp:${p.id}`;
+    if (!state.scribe.subscribedTopics.has(topic)) {
+      state.scribe.subscribe(topic).catch(e => console.error(`Failed to subscribe to LP topic ${topic}:`, e));
+    }
+  }
+
   // Initialize properties if missing
   if (!p.carriers) p.carriers = new Set();
   if (!p.replies) p.replies = new Set();
@@ -301,6 +319,104 @@ async function updateInner(el, p) {
 
   // Preserve existing replies container
   const existingRepliesContainer = el.querySelector('.replies-container');
+
+    if (p.postType === 'living') {
+        try {
+            const lpState = JSON.parse(p.lpState || '{}');
+            
+            // Use Mustache.js to render the template, then sanitize the output
+            const renderedHtml = Mustache.render(p.lpRenderer, lpState);
+            const sanitizedHtml = DOMPurify.sanitize(renderedHtml, {
+              ALLOWED_TAGS: [
+                'div','span','p','ul','ol','li','strong','em','b','i','small','br','hr',
+                'a','button','code','pre','canvas'
+              ],
+              ALLOWED_ATTR: ['href','title','class','data-input','aria-label','role','id','width','height','data-lp-canvas'],
+              FORBID_TAGS: [
+                'img','picture','source','video','audio','track','iframe','svg',
+                'object','embed','link','style'
+              ],
+              FORBID_ATTR: [
+                'style','src','srcset','poster','xlink:href','background','data'
+              ],
+              ALLOWED_URI_REGEXP: /^(https?:|#)/i
+            });
+            
+            el.innerHTML = `
+                <div class="author-section">
+                    ${authorProfilePic}
+                    <div class="author clickable-author" data-handle="${p.author}">${p.author} ${verificationBadge}</div>
+                </div>
+                <div class="content">${DOMPurify.sanitize(p.content)}</div>
+                <div class="living-post-container" id="lp-container-${p.id}">${sanitizedHtml}</div>
+
+                <div class="post-footer">
+                <div class="carriers">
+                    <span class="heat-level">${heatLevel}</span>
+                    <span class="carrier-count">${carrierCount}</span>&nbsp;${carrierCount === 1 ? 'breath' : 'breaths'}
+                    ${hasReplies ? `<span class="thread-stats"><span class="thread-ember">🔥</span> ${threadSize} in thread</span>` : ''}
+                </div>
+                <div class="rating-display">
+                    <span class="rating-score" title="Community rating: ${ratingSummary.weightedTotal.toFixed(1)} weighted votes">
+                        ${scoreEmoji} ${scoreDisplay}
+                    </span>
+                    <span class="rating-confidence" title="Confidence: ${(ratingSummary.confidence * 100).toFixed(0)}%">
+                        ${confidenceDisplay}
+                    </span>
+                </div>
+                <div class="rating-buttons">
+                    <button class="rate-up ${userVote === 'up' ? 'active' : ''}" 
+                            onclick="ratePost('${p.id}', 'up')" 
+                            title="Good post"
+                            ${userVote === 'up' ? 'disabled' : ''}>
+                        👍 <span class="vote-count">${ratingSummary.upvotes}</span>
+                    </button>
+                    <button class="rate-down ${userVote === 'down' ? 'active' : ''}" 
+                            onclick="ratePost('${p.id}', 'down')" 
+                            title="Poor post"
+                            ${userVote === 'down' ? 'disabled' : ''}>
+                        👎 <span class="vote-count">${ratingSummary.downvotes}</span>
+                    </button>
+                </div>
+                <div class="post-actions">
+                    <button class="carry-button ${mine ? 'withdrawing' : 'blowing'}" onclick="toggleCarry('${p.id}')">
+                        ${isAuthor ? "🌬️" : (mine ? "💨" : "🔥")}
+                    </button>
+                    <button class="reply-button" onclick="toggleReplyForm('${p.id}')">💬</button>
+                    ${!isAuthor ? `<button class="dm-button" onclick="requestOrOpenDM('${p.author}')">📨</button>` : ''}
+                </div>
+            </div>
+            `;
+        
+        
+            // Add event listeners
+            const container = el.querySelector(`#lp-container-${p.id}`);
+            container.querySelectorAll('[data-input]').forEach(interactiveEl => {
+                interactiveEl.addEventListener('click', () => {
+                    const inputData = interactiveEl.getAttribute('data-input');
+                    window.interactWithLivingPost(p.id, inputData);
+                });
+            });
+
+            // If LP provided gfx, draw it into the canvas (if present)
+            try {
+              const cvs = container.querySelector('canvas[data-lp-canvas]');
+              if (cvs) {
+                const st = JSON.parse(p.lpState || '{}');
+                if (st && st.gfx) drawGfxIntoCanvas(cvs, st.gfx);
+              }
+            } catch (e) {
+              console.warn('[LP feed] canvas draw failed:', e);
+            }
+
+
+        } catch (e) {
+            console.error("Failed to render Living Post:", e);
+            el.innerHTML += `<div class="error-message">Error rendering this Living Post.</div>`;
+        }
+        return; // Exit to skip standard rendering
+    }
+
 
 el.innerHTML = `
     <div class="author-section">
@@ -488,49 +604,7 @@ function toggleThread(postId) {
         }
     }
 }
-/*
-function updateBonfire() {
-    const bonfireContentEl = document.getElementById('bonfire-content');
-    if (!bonfireContentEl) return;
 
-    const threads = new Map();
-
-    for (const [id, post] of state.posts) {
-        const rootId = findRootPost(id);
-        if (!threads.has(rootId)) {
-            threads.set(rootId, {
-                root: state.posts.get(rootId),
-                heat: 0,
-                replyCount: 0,
-                totalCarriers: new Set()
-            });
-        }
-
-        const thread = threads.get(rootId);
-        thread.replyCount++;
-        post.carriers.forEach(c => thread.totalCarriers.add(c));
-        thread.heat = thread.totalCarriers.size + thread.replyCount * 2;
-    }
-
-    const hottest = Array.from(threads.values())
-        .filter(t => t.heat >= 10)
-        .sort((a, b) => b.heat - a.heat)
-        .slice(0, 10);
-
-    if (hottest.length > 0) {
-        const bonfireHtml = hottest.map(thread => `
-      <div class="bonfire-item" onclick="scrollToPost('${thread.root.id}')">
-        <span class="bonfire-heat">${thread.heat} 🔥</span>
-        <span class="thread-stats">${thread.replyCount} replies</span>
-        <span class="bonfire-preview">${(thread.root.content.substring(0, 60))}...</span>
-      </div>
-    `).join('');
-        bonfireContentEl.innerHTML = `<div class="bonfire-posts">${bonfireHtml}</div>`;
-    } else {
-        bonfireContentEl.innerHTML = '<div class="empty-state">No hot threads right now. Start a conversation!</div>';
-    }
-}
-*/
  async function updateHotTopics() {
     const bonfireContentEl = document.getElementById('bonfire-content');
     if (!bonfireContentEl) return;
@@ -541,24 +615,27 @@ function updateBonfire() {
     }
 
     try {
-        // --- CHANGE THIS LINE ---
         const data = await state.dht.get('global-topic-index:v1'); 
-        // --- END CHANGE ---
 
-        if (!data || data.length === 0) { // It's an array now
+        // Filter out internal LP topics (e.g., #lp:abcdef)
+        const filtered = (Array.isArray(data) ? data : []).filter(([topic]) => {
+          return !/^#lp:/i.test(topic);
+        });
+
+        if (filtered.length === 0) {
             bonfireContentEl.innerHTML = '<div class="empty-state">No hot topics found yet. Check back soon!</div>';
             return;
         }
 
-        // The data is already an array of [topic, info] pairs.
-        const topicsHtml = data.map(([topic, info]) => `
+        // The data is an array of [topic, info] pairs.
+        const topicsHtml = filtered.map(([topic, info]) => `
             <div class="bonfire-item" onclick="renderHotPostsForTopic('${topic}')">
                 <span class="bonfire-heat">${Math.round(info.score)} 📈</span>
                 <span class="bonfire-preview">${topic}</span>
             </div>
         `).join('');
         bonfireContentEl.innerHTML = `<div class="bonfire-posts">${topicsHtml}</div>`;
-        document.getElementById('drawer-title').textContent = 'Hot Topics';
+
 
     } catch (e) {
         console.error("Failed to fetch hot topics:", e);
@@ -637,7 +714,6 @@ function renderHotPostsForTopic(topic) {
     const bonfireContentEl = document.getElementById('bonfire-content');
     if (!bonfireContentEl) return;
 
-    document.getElementById('drawer-title').textContent = `Bonfire: ${topic}`;
 
     const now = Date.now();
     const topicPosts = Array.from(state.posts.values()).filter(p => {
@@ -994,7 +1070,6 @@ window.saveProfile = async function() {
   
   // This broadcast will now include the metadata
   await window.broadcastProfileUpdate(updatedProfile);
-  renderProfile(updatedProfile);
   
   state.myIdentity.profile = updatedProfile;
   
@@ -1125,14 +1200,14 @@ function setFeedMode(mode) {
     });
     event.target.classList.add('active');
 
-    // --- ADD THIS LOGIC ---
     if (mode === 'forYou') {
         renderForYouFeed();
     } else {
         applyTopicFilter(); // Fall back to the original filter for 'all' and 'topics'
     }
-    // --- END CHANGE ---
 }
+
+
 
 function applyTopicFilter() {
     const posts = document.querySelectorAll('.post');
@@ -1421,7 +1496,7 @@ function updateStatus() {
 
     clearTimeout(bonfireUpdateTimeout);
     bonfireUpdateTimeout = setTimeout(() => {
-        if (currentDrawer === 'bonfire') {
+        if (typeof currentDrawer !== 'undefined' && currentDrawer === 'bonfire') {
             updateHotTopics();
         }
     }, 1000);
@@ -1431,7 +1506,7 @@ function updateAges() {
     document.querySelectorAll(".post .age").forEach(el => {
         const id = el.closest(".post").id.replace("post-", "");
         const p = state.posts.get(id);
-        if (p) el.textContent = timeAgo(p.timestamp);
+        if (p) el.textContent = getTimeAgo(p.timestamp);
     });
 }
 
@@ -2018,13 +2093,13 @@ window.switchDrawer = function(drawerId) {
     }, 150);
   }
   
-  // Update title
+
   const titles = {
     'bonfire': 'The Bonfire',
     'inbox': 'Message Embers',
     'network': 'Network Status'
   };
-  document.getElementById('drawer-title').textContent = titles[drawerId];
+
   
   // Update current drawer
   currentDrawer = drawerId;
@@ -2226,6 +2301,7 @@ document.head.appendChild(style);
 
 
 // Make functions available globally
+window.updateHotTopics = updateHotTopics;
 window.openDMPanel = openDMPanel;
 window.closeDMPanel = closeDMPanel;
 window.sendDM = sendDM;
@@ -2267,8 +2343,35 @@ window.showDMRequest = function(handle) {
     }
   }, 300);
 };
+function syncDesktopTopicFilter(val) {
+  const mobileSel = document.getElementById('topic-filter');
+  if (mobileSel) {
+    mobileSel.value = val;
+    mobileSel.dispatchEvent(new Event('change'));
+  } else {
+    // fallback: if your filterByTopic() reads from DOM, call it anyway
+    if (typeof filterByTopic === 'function') filterByTopic();
+  }
+}
 
+window.switchComposeTab = function(tab) {
+    const standardContent = document.getElementById('standard-compose-content');
+    const livingContent = document.getElementById('living-compose-content');
+    const imageButton = document.getElementById('image-upload-button');
 
+    document.querySelectorAll('.compose-tab').forEach(t => t.classList.remove('active'));
+    document.querySelector(`.compose-tab[onclick="switchComposeTab('${tab}')"]`).classList.add('active');
+
+    if (tab === 'living') {
+        standardContent.style.display = 'none';
+        livingContent.style.display = 'block';
+        imageButton.style.display = 'none'; // No images on LPs for now
+    } else {
+        standardContent.style.display = 'block';
+        livingContent.style.display = 'none';
+        imageButton.style.display = 'block';
+    }
+}
 window.toggleMobileFilters = function() {
   const filters = document.getElementById('collapsible-feed-header');
   if (filters) {
@@ -2712,6 +2815,338 @@ function hidePullToRefreshIndicator() {
   }
 }
 
+function getLivingPostValues() {
+    if (!lpCodeEditor) return null;
+    return {
+        code: lpCodeEditor.getValue(),
+        state: lpStateEditor.getValue(),
+        renderer: lpRendererEditor.getValue()
+    };
+}
+
+function updateLpPreview() {
+  if (!lpCodeEditor || !lpStateEditor || !lpRendererEditor) return;
+
+  const renderer = lpRendererEditor.getValue();
+  const stateStr = lpStateEditor.getValue();
+  const frame = document.getElementById('lp-preview-frame');
+  const errorEl = document.getElementById('lp-preview-error');
+  if (!frame || !errorEl) return;
+
+  errorEl.textContent = '';
+
+  try {
+    const lpState = JSON.parse(stateStr || '{}');
+
+    const renderedHtml = Mustache.render(renderer, lpState);
+    const sanitizedHtml = DOMPurify.sanitize(renderedHtml, {
+      ALLOWED_TAGS: [
+        'div','span','p','ul','ol','li','strong','em','b','i','small','br','hr',
+        'a','button','code','pre','canvas'
+      ],
+      ALLOWED_ATTR: ['href','title','class','data-input','aria-label','role','id','width','height','data-lp-canvas'],
+      FORBID_TAGS: [
+        'img','picture','source','video','audio','track','iframe','svg',
+        'object','embed','link','style'
+      ],
+      FORBID_ATTR: [
+        'style','src','srcset','poster','xlink:href','background','data'
+      ],
+      ALLOWED_URI_REGEXP: /^(https?:|#)/i
+    });
+
+    frame.srcdoc = `<style>body{font-family:sans-serif;color:#333}</style>${sanitizedHtml}`;
+
+    // draw to canvas if LP provided gfx
+    setTimeout(() => {
+      const doc = frame.contentDocument;
+      if (!doc) return;
+      const cvs = doc.querySelector('canvas[data-lp-canvas]');
+      if (cvs && lpState && lpState.gfx) {
+        try { drawGfxIntoCanvas(cvs, lpState.gfx); } catch (e) { console.warn('[LP preview] canvas draw failed:', e); }
+      }
+    }, 0);
+  } catch (e) {
+    errorEl.textContent = 'Error: ' + e.message;
+    frame.srcdoc = '';
+  }
+}
+
+// Clears LP title, editors, and preview safely
+function clearLivingPostEditors() {
+  try {
+    const titleEl = document.getElementById('lp-title-input');
+    if (titleEl) titleEl.value = '';
+    if (typeof lpCodeEditor !== 'undefined' && lpCodeEditor) lpCodeEditor.setValue('');
+    if (typeof lpStateEditor !== 'undefined' && lpStateEditor) lpStateEditor.setValue('');
+    if (typeof lpRendererEditor !== 'undefined' && lpRendererEditor) lpRendererEditor.setValue('');
+    const frame = document.getElementById('lp-preview-frame');
+    if (frame) frame.srcdoc = '';
+    const errEl = document.getElementById('lp-preview-error');
+    if (errEl) errEl.textContent = '';
+  } catch (e) {
+    console.warn('[LP] Failed to clear editors:', e);
+  }
+}
+
+
+function initializeLivingPostComposer() {
+    const commonConfig = {
+        lineNumbers: true,
+        theme: "material-darker",
+        lineWrapping: true,
+    };
+
+    lpCodeEditor = CodeMirror.fromTextArea(document.getElementById('lp-code-editor-textarea'), {
+        ...commonConfig,
+        mode: "javascript",
+    });
+
+    lpStateEditor = CodeMirror.fromTextArea(document.getElementById('lp-state-editor-textarea'), {
+        ...commonConfig,
+        mode: { name: "javascript", json: true },
+    });
+
+    lpRendererEditor = CodeMirror.fromTextArea(document.getElementById('lp-renderer-editor-textarea'), {
+        ...commonConfig,
+        mode: "htmlmixed",
+    });
+
+    // Add default content to guide the user
+    if (!lpCodeEditor.getValue()) {
+      lpCodeEditor.setValue(`
+// Crowd Dungeon — ES5, VM-safe (no DOM, no network).
+// Exposed helpers: getState(), setState(), getInteraction(), log()
+// 2025(c) CopyLeft - Publius Pseudis - GNU GPL v3
+function ensureInit(st) {
+  if (!st || typeof st !== 'object') st = {};
+  if (!st.map) {
+    st.map = [
+      "###########",
+      "#....#....#",
+      "#.##.#.##.#",
+      "#.#..@..#.#",
+      "#.##.#.##.#",
+      "#....#..E.#",
+      "###########"
+    ];
+    st.width  = st.map[0].length;
+    st.height = st.map.length;
+    st.pos = { x: 5, y: 3 };  // matches '@' in the map
+    st.exit = { x: 9, y: 5 }; // 'E' in the map
+    st.votes = { U:0, D:0, L:0, R:0 };
+    st.threshold = 3; // votes needed to move
+    st.steps = 0;
+    st.done = false;
+    st.history = [{ x: st.pos.x, y: st.pos.y }];
+    st.msg = "Vote on a direction. First to reach " + st.threshold + " moves!";
+  }
+  // derived render string
+  st.display = renderMap(st);
+  return st;
+}
+
+function renderMap(st) {
+  var rows = [];
+  for (var y = 0; y < st.height; y++) {
+    var row = st.map[y].split('');
+    // draw exit then player so player shows if overlapping when finished
+    row[st.exit.x] = 'E';
+    row[st.pos.x === st.exit.x && st.pos.y === y ? st.pos.x : st.pos.x] = row[st.pos.x];
+    row[st.pos.x] = (y === st.pos.y) ? '@' : row[st.pos.x];
+    rows.push(row.join(''));
+  }
+  return rows.join('\n');
+}
+
+function tryMove(st, dir) {
+  var dx = 0, dy = 0;
+  if (dir === 'U') dy = -1;
+  else if (dir === 'D') dy = 1;
+  else if (dir === 'L') dx = -1;
+  else if (dir === 'R') dx = 1;
+
+  var nx = st.pos.x + dx;
+  var ny = st.pos.y + dy;
+
+  if (ny < 0 || ny >= st.height || nx < 0 || nx >= st.width) {
+    st.msg = "Ouch! That's a wall.";
+    return;
+  }
+  if (st.map[ny].charAt(nx) === '#') {
+    st.msg = "Bumped a wall. Try another path.";
+    return;
+  }
+  st.pos = { x: nx, y: ny };
+  st.steps += 1;
+  st.history.push({ x: nx, y: ny });
+  if (st.history.length > 50) st.history.shift();
+
+  if (st.pos.x === st.exit.x && st.pos.y === st.exit.y) {
+    st.done = true;
+    st.msg = "🎉 Escaped in " + st.steps + " steps! Press Reset to run it again.";
+  } else {
+    st.msg = "Moved " + dir + ". Keep going!";
+  }
+}
+
+function tallyAndMaybeMove(st) {
+  // Move once any direction reaches threshold; then reset vote bucket
+  var dirs = ['U','D','L','R'];
+  for (var i=0; i<dirs.length; i++) {
+    var k = dirs[i];
+    if (st.votes[k] >= st.threshold) {
+      tryMove(st, k);
+      st.votes = { U:0, D:0, L:0, R:0 };
+      break;
+    }
+  }
+}
+
+function onInteract() {
+  var st = ensureInit(getState());
+  var inter = getInteraction() || {};
+  var input = inter.input || {};
+
+  if (!st.votes) st.votes = { U:0, D:0, L:0, R:0 };
+
+  if (input.action === 'vote' && !st.done) {
+    var d = input.dir;
+    if (d === 'U' || d === 'D' || d === 'L' || d === 'R') {
+      st.votes[d] = (st.votes[d] || 0) + 1;
+      st.msg = "Voted " + d + " (" + st.votes[d] + "/" + st.threshold + ")";
+      tallyAndMaybeMove(st);
+    }
+  } else if (input.action === 'undo') {
+    if (st.history && st.history.length > 1 && !st.done) {
+      st.history.pop();
+      var last = st.history[st.history.length-1];
+      st.pos = { x: last.x, y: last.y };
+      st.steps = Math.max(0, st.steps - 1);
+      st.votes = { U:0, D:0, L:0, R:0 };
+      st.msg = "Undid last move.";
+    }
+  } else if (input.action === 'reset') {
+    // Reinitialize but keep the same map & exit
+    var fresh = {};
+    fresh.map = st.map.slice(0);
+    fresh.width = st.width; fresh.height = st.height;
+    fresh.exit = { x: st.exit.x, y: st.exit.y };
+    fresh.pos = { x: 5, y: 3 };
+    fresh.votes = { U:0, D:0, L:0, R:0 };
+    fresh.threshold = st.threshold;
+    fresh.steps = 0; fresh.done = false;
+    fresh.history = [{ x: fresh.pos.x, y: fresh.pos.y }];
+    fresh.msg = "Fresh run. Vote to move!";
+    st = fresh;
+  } else if (input.action === 'threshold') {
+    // Adjust vote threshold (2..6)
+    var t = +input.value;
+    if (t >= 2 && t <= 6) {
+      st.threshold = t;
+      st.votes = { U:0, D:0, L:0, R:0 };
+      st.msg = "Threshold set to " + t + ".";
+    }
+  }
+
+  st.display = renderMap(st);
+  setState(st);
+}
+
+function onLoad() {
+  // No-op: render happens from state.
+}
+`);
+    }
+
+    if (!lpStateEditor.getValue()) {
+      lpStateEditor.setValue(`
+{
+  "map": [
+    "###########",
+    "#....#....#",
+    "#.##.#.##.#",
+    "#.#..@..#.#",
+    "#.##.#.##.#",
+    "#....#..E.#",
+    "###########"
+  ],
+  "width": 11,
+  "height": 7,
+  "pos": { "x": 5, "y": 3 },
+  "exit": { "x": 9, "y": 5 },
+  "votes": { "U": 0, "D": 0, "L": 0, "R": 0 },
+  "threshold": 3,
+  "steps": 0,
+  "done": false,
+  "history": [{ "x": 5, "y": 3 }],
+  "msg": "Vote on a direction. First to reach 3 moves!",
+  "display": "###########\n#....#....#\n#.##.#.##.#\n#.#..@..#.#\n#.##.#.##.#\n#....#..E.#\n###########"
+}
+      `);
+    }
+    
+    if (!lpRendererEditor.getValue()) {
+      lpRendererEditor.setValue(`
+<div class="lp crowd-dungeon">
+  <div class="header">
+    <strong>🗝️ Crowd Dungeon</strong>
+    <span> — escape together</span>
+  </div>
+
+  <div class="status">
+    <p>{{ msg }}</p>
+    <p>Steps: <strong>{{ steps }}</strong> • Threshold: <strong>{{ threshold }}</strong></p>
+    <p>Votes — U: <strong>{{ votes.U }}</strong> D: <strong>{{ votes.D }}</strong> L: <strong>{{ votes.L }}</strong> R: <strong>{{ votes.R }}</strong></p>
+  </div>
+
+  <pre class="map">{{ display }}</pre>
+
+  <div class="controls" role="group" aria-label="movement">
+    <button data-input='{"action":"vote","dir":"U"}'>↑ Vote Up</button>
+    <button data-input='{"action":"vote","dir":"L"}'>← Vote Left</button>
+    <button data-input='{"action":"vote","dir":"R"}'>Vote Right →</button>
+    <button data-input='{"action":"vote","dir":"D"}'>Vote Down ↓</button>
+  </div>
+
+  <div class="tools" role="group" aria-label="tools">
+    <button data-input='{"action":"undo"}'>Undo</button>
+    <button data-input='{"action":"reset"}'>Reset</button>
+    <span> | Set threshold:</span>
+    <button data-input='{"action":"threshold","value":2}'>2</button>
+    <button data-input='{"action":"threshold","value":3}'>3</button>
+    <button data-input='{"action":"threshold","value":4}'>4</button>
+    <button data-input='{"action":"threshold","value":5}'>5</button>
+    <button data-input='{"action":"threshold","value":6}'>6</button>
+  </div>
+</div>
+`);
+    }
+
+    lpCodeEditor.on('change', updateLpPreview);
+    lpStateEditor.on('change', updateLpPreview);
+    lpRendererEditor.on('change', updateLpPreview);
+    
+    // Initial render
+    updateLpPreview();
+}
+
+//event listeners for maximizing panes
+    document.querySelectorAll('.lp-maximize-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const paneType = btn.dataset.pane;
+            const grid = document.querySelector('.lp-editor-grid');
+            const targetPane = document.querySelector(`.lp-editor-pane[data-pane="${paneType}"]`);
+
+            const isAlreadyMaximized = targetPane.classList.contains('maximized');
+
+            grid.classList.toggle('is-maximized', !isAlreadyMaximized);
+            document.querySelectorAll('.lp-editor-pane').forEach(p => p.classList.remove('maximized'));
+            if (!isAlreadyMaximized) targetPane.classList.add('maximized');
+        });
+    });
+
+
 // Expose mobile functions to global scope
 window.closeMobileCompose = closeMobileCompose;
 window.handleMobileImageSelect = handleMobileImageSelect;
@@ -2764,5 +3199,8 @@ export {
     openProfileForHandle,
     renderProfile,
     closeProfile,
-    updateHotTopics
+    updateHotTopics,
+    initializeLivingPostComposer,
+    getLivingPostValues,
+    clearLivingPostEditors
 };

@@ -1,5 +1,5 @@
 // FILE: services/content-similarity.js
-
+import { state } from '../state.js';
 import { getServices } from './instances.js';
 
 /**
@@ -85,7 +85,7 @@ class ContentSimilarity {
      * Recalculates all post vectors. This is necessary when the IDF values change.
      */
     recalculateAllVectors() {
-        const { posts } = getServices().stateManager.state;
+        const { posts } = state;
         for (const post of posts.values()) {
             const tokens = this.tokenizeAndClean(post.content);
             const vector = this.calculateTfidfVector(tokens);

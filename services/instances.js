@@ -1,6 +1,6 @@
 // services/instances.js
 let stateManager, verificationQueue, imageStore, peerManager, memoryManager;
-let progressiveVDF, noiseGenerator, trafficMixer, privacyPublisher, mixingNode,relayCoordinator, activityProfile, contentSimilarity; 
+let progressiveVDF, noiseGenerator, trafficMixer, privacyPublisher, mixingNode, relayCoordinator, activityProfile, contentSimilarity, livingPostManager;
 
 
 export function getServices() {
@@ -17,7 +17,8 @@ export function getServices() {
     mixingNode,
     relayCoordinator,
     activityProfile,
-    contentSimilarity
+    contentSimilarity,
+    livingPostManager
   };
 }
 
@@ -35,7 +36,8 @@ export function setServices(services) {
     mixingNode,
     relayCoordinator,
     activityProfile,
-    contentSimilarity
+    contentSimilarity,
+    livingPostManager
   } = services);
 }
 

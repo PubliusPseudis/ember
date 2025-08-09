@@ -80,7 +80,11 @@ function verifySignature(post) {
                 l: post.vdfProof.l,
                 r: post.vdfProof.r,
                 iterations: post.vdfProof.iterations ? post.vdfProof.iterations.toString() : null
-            } : null
+            } : null,
+                postType: post.postType,
+            lpCode: post.lpCode,
+            lpState: post.lpState,
+            lpRenderer: post.lpRenderer
         };
         console.log('[SIG_VERIFY] Reconstructed signableData object:', signableData);
         
