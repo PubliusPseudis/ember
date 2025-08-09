@@ -1075,11 +1075,7 @@ window.saveProfile = async function() {
   };
   state.myIdentity.profile = updatedProfile;
   
-  // This broadcast will now include the metadata
-  await window.broadcastProfileUpdate(updatedProfile);
-  
-  state.myIdentity.profile = updatedProfile;
-  
+ 
   // This function is in main.js, but we call it from the window scope
   await window.broadcastProfileUpdate(updatedProfile);
   
@@ -2864,23 +2860,25 @@ function updateLpPreview() {
 
     frame.srcdoc = `<style>body{font-family:sans-serif;color:#333}</style>${sanitizedHtml}`;
 
-    // draw to canvas if LP provided gfx
+    // draw to canvas if LP provided gfx/sim
     setTimeout(() => {
-      const doc = frame.contentDocument;
-      if (!doc) return;
-      const cvs = doc.querySelector('canvas[data-lp-canvas]');
-                   if (!cvs) return;
-            
-            if (lpState && lpState.sim && lpState.sim.type === 'platformer') {
-              import('./engine-sim-platformer.js').then(mod => {
-                if (mod && typeof mod.mountPlatformer === 'function') {
-                  mod.mountPlatformer(cvs, lpState.sim, {});
-                }
-              });
-            } else if (lpState && lpState.gfx) {
-              drawGfxIntoCanvas(cvs, lpState.gfx, { onInput: (ev) => console.debug('[LP preview input]', ev) });
+      try {
+        const doc = frame.contentDocument;
+        if (!doc) return;
+        const cvs = doc.querySelector('canvas[data-lp-canvas]');
+        if (!cvs) return;
+
+        if (lpState && lpState.sim && lpState.sim.type === 'platformer') {
+          import('./engine-sim-platformer.js').then(mod => {
+            if (mod && typeof mod.mountPlatformer === 'function') {
+              mod.mountPlatformer(cvs, lpState.sim, {});
             }
-        } catch (e) { console.warn('[LP preview] canvas draw failed:', e); }
+          });
+        } else if (lpState && lpState.gfx) {
+          drawGfxIntoCanvas(cvs, lpState.gfx, { onInput: (ev) => console.debug('[LP preview input]', ev) });
+        }
+      } catch (e) {
+        console.warn('[LP preview] canvas draw failed:', e);
       }
     }, 0);
   } catch (e) {
