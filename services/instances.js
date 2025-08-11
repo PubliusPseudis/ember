@@ -44,3 +44,5 @@ export function setServices(services) {
 export const getStateManager = () => stateManager;
 export const getImageStore = () => imageStore;
 export const getPeerManager = () => peerManager;
+export { imageStore as xpAssets };
+export const getXpAssets = () => imageStore;

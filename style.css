@@ -4864,3 +4864,21 @@ body.light-mode .compose-tab.active {
 	grid-row: 1 / -1 !important
 }
 
+
+.lp-max-btn {
+  position: absolute; top: 6px; right: 6px;
+  background: rgba(0,0,0,.55); color: #fff; border: 0; border-radius: 6px;
+  padding: 4px 6px; cursor: pointer; line-height: 1;
+}
+.lp-max-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; z-index: 9999;
+}
+.lp-max-shell { position: absolute; inset: 4%; display: flex; flex-direction: column; }
+.lp-max-bar { display:flex; align-items:center; gap:8px; color:#fff; }
+.lp-max-spacer { flex:1; }
+.lp-max-close { background: transparent; color:#fff; border:0; font-size:20px; cursor:pointer; }
+.lp-max-stage { flex:1; min-height: 0; }
+.lp-no-scroll { overflow: hidden; }
+.lp-max-stage > canvas { width: 100% !important; height: 100% !important; display:block; }
+
+

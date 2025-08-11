@@ -39,17 +39,43 @@
 //                 {action:"key", kind:"down|up", key:"ArrowLeft"}
 //
 
+// FILE: engine-canvas-plus.js
+// Drop-in enhanced 2D renderer for LP declarative gfx specs.
+// Backwards-compatible with engine-canvas.js (same drawGfxIntoCanvas signature),
+// plus a few new optional fields:
+//
+// Top-level (gfx):
+//   pixelated?: boolean                  // disable image smoothing for crisp pixels
+//   debug?: { grid?: { step?: number } } // unchanged
+//
+// Layers (and draw commands) now also accept:
+//   alpha?: number (0..1)
+//   blend?: string (globalCompositeOperation)
+//   filter?: string (e.g. 'blur(4px) contrast(120%)')
+//   shadow?: { color?: string, blur?: number, x?: number, y?: number }
+//   clip?: { type:'rect'|'circle'|'ellipse'|'poly', ... }  // layer-only; clips children
+//
+// Tilemap command gains optional perf helpers:
+//   viewCull?: boolean   // default true; only draw tiles in view
+//
+// Text command now supports letterSpacing (px) accurately for both fill and stroke.
+//
+// New input option (opts): { emitHover?: boolean }
+//   - If true, pointer move events are emitted even when no button is down.
+//
+// Usage: import { drawGfxIntoCanvas } from './engine-canvas-plus.js'
+//        (or replace your engine-canvas.js export with this file).
+
 import { getImageStore } from './services/instances.js';
 
-// ---------- Small utilities ----------
 const DPR = () => (window.devicePixelRatio || 1);
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
 function ensureCache(canvas) {
   if (!canvas.__gfxCache) {
     canvas.__gfxCache = {
-      images: new Map(),       // key -> HTMLImageElement or {img, tintKey, tintedCanvas}
-      sheetSlices: new Map(),  // sheetKey:index -> {sx,sy,sw,sh}
+      images: new Map(),      // key -> { img, offscreen?, tinted?, tintKey? }
+      sheetSlices: new Map(), // sheetKey:index -> {sx,sy,sw,sh}
       lastCamera: { x:0, y:0, zoom:1, rotation:0 },
       listenersAttached: false,
     };
@@ -58,87 +84,38 @@ function ensureCache(canvas) {
 }
 
 function resizeCanvasTo(canvas, logicalW, logicalH, fitMode, zoomOverride) {
-  // If the canvas has explicit width/height attributes, prefer them.
   const cssW = canvas.clientWidth || logicalW || 300;
   const cssH = canvas.clientHeight || logicalH || 150;
   const dpr = DPR();
-
-  let targetW = Math.max(1, Math.floor(cssW * dpr));
-  let targetH = Math.max(1, Math.floor(cssH * dpr));
-
-  // Apply size
+  const targetW = Math.max(1, Math.floor(cssW * dpr));
+  const targetH = Math.max(1, Math.floor(cssH * dpr));
   if (canvas.width !== targetW || canvas.height !== targetH) {
     canvas.width = targetW;
     canvas.height = targetH;
   }
-
-  // Compute viewport scale for world->screen
   const worldW = logicalW || cssW;
   const worldH = logicalH || cssH;
-
   let scaleX = targetW / worldW;
   let scaleY = targetH / worldH;
   let scale = 1;
-
   const fit = (fitMode || 'contain');
   if (zoomOverride != null) {
     scale = zoomOverride;
   } else {
     if (fit === 'contain') scale = Math.min(scaleX, scaleY);
     else if (fit === 'cover') scale = Math.max(scaleX, scaleY);
-    else if (fit === 'stretch') scale = 1; // we scale x/y separately later
+    else if (fit === 'stretch') scale = 1; // scale x/y separately
     else scale = 1; // 'none'
   }
-
   return { dpr, targetW, targetH, scale, scaleX, scaleY, worldW, worldH };
-}
-
-function applyStrokeFill(ctx, spec) {
-  if (spec.fill) {
-    ctx.fillStyle = spec.fill;
-  }
-  if (spec.stroke) {
-    ctx.strokeStyle = spec.stroke;
-  }
-  if (spec.lineWidth != null) {
-    ctx.lineWidth = spec.lineWidth;
-  }
-}
-
-function applyCompositeAndAlpha(ctx, spec) {
-  if (spec.alpha != null) ctx.globalAlpha = spec.alpha;
-  if (spec.composite) ctx.globalCompositeOperation = spec.composite;
-}
-
-function resetCompositeAndAlpha(ctx) {
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
 }
 
 function resolveImageKey(src) {
   if (!src) return null;
-  if (typeof src === 'string') return src; // data URI or something cached by caller
+  if (typeof src === 'string') return src;
   if (src.hash) return `hash:${src.hash}`;
-  if (src.dataUri) return `data:${src.dataUri.slice(0,32)}`; // partial key
-  if (src.url) return `url:${src.url}`; // discouraged, but allow for host-provided urls
-  return null;
-}
-
-async function fetchImageForKey(key, src) {
-  // Try ImageStore for hashes
-  if (src && src.hash) {
-    const b64 = await getImageStore().retrieveImage(src.hash);
-    if (!b64) return null;
-    return await loadImage(b64);
-  }
-  // dataUri direct
-  if (src && src.dataUri) {
-    return await loadImage(src.dataUri);
-  }
-  // url (host-controlled only)
-  if (src && src.url) {
-    return await loadImage(src.url);
-  }
+  if (src.dataUri) return `data:${src.dataUri.slice(0,32)}`;
+  if (src.url) return `url:${src.url}`;
   return null;
 }
 
@@ -151,6 +128,17 @@ function loadImage(uri) {
   });
 }
 
+async function fetchImageForKey(key, src) {
+  if (src && src.hash) {
+    const b64 = await getImageStore().retrieveImage(src.hash);
+    if (!b64) return null;
+    return await loadImage(b64);
+  }
+  if (src && src.dataUri) return await loadImage(src.dataUri);
+  if (src && src.url) return await loadImage(src.url);
+  return null;
+}
+
 function getSheetSlice(sheetImg, tileW, tileH, index, cols) {
   const x = (index % cols) * tileW;
   const y = Math.floor(index / cols) * tileH;
@@ -158,15 +146,10 @@ function getSheetSlice(sheetImg, tileW, tileH, index, cols) {
 }
 
 function tintImageToCanvas(img, color, cacheObj) {
-  // Simple tint: draw img -> offscreen, fill with color using source-atop.
-  // Cache by "imgSrc|tint"
   const tintKey = `${img.src}|${color}`;
-  if (cacheObj.tinted && cacheObj.tintKey === tintKey) {
-    return cacheObj.tinted;
-  }
+  if (cacheObj.tinted && cacheObj.tintKey === tintKey) return cacheObj.tinted;
   const off = cacheObj.offscreen || (cacheObj.offscreen = document.createElement('canvas'));
-  off.width = img.width;
-  off.height = img.height;
+  off.width = img.width; off.height = img.height;
   const octx = off.getContext('2d');
   octx.clearRect(0, 0, off.width, off.height);
   octx.drawImage(img, 0, 0);
@@ -179,325 +162,357 @@ function tintImageToCanvas(img, color, cacheObj) {
   return off;
 }
 
-function withTransform(ctx, fn) {
-  ctx.save();
-  try { fn(); } finally { ctx.restore(); }
-}
+function withCtx(ctx, fn) { ctx.save(); try { fn(); } finally { ctx.restore(); } }
 
-// Convert canvas px to world coords (roughly, using lastCamera + viewport scale).
 function toWorldCoords(cache, metrics, px, py) {
-  // Undo viewport scaling & centering
   const cx = metrics.targetW * 0.5;
   const cy = metrics.targetH * 0.5;
-
   const cam = cache.lastCamera || { x: 0, y: 0, zoom: 1, rotation: 0 };
-
-  // Shift to center, unscale, then un-rotate, then add camera
-  // NOTE: This is approximate; fine for inputs.
-  let x = px - cx;
-  let y = py - cy;
-
-  const scale = (metrics.fitMode === 'stretch')
-    ? { x: metrics.scaleX, y: metrics.scaleY }
-    : { x: metrics.scale, y: metrics.scale };
-
-  x /= scale.x;
-  y /= scale.y;
-
-  const rot = -(cam.rotation || 0);
-  const cos = Math.cos(rot);
-  const sin = Math.sin(rot);
-
-  const rx = x * cos - y * sin;
-  const ry = x * sin + y * cos;
-
-  const worldX = rx + cam.x;
-  const worldY = ry + cam.y;
-  return { worldX, worldY };
+  let x = px - cx, y = py - cy;
+  const scale = (metrics.fitMode === 'stretch') ? { x: metrics.scaleX, y: metrics.scaleY } : { x: metrics.scale, y: metrics.scale };
+  x /= scale.x; y /= scale.y;
+  const rot = -(cam.rotation || 0), c = Math.cos(rot), s = Math.sin(rot);
+  const rx = x * c - y * s, ry = x * s + y * c;
+  return { worldX: rx + cam.x, worldY: ry + cam.y };
 }
 
-// ---------- Renderer ----------
-export async function drawGfxIntoCanvas(canvas, gfx, opts = {}) {
-  if (!(canvas && canvas.getContext)) return;
-  if (!gfx || typeof gfx !== 'object') return;
+// --- Paint/effects helpers ---
+function applyEffects(ctx, spec) {
+  if (!spec) return;
+  if (spec.filter) ctx.filter = spec.filter; // e.g., 'blur(4px)'
+  if (spec.shadow) {
+    ctx.shadowColor = spec.shadow.color || 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = spec.shadow.blur || 0;
+    ctx.shadowOffsetX = spec.shadow.x || 0;
+    ctx.shadowOffsetY = spec.shadow.y || 0;
+  }
+  if (spec.composite && !spec.blend) {
+      ctx.globalCompositeOperation = spec.composite;
+    }
+  if (spec.alpha != null) ctx.globalAlpha = clamp(spec.alpha, 0, 1);
+  if (spec.blend) ctx.globalCompositeOperation = spec.blend;
+}
+function resetEffects(ctx) {
+  ctx.filter = 'none';
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
 
-  // 3D adapter: if the canvas asks for it, try engine-three.
+function resolveFill(ctx, fill, geom) {
+  if (!fill) return null;
+  if (typeof fill === 'string') return fill;
+  // Gradient support: { type:'linear'|'radial', ...stops }
+  if (fill.type === 'linear') {
+    const g = ctx.createLinearGradient(fill.x0 ?? geom.x, fill.y0 ?? geom.y, fill.x1 ?? (geom.x + geom.w), fill.y1 ?? geom.y);
+    (fill.stops || []).forEach(s => g.addColorStop(s.offset ?? 0, s.color || '#fff'));
+    return g;
+  }
+  if (fill.type === 'radial') {
+    const g = ctx.createRadialGradient(
+      fill.x0 ?? (geom.x + geom.w*0.5), fill.y0 ?? (geom.y + geom.h*0.5), fill.r0 ?? 0,
+      fill.x1 ?? (geom.x + geom.w*0.5), fill.y1 ?? (geom.y + geom.h*0.5), fill.r1 ?? Math.max(geom.w, geom.h)*0.5
+    );
+    (fill.stops || []).forEach(s => g.addColorStop(s.offset ?? 0, s.color || '#fff'));
+    return g;
+  }
+  return null;
+}
+
+function beginClipPath(ctx, clip) {
+  if (!clip) return false;
+  ctx.beginPath();
+  if (clip.type === 'rect') {
+    ctx.rect(clip.x||0, clip.y||0, clip.w||0, clip.h||0);
+  } else if (clip.type === 'circle') {
+    ctx.arc(clip.x||0, clip.y||0, clip.r||0, 0, Math.PI*2);
+  } else if (clip.type === 'ellipse') {
+    ctx.ellipse(clip.x||0, clip.y||0, clip.rx||0, clip.ry||0, clip.rotation||0, 0, Math.PI*2);
+  } else if (clip.type === 'poly' && Array.isArray(clip.points) && clip.points.length >= 4) {
+    ctx.moveTo(clip.points[0], clip.points[1]);
+    for (let i=2;i<clip.points.length;i+=2) ctx.lineTo(clip.points[i], clip.points[i+1]);
+    ctx.closePath();
+  } else {
+    return false;
+  }
+  ctx.clip();
+  return true;
+}
+
+// --- Main renderer ---
+export async function drawGfxIntoCanvas(canvas, gfx, opts = {}) {
+  if (!(canvas && canvas.getContext) || !gfx || typeof gfx !== 'object') return;
+
+  // Optional 3D passthrough
   const mode = (canvas.dataset.lpCanvas || '').toLowerCase();
   if (mode === '3d' || mode === 'three') {
     try {
       const mod = await import('./engine-three.js');
-      if (mod && typeof mod.mountThreeOnCanvas === 'function') {
-        return mod.mountThreeOnCanvas(canvas, gfx, opts);
-      }
-    } catch (e) {
-      console.warn('[engine-canvas] 3D requested but engine-three unavailable:', e);
-      // fall through to 2D so at least nothing crashes
-    }
+      if (mod && typeof mod.mountThreeOnCanvas === 'function') return mod.mountThreeOnCanvas(canvas, gfx, opts);
+    } catch (e) { console.warn('[engine-canvas+ ] 3D requested but engine-three unavailable:', e); }
   }
 
   const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true, willReadFrequently: false });
   const cache = ensureCache(canvas);
 
+  // Pixel art toggle
+  const pixelated = !!gfx.pixelated;
+  ctx.imageSmoothingEnabled = !pixelated;
+  // Quality hint has broad support; harmless if ignored
+  ctx.imageSmoothingQuality = pixelated ? 'low' : 'high';
+
   const worldW = gfx.width || 320;
   const worldH = gfx.height || 180;
   const fitMode = (gfx.viewport && gfx.viewport.fit) || 'contain';
-
   const metrics = resizeCanvasTo(canvas, worldW, worldH, fitMode, null);
   metrics.fitMode = fitMode;
 
-  // Background / clear
-  if (gfx.clear !== false) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }
-  if (gfx.background) {
-    ctx.save();
-    ctx.fillStyle = gfx.background;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.restore();
-  }
+  // Clear/background
+  if (gfx.clear !== false) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (gfx.background) { withCtx(ctx, () => { ctx.fillStyle = gfx.background; ctx.fillRect(0,0,canvas.width,canvas.height); }); }
 
-  // Set up viewport transform: center and scale logical world -> pixels
-  const cx = canvas.width * 0.5;
-  const cy = canvas.height * 0.5;
-
+  // Viewport transform
+  const cx = canvas.width * 0.5, cy = canvas.height * 0.5;
   ctx.save();
-  if (fitMode === 'stretch') {
-    ctx.translate(cx, cy);
-    ctx.scale(metrics.scaleX, metrics.scaleY);
-  } else {
-    ctx.translate(cx, cy);
-    ctx.scale(metrics.scale, metrics.scale);
-  }
+  ctx.translate(cx, cy);
+  if (fitMode === 'stretch') ctx.scale(metrics.scaleX, metrics.scaleY); else ctx.scale(metrics.scale, metrics.scale);
 
   // Camera
-  const cam = gfx.camera || { x: 0, y: 0, zoom: 1, rotation: 0 };
+  const cam = gfx.camera || { x:0, y:0, zoom:1, rotation:0 };
   cache.lastCamera = cam;
   if (cam.rotation) ctx.rotate(cam.rotation);
   ctx.translate(-cam.x, -cam.y);
 
-  // Render content
+  // Precompute view rect (world units) for culling
+  const viewHalfW = worldW * 0.5, viewHalfH = worldH * 0.5;
+  const viewRect = { x0: cam.x - viewHalfW, y0: cam.y - viewHalfH, x1: cam.x + viewHalfW, y1: cam.y + viewHalfH };
+
+  // ---- Draw helpers ----
   async function drawCommand(cmd) {
     if (!cmd || typeof cmd !== 'object') return;
 
+    // Per-command effects
+    ctx.save();
+    applyEffects(ctx, cmd);
+
     switch (cmd.type) {
       case 'rect': {
-        applyStrokeFill(ctx, cmd);
+        const g = { x: cmd.x, y: cmd.y, w: cmd.w, h: cmd.h };
+        if (cmd.fill) { ctx.fillStyle = resolveFill(ctx, cmd.fill, g) || cmd.fill; }
+        if (cmd.stroke) { ctx.strokeStyle = cmd.stroke; if (cmd.lineWidth != null) ctx.lineWidth = cmd.lineWidth; }
         const r = +cmd.radius || 0;
         if (r > 0) {
-          // round rect
-          const x = cmd.x, y = cmd.y, w = cmd.w, h = cmd.h;
+          const rr = Math.min(r, g.w * 0.5, g.h * 0.5);
           ctx.beginPath();
-          const rr = Math.min(r, w * 0.5, h * 0.5);
-          ctx.moveTo(x + rr, y);
-          ctx.arcTo(x + w, y, x + w, y + h, rr);
-          ctx.arcTo(x + w, y + h, x, y + h, rr);
-          ctx.arcTo(x, y + h, x, y, rr);
-          ctx.arcTo(x, y, x + w, y, rr);
+          ctx.moveTo(g.x + rr, g.y);
+          ctx.arcTo(g.x + g.w, g.y, g.x + g.w, g.y + g.h, rr);
+          ctx.arcTo(g.x + g.w, g.y + g.h, g.x, g.y + g.h, rr);
+          ctx.arcTo(g.x, g.y + g.h, g.x, g.y, rr);
+          ctx.arcTo(g.x, g.y, g.x + g.w, g.y, rr);
           ctx.closePath();
           if (cmd.fill) ctx.fill();
           if (cmd.stroke) ctx.stroke();
         } else {
-          if (cmd.fill) ctx.fillRect(cmd.x, cmd.y, cmd.w, cmd.h);
-          if (cmd.stroke) ctx.strokeRect(cmd.x, cmd.y, cmd.w, cmd.h);
+          if (cmd.fill) ctx.fillRect(g.x, g.y, g.w, g.h);
+          if (cmd.stroke) ctx.strokeRect(g.x, g.y, g.w, g.h);
         }
         break;
       }
 
       case 'circle': {
-        applyStrokeFill(ctx, cmd);
-        ctx.beginPath();
-        ctx.arc(cmd.x, cmd.y, cmd.r, 0, Math.PI * 2);
-        if (cmd.fill) ctx.fill();
-        if (cmd.stroke) ctx.stroke();
+        const g = { x: cmd.x - cmd.r, y: cmd.y - cmd.r, w: cmd.r*2, h: cmd.r*2 };
+        if (cmd.fill) ctx.fillStyle = resolveFill(ctx, cmd.fill, g) || cmd.fill;
+        if (cmd.stroke) { ctx.strokeStyle = cmd.stroke; if (cmd.lineWidth != null) ctx.lineWidth = cmd.lineWidth; }
+        ctx.beginPath(); ctx.arc(cmd.x, cmd.y, cmd.r, 0, Math.PI*2);
+        if (cmd.fill) ctx.fill(); if (cmd.stroke) ctx.stroke();
         break;
       }
 
       case 'ellipse': {
-        applyStrokeFill(ctx, cmd);
+        const g = { x: cmd.x - cmd.rx, y: cmd.y - cmd.ry, w: cmd.rx*2, h: cmd.ry*2 };
+        if (cmd.fill) ctx.fillStyle = resolveFill(ctx, cmd.fill, g) || cmd.fill;
+        if (cmd.stroke) { ctx.strokeStyle = cmd.stroke; if (cmd.lineWidth != null) ctx.lineWidth = cmd.lineWidth; }
         ctx.beginPath();
-        ctx.ellipse(cmd.x, cmd.y, cmd.rx, cmd.ry, cmd.rotation || 0, 0, Math.PI * 2);
-        if (cmd.fill) ctx.fill();
-        if (cmd.stroke) ctx.stroke();
+        ctx.ellipse(cmd.x, cmd.y, cmd.rx, cmd.ry, cmd.rotation || 0, 0, Math.PI*2);
+        if (cmd.fill) ctx.fill(); if (cmd.stroke) ctx.stroke();
         break;
       }
 
       case 'line': {
         if (!Array.isArray(cmd.points) || cmd.points.length < 4) break;
-        applyStrokeFill(ctx, cmd);
+        if (cmd.stroke) ctx.strokeStyle = cmd.stroke;
+        if (cmd.lineWidth != null) ctx.lineWidth = cmd.lineWidth;
         if (cmd.cap) ctx.lineCap = cmd.cap;
         if (cmd.join) ctx.lineJoin = cmd.join;
+        if (cmd.miterLimit != null) ctx.miterLimit = cmd.miterLimit;
         if (cmd.dash && ctx.setLineDash) ctx.setLineDash(cmd.dash);
-        ctx.beginPath();
-        ctx.moveTo(cmd.points[0], cmd.points[1]);
-        for (let i = 2; i < cmd.points.length; i += 2) {
-          ctx.lineTo(cmd.points[i], cmd.points[i + 1]);
-        }
-        ctx.stroke();
-        if (ctx.setLineDash) ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(cmd.points[0], cmd.points[1]);
+        for (let i=2;i<cmd.points.length;i+=2) ctx.lineTo(cmd.points[i], cmd.points[i+1]);
+        ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]);
         break;
       }
 
       case 'poly': {
         if (!Array.isArray(cmd.points) || cmd.points.length < 4) break;
-        applyStrokeFill(ctx, cmd);
-        ctx.beginPath();
-        ctx.moveTo(cmd.points[0], cmd.points[1]);
-        for (let i = 2; i < cmd.points.length; i += 2) {
-          ctx.lineTo(cmd.points[i], cmd.points[i + 1]);
-        }
+        const bounds = (()=>{ let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity; for(let i=0;i<cmd.points.length;i+=2){const x=cmd.points[i],y=cmd.points[i+1]; if(x<minX)minX=x; if(y<minY)minY=y; if(x>maxX)maxX=x; if(y>maxY)maxY=y;} return {x:minX,y:minY,w:maxX-minX,h:maxY-minY};})();
+        if (cmd.fill) ctx.fillStyle = resolveFill(ctx, cmd.fill, bounds) || cmd.fill;
+        if (cmd.stroke) { ctx.strokeStyle = cmd.stroke; if (cmd.lineWidth != null) ctx.lineWidth = cmd.lineWidth; }
+        ctx.beginPath(); ctx.moveTo(cmd.points[0], cmd.points[1]);
+        for (let i=2;i<cmd.points.length;i+=2) ctx.lineTo(cmd.points[i], cmd.points[i+1]);
         if (cmd.close !== false) ctx.closePath();
-        if (cmd.fill) ctx.fill();
-        if (cmd.stroke) ctx.stroke();
+        if (cmd.fill) ctx.fill(); if (cmd.stroke) ctx.stroke();
         break;
       }
 
       case 'image': {
-        applyCompositeAndAlpha(ctx, cmd);
         const key = resolveImageKey(cmd.src);
         let imgRec = key && cache.images.get(key);
         if (!imgRec) {
-          try {
-            const img = await fetchImageForKey(key, cmd.src);
-            imgRec = { img };
-            cache.images.set(key, imgRec);
-          } catch (e) {
-            console.warn('[engine-canvas] image load failed', e);
-            resetCompositeAndAlpha(ctx);
-            break;
-          }
+          try { const img = await fetchImageForKey(key, cmd.src); imgRec = { img, offscreen: null, tinted: null, tintKey: null }; cache.images.set(key, imgRec); }
+          catch (e) { console.warn('[engine-canvas+ ] image load failed', e); break; }
         }
-        if (!imgRec || !imgRec.img) { resetCompositeAndAlpha(ctx); break; }
-
+        if (!imgRec || !imgRec.img) break;
         const img = imgRec.img;
-        const dw = cmd.w || img.width;
-        const dh = cmd.h || img.height;
-
-        if (cmd.sx != null) {
-          ctx.drawImage(img, cmd.sx, cmd.sy, cmd.sw, cmd.sh, cmd.x, cmd.y, dw, dh);
-        } else {
-          ctx.drawImage(img, cmd.x, cmd.y, dw, dh);
-        }
-        resetCompositeAndAlpha(ctx);
+        // Per-command pixelation override
+        if (cmd.pixelated != null) ctx.imageSmoothingEnabled = !cmd.pixelated;
+        const dw = cmd.w || img.width, dh = cmd.h || img.height;
+        if (cmd.sx != null) ctx.drawImage(img, cmd.sx, cmd.sy, cmd.sw, cmd.sh, cmd.x, cmd.y, dw, dh); else ctx.drawImage(img, cmd.x, cmd.y, dw, dh);
         break;
       }
 
       case 'sprite': {
-        // Sheet load
         const key = resolveImageKey(cmd.sheet);
         let imgRec = key && cache.images.get(key);
         if (!imgRec) {
-          try {
-            const img = await fetchImageForKey(key, cmd.sheet);
-            imgRec = { img, offscreen: null, tinted: null, tintKey: null };
-            cache.images.set(key, imgRec);
-          } catch (e) {
-            console.warn('[engine-canvas] sprite sheet load failed', e);
-            break;
-          }
+          try { const img = await fetchImageForKey(key, cmd.sheet); imgRec = { img, offscreen:null, tinted:null, tintKey:null }; cache.images.set(key, imgRec); }
+          catch (e) { console.warn('[engine-canvas+ ] sprite sheet load failed', e); break; }
         }
         if (!imgRec || !imgRec.img) break;
-
         const img = imgRec.img;
-        const tileW = cmd.tileW;
-        const tileH = cmd.tileH;
+        const tileW = cmd.tileW, tileH = cmd.tileH;
         const cols = Math.floor(img.width / tileW);
         const sliceKey = `${key}:${cmd.index}`;
         let slice = cache.sheetSlices.get(sliceKey);
-        if (!slice) {
-          slice = getSheetSlice(img, tileW, tileH, cmd.index, cols);
-          cache.sheetSlices.set(sliceKey, slice);
-        }
-
+        if (!slice) { slice = getSheetSlice(img, tileW, tileH, cmd.index, cols); cache.sheetSlices.set(sliceKey, slice); }
         const scaleX = cmd.scaleX != null ? cmd.scaleX : 1;
         const scaleY = cmd.scaleY != null ? cmd.scaleY : 1;
-        const dx = cmd.x || 0;
-        const dy = cmd.y || 0;
-        const rot = cmd.rot || 0;
+        const dx = cmd.x || 0, dy = cmd.y || 0, rot = cmd.rot || 0;
         const anchorX = cmd.anchorX != null ? cmd.anchorX : 0.5;
         const anchorY = cmd.anchorY != null ? cmd.anchorY : 0.5;
-        const flipX = !!cmd.flipX;
-        const flipY = !!cmd.flipY;
-
-        withTransform(ctx, () => {
+        const flipX = !!cmd.flipX, flipY = !!cmd.flipY;
+        withCtx(ctx, () => {
           ctx.translate(dx, dy);
           if (rot) ctx.rotate(rot);
           ctx.scale(flipX ? -scaleX : scaleX, flipY ? -scaleY : scaleY);
-
-          const ox = -tileW * anchorX;
-          const oy = -tileH * anchorY;
-
+          const ox = -tileW * anchorX, oy = -tileH * anchorY;
           let source = img;
-          if (cmd.tint) {
-            source = tintImageToCanvas(img, cmd.tint, imgRec);
-          }
-
-          ctx.drawImage(
-            source,
-            slice.sx, slice.sy, slice.sw, slice.sh,
-            ox, oy, tileW, tileH
-          );
+          if (cmd.tint) source = tintImageToCanvas(img, cmd.tint, imgRec);
+          ctx.drawImage(source, slice.sx, slice.sy, slice.sw, slice.sh, ox, oy, tileW, tileH);
         });
         break;
       }
 
-      case 'text': {
-        const size = cmd.size || 14;
-        const family = cmd.font || 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-        const weight = cmd.weight || '';
-        const align = cmd.align || 'left';
-        const baseline = cmd.baseline || 'alphabetic';
-        const text = String(cmd.str ?? '');
+    case 'text': {
+      const size = cmd.size || 14;
+      const family = cmd.font || 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      const weight = cmd.weight || '';
+      const align = cmd.align || 'left';
+      const baseline = cmd.baseline || 'alphabetic';
+      const text = String(cmd.str ?? '');
+      const letter = +cmd.letterSpacing || 0;
 
-        ctx.font = `${weight ? weight + ' ' : ''}${size}px ${family}`;
-        ctx.textAlign = align;
-        ctx.textBaseline = baseline;
-        if (cmd.fill) {
-          ctx.fillStyle = cmd.fill;
-          if (cmd.maxWidth) ctx.fillText(text, cmd.x, cmd.y, cmd.maxWidth);
-          else ctx.fillText(text, cmd.x, cmd.y);
+      ctx.font = `${weight ? weight + ' ' : ''}${size}px ${family}`;
+      ctx.textAlign = align;
+      ctx.textBaseline = baseline;
+
+      // Map start/end to left/right for manual spacing math
+      const alignKey = align === 'end' ? 'right' : (align === 'start' ? 'left' : align);
+
+      const drawRun = (stroke) => {
+        // Fast path: no letterSpacing -> let canvas handle alignment and optional maxWidth
+        if (!letter) {
+          if (stroke) {
+            ctx.lineWidth = cmd.lineWidth || 1;
+            ctx.strokeStyle = cmd.stroke;
+            return cmd.maxWidth ? ctx.strokeText(text, cmd.x, cmd.y, cmd.maxWidth) : ctx.strokeText(text, cmd.x, cmd.y);
+          } else {
+            ctx.fillStyle = cmd.fill;
+            return cmd.maxWidth ? ctx.fillText(text, cmd.x, cmd.y, cmd.maxWidth) : ctx.fillText(text, cmd.x, cmd.y);
+          }
         }
-        if (cmd.stroke) {
+
+        // Manual spacing path: precompute total width and shift start based on alignment
+        const chars = [...text];
+        const widths = chars.map(ch => ctx.measureText(ch).width);
+        const total = widths.reduce((a,b)=>a+b, 0) + Math.max(0, chars.length - 1) * letter;
+
+        let x0 = cmd.x;
+        if (alignKey === 'center') x0 -= total / 2;
+        else if (alignKey === 'right') x0 -= total;
+
+        const prevAlign = ctx.textAlign;
+        ctx.textAlign = 'left';
+
+        if (stroke) {
           ctx.lineWidth = cmd.lineWidth || 1;
           ctx.strokeStyle = cmd.stroke;
-          if (cmd.maxWidth) ctx.strokeText(text, cmd.x, cmd.y, cmd.maxWidth);
-          else ctx.strokeText(text, cmd.x, cmd.y);
+          for (let i = 0; i < chars.length; i++) {
+            ctx.strokeText(chars[i], x0, cmd.y);
+            x0 += widths[i] + letter;
+          }
+        } else {
+          ctx.fillStyle = cmd.fill;
+          for (let i = 0; i < chars.length; i++) {
+            ctx.fillText(chars[i], x0, cmd.y);
+            x0 += widths[i] + letter;
+          }
         }
-        break;
-      }
+        //restore:
+        ctx.textAlign = prevAlign;
+      };
+
+      if (cmd.fill) drawRun(false);
+      if (cmd.stroke) drawRun(true);
+      break;
+    }
+
 
       case 'tilemap': {
-        // Fast fixed-grid renderer
         const key = resolveImageKey(cmd.sheet);
         let imgRec = key && cache.images.get(key);
         if (!imgRec) {
-          try {
-            const img = await fetchImageForKey(key, cmd.sheet);
-            imgRec = { img };
-            cache.images.set(key, imgRec);
-          } catch (e) {
-            console.warn('[engine-canvas] tilemap sheet load failed', e);
-            break;
-          }
+          try { const img = await fetchImageForKey(key, cmd.sheet); imgRec = { img }; cache.images.set(key, imgRec); }
+          catch (e) { console.warn('[engine-canvas+ ] tilemap sheet load failed', e); break; }
         }
         if (!imgRec || !imgRec.img) break;
         const img = imgRec.img;
-
         const tileW = cmd.tileW, tileH = cmd.tileH;
         const cols = Math.floor(img.width / tileW);
-        const rows = Math.floor(img.height / tileH);
-
         const mapCols = cmd.cols, mapRows = cmd.rows;
         const data = cmd.data || [];
         const originX = cmd.x || 0, originY = cmd.y || 0;
         const scale = cmd.scale || 1;
-
-        for (let my = 0; my < mapRows; my++) {
-          for (let mx = 0; mx < mapCols; mx++) {
+        const viewCull = cmd.viewCull !== false; // default on
+        let minMX = 0, maxMX = mapCols - 1, minMY = 0, maxMY = mapRows - 1;
+        if (viewCull) {
+          const vx0 = Math.floor((viewRect.x0 - originX) / (tileW * scale));
+          const vy0 = Math.floor((viewRect.y0 - originY) / (tileH * scale));
+          const vx1 = Math.floor((viewRect.x1 - originX) / (tileW * scale));
+          const vy1 = Math.floor((viewRect.y1 - originY) / (tileH * scale));
+          minMX = clamp(vx0 - 1, 0, mapCols - 1);
+          maxMX = clamp(vx1 + 1, 0, mapCols - 1);
+          minMY = clamp(vy0 - 1, 0, mapRows - 1);
+          maxMY = clamp(vy1 + 1, 0, mapRows - 1);
+        }
+        for (let my = minMY; my <= maxMY; my++) {
+          for (let mx = minMX; mx <= maxMX; mx++) {
             const idx = data[my * mapCols + mx];
             if (idx == null || idx < 0) continue;
             const sx = (idx % cols) * tileW;
             const sy = Math.floor(idx / cols) * tileH;
-
             ctx.drawImage(
               img, sx, sy, tileW, tileH,
               originX + mx * tileW * scale,
@@ -509,39 +524,34 @@ export async function drawGfxIntoCanvas(canvas, gfx, opts = {}) {
         break;
       }
 
-      default:
-        // Unknown type; ignore
-        break;
+      default: break;
     }
+
+    ctx.restore(); // restore per-command effects
   }
 
-  // Layers
-  async function drawArray(arr) {
-    for (let i = 0; i < arr.length; i++) {
-      await drawCommand(arr[i]);
-    }
-  }
+  async function drawArray(arr) { for (let i=0;i<arr.length;i++) await drawCommand(arr[i]); }
 
   async function drawLayer(layer) {
     if (!layer) return;
     ctx.save();
-    if (layer.alpha != null) ctx.globalAlpha = clamp(layer.alpha, 0, 1);
-    if (layer.blend) ctx.globalCompositeOperation = layer.blend;
+    // Layer-wide effects (filter/shadow/alpha/blend)
+    applyEffects(ctx, layer);
+    // Optional clipping region for this layer
+    if (layer.clip) beginClipPath(ctx, layer.clip);
+
     if (Array.isArray(layer.children)) {
       for (let i = 0; i < layer.children.length; i++) {
         const c = layer.children[i];
-        if (c && c.type === 'layer') await drawLayer(c);
-        else await drawCommand(c);
+        if (c && c.type === 'layer') await drawLayer(c); else await drawCommand(c);
       }
     }
     ctx.restore();
   }
 
-  // Render order: layers if present else per-bucket
+  // Render order
   if (Array.isArray(gfx.layers)) {
-    for (let i = 0; i < gfx.layers.length; i++) {
-      await drawLayer(gfx.layers[i]);
-    }
+    for (let i = 0; i < gfx.layers.length; i++) await drawLayer(gfx.layers[i]);
   } else {
     if (Array.isArray(gfx.shapes)) await drawArray(gfx.shapes);
     if (Array.isArray(gfx.images)) await drawArray(gfx.images);
@@ -552,46 +562,34 @@ export async function drawGfxIntoCanvas(canvas, gfx, opts = {}) {
 
   ctx.restore();
 
-  // Optionally draw debug grid
+  // Debug grid (screen-space consistent density)
   if (gfx.debug && gfx.debug.grid) {
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.lineWidth = 1;
-    const step = gfx.debug.grid.step || 16;
-    for (let x = 0; x < canvas.width; x += step * metrics.scale) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-    }
-    for (let y = 0; y < canvas.height; y += step * metrics.scale) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-    }
-    ctx.restore();
+    withCtx(ctx, () => {
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      const step = gfx.debug.grid.step || 16;
+      for (let x = 0; x < canvas.width; x += step * metrics.scale) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+      for (let y = 0; y < canvas.height; y += step * metrics.scale) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+    });
   }
 
-  // Attach input (once)
+  // Input wiring (once per canvas)
   if ((opts.postId || typeof opts.onInput === 'function') && !cache.listenersAttached) {
     attachInputHandlers(canvas, cache, metrics, opts);
     cache.listenersAttached = true;
   }
 }
 
-// ---------- Input wiring ----------
 function emitInput(opts, payload) {
   try {
-    if (typeof opts.onInput === 'function') {
-      opts.onInput(payload);
-      return;
-    }
+    if (typeof opts.onInput === 'function') { opts.onInput(payload); return; }
     if (opts.postId && typeof window.interactWithLivingPost === 'function') {
-      // Must be a JSON string; the host accepts raw JSON string or object.
       window.interactWithLivingPost(opts.postId, JSON.stringify(payload));
     }
-  } catch (e) {
-    console.warn('[engine-canvas] input emit failed', e);
-  }
+  } catch (e) { console.warn('[engine-canvas+ ] input emit failed', e); }
 }
 
 function attachInputHandlers(canvas, cache, metrics, opts) {
-  // Make canvas focusable for keyboard
   if (!canvas.hasAttribute('tabindex')) canvas.setAttribute('tabindex', '0');
 
   function localPos(evt) {
@@ -600,32 +598,27 @@ function attachInputHandlers(canvas, cache, metrics, opts) {
     const py = (evt.clientY - rect.top) * (canvas.height / rect.height);
     const w = toWorldCoords(cache, metrics, px, py);
     return { px, py, ...w };
-    }
+  }
 
-  let isDown = false;
-  let last = null;
+  let isDown = false; let last = null;
 
   canvas.addEventListener('pointerdown', (e) => {
-    canvas.focus();
-    isDown = true;
-    const p = localPos(e);
-    last = p;
+    canvas.focus(); isDown = true; const p = localPos(e); last = p;
     emitInput(opts, { action: 'pointer', kind: 'down', x: p.px, y: p.py, worldX: p.worldX, worldY: p.worldY, button: e.button || 0 });
   });
+
   canvas.addEventListener('pointermove', (e) => {
-    if (!isDown) return;
     const p = localPos(e);
-    emitInput(opts, {
-      action: 'pointer', kind: 'move',
-      x: p.px, y: p.py, worldX: p.worldX, worldY: p.worldY,
-      dx: last ? (p.px - last.px) : 0, dy: last ? (p.py - last.py) : 0
-    });
-    last = p;
-  });
+    if (isDown) {
+      emitInput(opts, { action: 'pointer', kind: 'move', x: p.px, y: p.py, worldX: p.worldX, worldY: p.worldY, dx: last ? (p.px - last.px) : 0, dy: last ? (p.py - last.py) : 0 });
+      last = p;
+    } else if (opts.emitHover || canvas.dataset.lpHover === '1') {
+      emitInput(opts, { action: 'pointer', kind: 'hover', x: p.px, y: p.py, worldX: p.worldX, worldY: p.worldY });
+    }
+  }, { passive: true });
+
   window.addEventListener('pointerup', (e) => {
-    if (!isDown) return;
-    isDown = false;
-    const p = localPos(e);
+    if (!isDown) return; isDown = false; const p = localPos(e);
     emitInput(opts, { action: 'pointer', kind: 'up', x: p.px, y: p.py, worldX: p.worldX, worldY: p.worldY, button: e.button || 0 });
   }, { passive: true });
 
@@ -635,22 +628,13 @@ function attachInputHandlers(canvas, cache, metrics, opts) {
   }, { passive: true });
 
   canvas.addEventListener('keydown', (e) => {
-    // Allow arrows, WASD, space, enter, digits, letters
     emitInput(opts, { action: 'key', kind: 'down', key: e.key });
-    // Prevent page scrolling with arrows/space
-    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) {
-      e.preventDefault();
-    }
+    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
   });
-  canvas.addEventListener('keyup', (e) => {
-    emitInput(opts, { action: 'key', kind: 'up', key: e.key });
-  });
+  canvas.addEventListener('keyup', (e) => { emitInput(opts, { action: 'key', kind: 'up', key: e.key }); });
 }
 
-// Optional helper for external callers
 export function clearCanvas(canvas) {
-  if (canvas && canvas.getContext) {
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }
+  if (canvas && canvas.getContext) { const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, canvas.width, canvas.height); }
 }
+

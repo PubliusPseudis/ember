@@ -288,33 +288,49 @@ async verifyAuthorIdentity(post) {
   
   
   
-  async verifyOwnIdentity(identity, maxRetries = 5) {
-      console.log(`identity ${identity}`);
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-          const claim = await this.lookupHandle(identity.handle);
-        if (claim) {
-          const ourPubKey = arrayBufferToBase64(identity.publicKey);
+async verifyOwnIdentity(identity, maxRetries = 5) {
+  console.log(`identity ${identity}`);
 
-          //  Convert the claim's public key to a base64 string before comparing
-          const claimPubKeyB64 = arrayBufferToBase64(claim.publicKey);
-          return claimPubKeyB64 === ourPubKey;
-        }
-          if (this.dht.buckets.every(bucket => bucket.length === 0)) {
-            console.log(`[Identity] No peers available yet (attempt ${attempt + 1}/${maxRetries}), retrying...`);
-            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-            continue;
-          }
-          return false;
-        } catch (e) {
-          console.warn(`[Identity] Verification attempt ${attempt + 1} failed:`, e);
-          if (attempt < maxRetries - 1) {
-            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-          }
+  const ourPubKeyB64 = arrayBufferToBase64(identity.publicKey);
+  const handleLower = identity.handle.toLowerCase();
+  const handleAddress = `handle-to-pubkey:${handleLower}`;
+  const pubkeyAddress = `pubkey:${ourPubKeyB64}`;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      // Try DHT lookup first
+      const claim = await this.lookupHandle(identity.handle);
+      if (claim) {
+        const claimPubKeyB64 = arrayBufferToBase64(claim.publicKey);
+        return claimPubKeyB64 === ourPubKeyB64;
+      }
+
+      // No claim found: if we can build/obtain our local public claim, verify it and republish
+      if (typeof identity.getPublicClaim === 'function') {
+        const localClaim = identity.getPublicClaim(); // LocalIdentity already exposes this
+        if (await this.verifyClaim(localClaim)) {
+          await Promise.all([
+            this.dht.store(handleAddress, ourPubKeyB64, { propagate: true }),
+            this.dht.store(pubkeyAddress, localClaim.toJSON(), { propagate: true }),
+          ]);
+          // brief backoff then retry lookup
+          await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+          continue;
         }
       }
-      return this.dht.buckets.every(bucket => bucket.length === 0);
+
+      // Backoff and retry regardless of peer count (avoid early false negative when 1 peer is up)
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+    } catch (e) {
+      console.warn(`[Identity] Verification attempt ${attempt + 1} failed:`, e);
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+    }
   }
+
+  // If still nothing, only treat as "ok" when there are truly no peers
+  return this.dht.buckets.every((bucket) => bucket.length === 0);
+}
+
   
   async updatePeerLocation(handle, nodeId, wirePeerId) {
   const routingKey = `routing:${handle.toLowerCase()}`;

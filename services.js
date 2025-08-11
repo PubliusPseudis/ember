@@ -20,6 +20,32 @@ import { LivingPostManager } from './services/living-post-vm.js';
 // --- SERVICE INSTANCES ---
 export function initializeServices(dependencies = {}) {
   const imageStore = new ContentAddressedImageStore();
+
+  (function attachBlobShims(s) {
+    if (!s.put) s.put = async (blob, meta = {}) => {
+      const dataUrl = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onerror = rej;
+        fr.onload = () => res(fr.result);
+        fr.readAsDataURL(blob);
+      });
+      return s.storeImage(dataUrl, {
+        ...meta,
+        mime: blob.type || meta.mime,
+        size: blob.size ?? meta.size
+      });
+    };
+    if (!s.getBlob) s.getBlob = async (hash) => {
+      const dataUrl = await s.retrieveImage(hash);
+      const [, b64] = dataUrl.split(',', 2);
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      const mime = (dataUrl.match(/^data:([^;]+)/) || [])[1] || 'application/octet-stream';
+      return new Blob([bytes], { type: mime });
+    };
+    if (!s.getArrayBuffer) s.getArrayBuffer = async (hash) => (await s.getBlob(hash)).arrayBuffer();
+    if (!s.getText) s.getText = async (hash) => (await s.getBlob(hash)).text();
+  })(imageStore);
+
   const peerManager = new PeerManager();
   
   const stateManager = new StateManager({
@@ -45,13 +71,9 @@ export function initializeServices(dependencies = {}) {
     livingPostManager: new LivingPostManager()
   };
   
-  // First, make all services globally available.
   setServices(services);
-
-  // Second, initialize dependencies in the correct order.
   services.relayCoordinator.init(services.peerManager);
   services.privacyPublisher.init(services.peerManager, services.relayCoordinator);
-  
   return services;
 }
 

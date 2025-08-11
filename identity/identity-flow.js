@@ -11,34 +11,28 @@ import wasmVDF from '../vdf-wrapper.js';
 
 export async function unlockIdentity(encryptedIdentity) {
   return new Promise((resolve, reject) => {
-    const overlay = document.getElementById('identity-creation-overlay');
+    // Use the dedicated UNLOCK overlay (has the password fields)
+    const overlay = document.getElementById('unlock-overlay');
+    // Make sure the creation overlay is hidden so it doesn't sit under/steal focus
+    const creationOverlay = document.getElementById('identity-creation-overlay');
+    if (creationOverlay) creationOverlay.style.display = 'none';
+    
+    
+    // Ensure the loading screen doesn't block the unlock UI
+    const loadingOverlay = document.getElementById('loading');
+    if (loadingOverlay) loadingOverlay.style.display = 'none';
+    // Belt-and-suspenders in case CSS z-index competes
+    overlay.style.zIndex = '10001';
     overlay.style.display = 'flex';
-    
-    // Create unlock UI
-    overlay.innerHTML = `
-      <div class="identity-creation-content">
-        <div id="identity-unlock-step">
-          <h2>🔐 Unlock Your Identity</h2>
-          <p>Welcome back, <strong>${encryptedIdentity.handle}</strong>!</p>
-          <p>Enter your password to unlock your identity:</p>
-          
-          <input type="password" id="unlock-password" placeholder="Enter password" />
-          <div id="unlock-error" style="color: #ff6b4a; margin-top: 10px;"></div>
-          
-          <button id="unlock-button" class="primary-button">Unlock</button>
-          <button id="forgot-password" class="secondary-button" style="margin-top: 10px;">Forgot Password?</button>
-        </div>
-      </div>
-    `;
-    
+
     const passwordInput = document.getElementById('unlock-password');
     const errorDiv = document.getElementById('unlock-error');
     const unlockButton = document.getElementById('unlock-button');
-    const forgotButton = document.getElementById('forgot-password');
-    
+    const resetButton = document.getElementById('reset-identity-button');
+
+    const hide = () => { overlay.style.display = 'none'; };
+
     passwordInput.focus();
-    
-    // Handle enter key
     passwordInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') unlockButton.click();
     });
@@ -49,36 +43,24 @@ export async function unlockIdentity(encryptedIdentity) {
         errorDiv.textContent = 'Please enter your password.';
         return;
       }
-      
+
       unlockButton.disabled = true;
       unlockButton.textContent = 'Decrypting...';
       errorDiv.textContent = '';
-      
+
       try {
-        // Derive key from password
+        // Derive key and decrypt the vault
         const salt = new Uint8Array(encryptedIdentity.encryptedVault.salt);
         const key = await deriveKeyFromPassword(password, salt);
-        
-        // Decrypt the vault
         const decrypted = await decryptVault(encryptedIdentity.encryptedVault, key);
 
-        // --- FIX START ---
-        // Restore secret keys and ensure they are in the correct Uint8Array format.
-        encryptedIdentity.secretKey = new Uint8Array(Object.values(decrypted.secretKey));
-        encryptedIdentity.encryptionSecretKey = new Uint8Array(Object.values(decrypted.encryptionSecretKey));
-        // --- FIX END ---
+        // Restore secret keys (handle either plain arrays or Uint8Array)
+        const toU8 = (v) => (v instanceof Uint8Array ? v : new Uint8Array(v));
+        encryptedIdentity.secretKey = toU8(decrypted.secretKey);
+        encryptedIdentity.encryptionSecretKey = toU8(decrypted.encryptionSecretKey);
 
-        // Success!
-        overlay.innerHTML = `
-          <div class="identity-creation-content">
-            <h3 style="color: #44ff44;">✓ Identity Unlocked!</h3>
-            <p>Welcome back, ${encryptedIdentity.handle}!</p>
-          </div>
-        `;
-        setTimeout(() => {
-          overlay.style.display = 'none';
-          resolve(encryptedIdentity);
-        }, 1500);
+        hide();
+        resolve(encryptedIdentity);
       } catch (err) {
         console.error('Decryption failed:', err);
         errorDiv.textContent = 'Incorrect password. Please try again.';
@@ -89,14 +71,13 @@ export async function unlockIdentity(encryptedIdentity) {
       }
     };
 
-    forgotButton.onclick = () => {
-      if (confirm('If you forgot your password, you\'ll need to create a new identity. Your current identity will be lost. Continue?')) {
-        overlay.style.display = 'none';
-        reject(new Error('Password forgotten'));
-      }
+    resetButton.onclick = () => {
+      hide();
+      reject(new Error('Password forgotten'));
     };
   });
 }
+
 
 export async function createNewIdentity() {
   // Safety check to prevent double creation
@@ -117,7 +98,9 @@ export async function createNewIdentity() {
       step0.style.display = 'none';
       showHandleSelection();
     };
-    
+    const loadingOverlay = document.getElementById('loading');
+    if (loadingOverlay) loadingOverlay.style.display = 'none';
+    overlay.style.zIndex = '10001';
     overlay.style.display = 'flex';
 
 

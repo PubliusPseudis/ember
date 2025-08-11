@@ -1290,7 +1290,9 @@ async function handle_lp_state_update(msg, fromWire) {
     } else if (typeof renderPost === 'function') {
       renderPost(post);
     }
-
+    
+    { const _c=document.querySelector('.lp-max-overlay canvas[data-lp-canvas][data-post-id="'+msg.postId+'"]'); if(_c && post.lpStateObj?.gfx) drawGfxIntoCanvas(_c, post.lpStateObj.gfx, { postId: msg.postId }); } 
+    
   } catch (err) {
     console.error('[LP] state_update: unhandled error', err, msg);
   }

@@ -16,7 +16,7 @@ export const CONFIG = {
   MAX_PENDING_MESSAGES: 100, // Max messages to queue per peer before handshake
 
  // LP moderation mode: 'balanced' or 'off'
-  LP_MODERATION: 'balanced',
+  LP_MODERATION: 'off',
 
 
   // --- NEW: Universal Privacy Mixing Layer ---

@@ -37,6 +37,7 @@ let showAllShards = true;
 
 export let currentDMRecipient = null;
 let lpCodeEditor, lpStateEditor, lpRendererEditor;
+let __lpPreview = { id: 'lp-preview', stateStr: "{}", code: "", renderer: "" };
 
 const animationObserver = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
@@ -410,7 +411,9 @@ async function updateInner(el, p) {
                   }
                 } else if (st && st.gfx) {
                   drawGfxIntoCanvas(cvs, st.gfx, { postId: p.id });
+                  cvs.dataset.postId = p.id;
                 }
+                    setupLpMaximize(container, cvs, st, p.id);
               }
             } catch (e) {
               console.warn('[LP feed] canvas draw failed:', e);
@@ -2623,6 +2626,93 @@ function showSwipeIndicator(direction) {
   }, 500);
 }
 
+// -- LP post maximizer (for canvas-based LPs) --
+function setupLpMaximize(container, canvas, lpState, postId) {
+  if (!container || !canvas) return;
+  if (container.querySelector('.lp-max-btn')) return; // don’t duplicate
+
+  // the little ⤢ button in the corner of the LP
+  const btn = document.createElement('button');
+  btn.className = 'lp-max-btn';
+  btn.title = 'Maximize';
+  btn.textContent = '⤢';
+  container.style.position = 'relative';
+  container.appendChild(btn);
+
+  // create (or reuse) a global overlay
+  function getOverlay() {
+    let ov = document.querySelector('.lp-max-overlay');
+    if (ov) return ov;
+    ov = document.createElement('div');
+    ov.className = 'lp-max-overlay';
+    ov.innerHTML = `
+      <div class="lp-max-shell">
+        <div class="lp-max-bar">
+          <div>Maximized</div>
+          <div class="lp-max-spacer"></div>
+          <button class="lp-max-close" aria-label="Close">✕</button>
+        </div>
+        <div class="lp-max-stage"></div>
+      </div>`;
+    document.body.appendChild(ov);
+    return ov;
+  }
+
+  const overlay = getOverlay();
+  const stage   = overlay.querySelector('.lp-max-stage');
+  const close   = overlay.querySelector('.lp-max-close');
+
+  let placeholder = null;
+  let parent = null;
+  let open = false;
+
+  const redrawIfStatic = () => {
+    // Platformer/3D redraw themselves each frame/RAF; static gfx needs a redraw on resize.
+    if (lpState && lpState.gfx && !lpState.sim) {
+      import('./engine-canvas.js').then(({ drawGfxIntoCanvas }) => {
+        drawGfxIntoCanvas(canvas, lpState.gfx, { postId });
+      }).catch(()=>{});
+    }
+  };
+
+  const doOpen = () => {
+    if (open) return;
+    open = true;
+    parent = canvas.parentNode;
+    placeholder = document.createComment('lp-canvas-slot');
+    parent.insertBefore(placeholder, canvas);
+    stage.innerHTML = '';
+    stage.appendChild(canvas);
+    overlay.style.display = 'block';
+    document.body.classList.add('lp-no-scroll');
+    redrawIfStatic();
+  };
+
+  const doClose = () => {
+    if (!open) return;
+    open = false;
+    overlay.style.display = 'none';
+    document.body.classList.remove('lp-no-scroll');
+    stage.removeChild(canvas);
+    if (placeholder && parent) {
+      parent.insertBefore(canvas, placeholder);
+      placeholder.remove();
+      placeholder = null;
+    }
+    redrawIfStatic();
+  };
+
+  btn.addEventListener('click', doOpen);
+  close.addEventListener('click', doClose);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) doClose(); });
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') doClose(); });
+
+  // keep the static canvas crisp while the overlay is resized
+  const ro = new ResizeObserver(() => { if (open) redrawIfStatic(); });
+  ro.observe(stage);
+}
+
+
 
 // Helper function to get a user's reputation score by their handle.
 function getReputationByHandle(handle) {
@@ -2827,65 +2917,128 @@ function getLivingPostValues() {
     };
 }
 
-function updateLpPreview() {
+async function updateLpPreview() {
   if (!lpCodeEditor || !lpStateEditor || !lpRendererEditor) return;
 
+  const code     = lpCodeEditor.getValue();
+  const stateStr = lpStateEditor.getValue() || "{}";
   const renderer = lpRendererEditor.getValue();
-  const stateStr = lpStateEditor.getValue();
-  const frame = document.getElementById('lp-preview-frame');
-  const errorEl = document.getElementById('lp-preview-error');
+  const frame    = document.getElementById('lp-preview-frame');
+  const errorEl  = document.getElementById('lp-preview-error');
   if (!frame || !errorEl) return;
 
   errorEl.textContent = '';
+  __lpPreview.code = code;
+  __lpPreview.renderer = renderer;
 
   try {
-    const lpState = JSON.parse(stateStr || '{}');
+    // 1) Run onLoad in the same VM you use for publishing, to derive initial state
+    const vm = getServices().livingPostManager; // already imported in ui.js
+    const onLoadStateStr = await vm.run(__lpPreview.id, code, 'onLoad', stateStr);
+    __lpPreview.stateStr = onLoadStateStr;
 
-    const renderedHtml = Mustache.render(renderer, lpState);
-    const sanitizedHtml = DOMPurify.sanitize(renderedHtml, {
+    // 2) Render template safely (same sanitizer policy as feed)
+    const lpState = JSON.parse(onLoadStateStr || '{}');
+    const html = Mustache.render(renderer, lpState);
+    const safeHtml = DOMPurify.sanitize(html, {
       ALLOWED_TAGS: [
         'div','span','p','ul','ol','li','strong','em','b','i','small','br','hr',
         'a','button','code','pre','canvas'
       ],
       ALLOWED_ATTR: ['href','title','class','data-input','aria-label','role','id','width','height','data-lp-canvas'],
-      FORBID_TAGS: [
-        'img','picture','source','video','audio','track','iframe','svg',
-        'object','embed','link','style'
-      ],
-      FORBID_ATTR: [
-        'style','src','srcset','poster','xlink:href','background','data'
-      ],
+      FORBID_TAGS: ['img','picture','source','video','audio','track','iframe','svg','object','embed','link','style'],
+      FORBID_ATTR: ['style','src','srcset','poster','xlink:href','background','data'],
       ALLOWED_URI_REGEXP: /^(https?:|#)/i
     });
 
-    frame.srcdoc = `<style>body{font-family:sans-serif;color:#333}</style>${sanitizedHtml}`;
+    // 3) Paint into an iframe doc so we can attach local handlers
+    frame.srcdoc = `<style>body{font-family:sans-serif;color:#333}</style>${safeHtml}`;
 
-    // draw to canvas if LP provided gfx/sim
-    setTimeout(() => {
+    // Helper to re-render after interactions without rerunning onLoad
+    const rerender = async () => {
       try {
-        const doc = frame.contentDocument;
-        if (!doc) return;
-        const cvs = doc.querySelector('canvas[data-lp-canvas]');
-        if (!cvs) return;
-
-        if (lpState && lpState.sim && lpState.sim.type === 'platformer') {
-          import('./engine-sim-platformer.js').then(mod => {
-            if (mod && typeof mod.mountPlatformer === 'function') {
-              mod.mountPlatformer(cvs, lpState.sim, {});
-            }
-          });
-        } else if (lpState && lpState.gfx) {
-          drawGfxIntoCanvas(cvs, lpState.gfx, { onInput: (ev) => console.debug('[LP preview input]', ev) });
-        }
+        const st = JSON.parse(__lpPreview.stateStr || '{}');
+        const html2 = Mustache.render(__lpPreview.renderer, st);
+        const safe2 = DOMPurify.sanitize(html2, {
+          ALLOWED_TAGS: ['div','span','p','ul','ol','li','strong','em','b','i','small','br','hr','a','button','code','pre','canvas'],
+          ALLOWED_ATTR: ['href','title','class','data-input','aria-label','role','id','width','height','data-lp-canvas'],
+          FORBID_TAGS: ['img','picture','source','video','audio','track','iframe','svg','object','embed','link','style'],
+          FORBID_ATTR: ['style','src','srcset','poster','xlink:href','background','data'],
+          ALLOWED_URI_REGEXP: /^(https?:|#)/i
+        });
+        frame.contentDocument.body.innerHTML = safe2;
+        await wirePreviewInteractivity(); // reattach handlers
       } catch (e) {
-        console.warn('[LP preview] canvas draw failed:', e);
+        errorEl.textContent = 'Preview re-render error: ' + e.message;
       }
-    }, 0);
+    };
+
+    // 4) Attach click delegation and canvas input locally (no network)
+    async function wirePreviewInteractivity() {
+      const doc = frame.contentDocument;
+      if (!doc) return;
+
+      // Buttons/links with data-input -> local onInteract
+      doc.body.addEventListener('click', async (ev) => {
+        const el = ev.target.closest('[data-input]');
+        if (!el) return;
+        try {
+          const input = JSON.parse(el.getAttribute('data-input') || '{}');
+          __lpPreview.stateStr = await vm.run(
+            __lpPreview.id,
+            __lpPreview.code,
+            'onInteract',
+            __lpPreview.stateStr,
+            { user: { handle: state.myIdentity?.handle || 'you' }, input }
+          );
+          await rerender();
+        } catch (e) {
+          errorEl.textContent = 'onInteract error: ' + e.message;
+        }
+      });
+
+      // Canvas-based gfx/sims -> route engine input into local onInteract
+      const cvs = doc.querySelector('canvas[data-lp-canvas]');
+      if (cvs) {
+        try {
+          const st = JSON.parse(__lpPreview.stateStr || '{}');
+          if (st && st.sim && st.sim.type === 'platformer') {
+            const mod = await import('./engine-sim-platformer.js'); // uses drawGfxInside
+            if (mod?.mountPlatformer) await mod.mountPlatformer(cvs, st.sim, {});
+          } else if (st && st.gfx) {
+            // drawGfxIntoCanvas lets us intercept inputs without touching network
+            await drawGfxIntoCanvas(cvs, st.gfx, {
+              onInput: async (ev) => {
+                try {
+                  __lpPreview.stateStr = await vm.run(
+                    __lpPreview.id,
+                    __lpPreview.code,
+                    'onInteract',
+                    __lpPreview.stateStr,
+                    { user: { handle: state.myIdentity?.handle || 'you' }, input: ev }
+                  );
+                  await rerender();
+                } catch (e) {
+                  errorEl.textContent = 'onInteract (canvas) error: ' + e.message;
+                }
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('[LP preview] canvas wiring failed:', e);
+        }
+      }
+    }
+
+    // initial wiring pass
+    setTimeout(wirePreviewInteractivity, 0);
+
   } catch (e) {
     errorEl.textContent = 'Error: ' + e.message;
     frame.srcdoc = '';
   }
 }
+
 
 // Clears LP title, editors, and preview safely
 function clearLivingPostEditors() {
@@ -2945,9 +3098,9 @@ function ensureInit(st) {
       "#....#..E.#",
       "###########"
     ];
-    st.width  = st.map[0].length;
+    st.width = st.map[0].length;
     st.height = st.map.length;
-    st.pos = { x: 5, y: 3 };  // matches '@' in the map
+    st.pos = { x: 5, y: 3 }; // matches '@' in the map
     st.exit = { x: 9, y: 5 }; // 'E' in the map
     st.votes = { U:0, D:0, L:0, R:0 };
     st.threshold = 3; // votes needed to move
@@ -2967,11 +3120,10 @@ function renderMap(st) {
     var row = st.map[y].split('');
     // draw exit then player so player shows if overlapping when finished
     row[st.exit.x] = 'E';
-    row[st.pos.x === st.exit.x && st.pos.y === y ? st.pos.x : st.pos.x] = row[st.pos.x];
     row[st.pos.x] = (y === st.pos.y) ? '@' : row[st.pos.x];
     rows.push(row.join(''));
   }
-  return rows.join('\n');
+  return rows.join('\\n');
 }
 
 function tryMove(st, dir) {
@@ -3008,7 +3160,7 @@ function tryMove(st, dir) {
 function tallyAndMaybeMove(st) {
   // Move once any direction reaches threshold; then reset vote bucket
   var dirs = ['U','D','L','R'];
-  for (var i=0; i<dirs.length; i++) {
+  for (var i=0; i < dirs.length; i++) {
     var k = dirs[i];
     if (st.votes[k] >= st.threshold) {
       tryMove(st, k);
@@ -3096,7 +3248,7 @@ function onLoad() {
   "done": false,
   "history": [{ "x": 5, "y": 3 }],
   "msg": "Vote on a direction. First to reach 3 moves!",
-  "display": "###########\n#....#....#\n#.##.#.##.#\n#.#..@..#.#\n#.##.#.##.#\n#....#..E.#\n###########"
+  "display": "###########\\n#....#....#\\n#.##.#.##.#\\n#.#..@..#.#\\n#.##.#.##.#\\n#....#..E.#\\n###########"
 }
       `);
     }
